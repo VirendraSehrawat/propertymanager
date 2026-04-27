@@ -39,3 +39,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# firebase (contains sensitive credentials - do not commit)
+lib/firebase.js
