@@ -239,37 +239,52 @@ export default function TenantDashboard() {
                         </div>
 
                         {/* MY INVOICES SECTION */}
-                        <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-                            <h3 className="text-lg font-bold text-gray-800 mb-4">My Invoices</h3>
-                            {myInvoices.length === 0 ? (
-                                <p className="text-gray-500 text-sm">You have no invoices generated yet.</p>
-                            ) : (
-                                <div className="space-y-3">
-                                    {myInvoices.map(invoice => (
-                                        <div key={invoice.id} className="border border-gray-200 p-4 rounded-md flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                                            <div>
-                                                <p className="font-bold text-gray-800">{invoice.billingPeriod}</p>
-                                                <p className="text-sm text-gray-600">Amount Due: ₹{invoice.amountDue}</p>
-                                            </div>
+                        {myInvoices.map(invoice => (
+                            <div key={invoice.id} className="border border-gray-200 p-4 rounded-md flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 bg-white hover:shadow-sm transition">
+                                <div className="w-full lg:w-auto">
+                                    <div className="flex items-center gap-3 mb-2">
+                                        <p className="font-bold text-gray-800 text-lg">{invoice.billingPeriod}</p>
+                                        <span className={`px-2 py-0.5 text-xs font-bold rounded-full ${invoice.status === 'paid' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                                            {invoice.status.toUpperCase()}
+                                        </span>
+                                    </div>
 
-                                            {invoice.status === 'unpaid' ? (
-                                                <button
-                                                    onClick={() => { setSelectedInvoice(invoice); setIsPayModalOpen(true); }}
-                                                    className="px-6 py-2 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 w-full sm:w-auto"
-                                                >
-                                                    Pay Now
-                                                </button>
-                                            ) : invoice.status === 'pending' ? (
-                                                <span className="px-4 py-2 bg-orange-100 text-orange-800 rounded-md text-sm font-medium">Review Pending</span>
-                                            ) : (
-                                                <span className="px-4 py-2 bg-green-100 text-green-800 rounded-md text-sm font-medium">Paid ✅</span>
-                                            )}
+                                    {/* Itemized Bill Breakdown */}
+                                    <div className="bg-gray-50 border border-gray-100 p-3 rounded text-sm text-gray-600 mb-2 max-w-sm">
+                                        <div className="flex justify-between mb-1">
+                                            <span>Base Rent:</span>
+                                            <span className="font-medium">₹{invoice.baseRent}</span>
                                         </div>
-                                    ))}
+                                        <div className="flex justify-between mb-1">
+                                            <span>Electricity ({invoice.electricityConsumed} units @ ₹{invoice.electricityRate}):</span>
+                                            <span className="font-medium">+ ₹{invoice.electricityCharge}</span>
+                                        </div>
+                                        <div className="border-t border-gray-200 mt-2 pt-2 flex justify-between text-gray-900 font-bold">
+                                            <span>Total Due:</span>
+                                            <span>₹{invoice.totalAmount}</span>
+                                        </div>
+                                    </div>
+                                    <p className="text-xs text-gray-400">Meter Reading: {invoice.previousReading} &rarr; {invoice.currentReading}</p>
                                 </div>
-                            )}
-                        </div>
 
+                                {invoice.status === 'unpaid' ? (
+                                    <button
+                                        onClick={() => { setSelectedInvoice(invoice); setIsPayModalOpen(true); }}
+                                        className="px-6 py-3 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 w-full lg:w-auto shadow-sm"
+                                    >
+                                        Pay ₹{invoice.totalAmount} Now
+                                    </button>
+                                ) : invoice.status === 'pending' ? (
+                                    <span className="px-6 py-3 bg-orange-50 border border-orange-200 text-orange-800 rounded-md text-sm font-medium w-full lg:w-auto text-center">
+                                        Verification Pending
+                                    </span>
+                                ) : (
+                                    <span className="px-6 py-3 bg-green-50 border border-green-200 text-green-800 rounded-md text-sm font-medium w-full lg:w-auto text-center flex items-center justify-center gap-2">
+                                        Payment Verified ✅
+                                    </span>
+                                )}
+                            </div>
+                        ))}
                         {/* QUICK ACTIONS */}
                         <div className="grid grid-cols-1 gap-4">
                             <button onClick={() => setIsMaintModalOpen(true)} className="bg-white border border-gray-300 p-6 rounded-lg shadow-sm hover:border-orange-400 hover:bg-orange-50 flex flex-col items-center justify-center text-gray-700 transition-all">

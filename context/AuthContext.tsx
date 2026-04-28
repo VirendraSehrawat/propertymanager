@@ -7,7 +7,7 @@ import { auth, db } from "@/lib/firebase"; // Adjust path if your firebase.ts is
 
 interface AuthContextType {
     user: User | null;
-    role: "admin" | "tenant" | null;
+    role: "admin" | "tenant" | "employee" | null;
     loading: boolean;
 }
 
@@ -19,7 +19,7 @@ const AuthContext = createContext<AuthContextType>({
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
     const [user, setUser] = useState<User | null>(null);
-    const [role, setRole] = useState<"admin" | "tenant" | null>(null);
+    const [role, setRole] = useState<"admin" | "tenant" | "employee" | null>(null);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
