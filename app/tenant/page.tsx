@@ -8,10 +8,6 @@ import { auth, db, storage } from "@/lib/firebase";
 import { collection, query, where, onSnapshot, doc, getDoc, addDoc, updateDoc } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 
-// The Admin's UPI ID (In a full app, you would fetch this from an Admin Settings collection)
-const ADMIN_UPI_ID = "propertymanager@ybl";
-const ADMIN_NAME = "Property Management";
-
 export default function TenantDashboard() {
     const { user, role, loading } = useAuth();
     const router = useRouter();
@@ -19,6 +15,10 @@ export default function TenantDashboard() {
     const [unit, setUnit] = useState<any>(null);
     const [buildingName, setBuildingName] = useState<string>("");
     const [isFetchingUnit, setIsFetchingUnit] = useState(true);
+
+    // --- FIXED: Split into primitives to prevent infinite re-renders ---
+    const [upiId, setUpiId] = useState("");
+    const [payeeName, setPayeeName] = useState("");
 
     const [buildings, setBuildings] = useState<any[]>([]);
     const [vacantUnits, setVacantUnits] = useState<any[]>([]);
@@ -76,8 +76,16 @@ export default function TenantDashboard() {
         const unsubTickets = onSnapshot(query(collection(db, "maintenance"), where("tenantEmail", "==", emailLower)), (snapshot) => { setMyTickets(snapshot.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())); });
         const unsubInvoices = onSnapshot(query(collection(db, "invoices"), where("tenantEmail", "==", emailLower)), (snapshot) => { setMyInvoices(snapshot.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())); });
 
-        return () => { unsubUnit(); unsubVacant(); unsubApps(); unsubTickets(); unsubInvoices(); unsubBuildings(); };
-    }, [user, role]);
+        const unsubSettings = onSnapshot(doc(db, "settings", "payment"), (docSnap) => {
+            if (docSnap.exists()) {
+                setUpiId(docSnap.data().upiId || "");
+                setPayeeName(docSnap.data().payeeName || "");
+            }
+        });
+
+        // FIXED: Only depend on user.email, not the entire user object!
+        return () => { unsubUnit(); unsubVacant(); unsubApps(); unsubTickets(); unsubInvoices(); unsubBuildings(); unsubSettings(); };
+    }, [user?.email, role]);
 
     const groupedVacantUnits = buildings.map(bldg => ({ ...bldg, availableUnits: vacantUnits.filter(u => u.buildingId === bldg.id) })).filter(bldg => bldg.availableUnits.length > 0);
 
@@ -120,11 +128,10 @@ export default function TenantDashboard() {
     if (loading || isFetchingUnit) return <div className="min-h-screen flex items-center justify-center bg-gray-50">Loading your portal...</div>;
     if (!user || role !== "tenant") return null;
 
-    // Generate UPI Data dynamically if an invoice is selected
-    const upiLink = selectedInvoice
-        ? `upi://pay?pa=${ADMIN_UPI_ID}&pn=${encodeURIComponent(ADMIN_NAME)}&am=${selectedInvoice.totalAmount}&cu=INR`
+    const upiLink = selectedInvoice && upiId
+        ? `upi://pay?pa=${upiId}&pn=${encodeURIComponent(payeeName)}&am=${selectedInvoice.totalAmount}&cu=INR`
         : "";
-    const qrCodeUrl = selectedInvoice
+    const qrCodeUrl = upiLink
         ? `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(upiLink)}`
         : "";
 
@@ -217,33 +224,29 @@ export default function TenantDashboard() {
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto"><div className="bg-white rounded-lg p-6 max-w-md w-full shadow-xl my-8"><h2 className="text-xl font-bold text-gray-900 mb-2">Upload Deposit Receipt</h2><p className="text-sm text-gray-600 mb-6">Securing unit <strong className="text-gray-900">{selectedAppToUpdate.unitNumber}</strong>.</p><form onSubmit={handleUpdatePayment} className="space-y-4"><div><label className="block text-sm font-medium text-gray-700 mb-1">Payment Screenshot *</label><input type="file" accept="image/*,.pdf" required onChange={(e) => setPaymentFile(e.target.files ? e.target.files[0] : null)} className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:bg-green-50 file:text-green-700" /></div><div><label className="block text-sm font-medium text-gray-700 mb-1">Transaction ID *</label><input type="text" required value={appTxnId} onChange={(e) => setAppTxnId(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md" /></div><div className="flex justify-end gap-3 mt-6 pt-4 border-t border-gray-100"><button type="button" onClick={() => setIsUpdatePaymentModalOpen(false)} disabled={isSubmittingApp} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-md">Cancel</button><button type="submit" disabled={isSubmittingApp} className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700">{isSubmittingApp ? "Uploading..." : "Upload Payment"}</button></div></form></div></div>
             )}
 
-            {/* --- UPDATED: UPI PAYMENT MODAL --- */}
             {isPayModalOpen && selectedInvoice && (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
                     <div className="bg-white rounded-lg p-6 max-w-md w-full shadow-xl my-8">
                         <h2 className="text-xl font-bold text-gray-900 mb-2">Pay Invoice</h2>
                         <p className="text-sm text-gray-600 mb-4">Total Amount Due: <strong className="text-xl text-gray-900">₹{selectedInvoice.totalAmount}</strong></p>
 
-                        {/* UPI QR & Deep Link Section */}
-                        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex flex-col items-center justify-center mb-6">
-                            <p className="text-xs font-bold text-blue-800 uppercase tracking-widest mb-3">Pay via UPI</p>
-
-                            {/* Desktop: Show QR Code */}
-                            <div className="bg-white p-2 rounded-lg shadow-sm border border-gray-200 mb-4 hidden sm:block">
-                                <img src={qrCodeUrl} alt="UPI QR Code" className="w-32 h-32" />
+                        {!upiId ? (
+                            <div className="bg-yellow-50 border border-yellow-200 p-4 rounded-md mb-6 text-sm text-yellow-800 text-center">
+                                The property manager has not set up their UPI details yet. Please contact them directly to complete payment.
                             </div>
-                            <p className="text-xs text-gray-500 mb-3 hidden sm:block">Scan with GPay, PhonePe, or Paytm</p>
-
-                            {/* Mobile: Deep Link Button */}
-                            <a
-                                href={upiLink}
-                                className="w-full bg-blue-600 text-white text-center py-3 rounded-md font-bold shadow-sm hover:bg-blue-700 transition sm:hidden"
-                            >
-                                Open UPI App to Pay
-                            </a>
-
-                            <div className="text-xs text-gray-500 mt-2 font-mono">UPI ID: {ADMIN_UPI_ID}</div>
-                        </div>
+                        ) : (
+                            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex flex-col items-center justify-center mb-6">
+                                <p className="text-xs font-bold text-blue-800 uppercase tracking-widest mb-3">Pay via UPI</p>
+                                <div className="bg-white p-2 rounded-lg shadow-sm border border-gray-200 mb-4 hidden sm:block">
+                                    <img src={qrCodeUrl} alt="UPI QR Code" className="w-32 h-32" />
+                                </div>
+                                <p className="text-xs text-gray-500 mb-3 hidden sm:block">Scan with GPay, PhonePe, or Paytm</p>
+                                <a href={upiLink} className="w-full bg-blue-600 text-white text-center py-3 rounded-md font-bold shadow-sm hover:bg-blue-700 transition sm:hidden">
+                                    Open UPI App to Pay
+                                </a>
+                                <div className="text-xs text-gray-500 mt-2 font-mono">UPI ID: {upiId}</div>
+                            </div>
+                        )}
 
                         <form onSubmit={handlePayInvoice} className="space-y-4">
                             <div>
