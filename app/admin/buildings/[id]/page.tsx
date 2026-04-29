@@ -7,13 +7,24 @@ import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { db, storage } from "@/lib/firebase";
 import { useAuth } from "@/context/AuthContext";
 
+interface Unit {
+    id: string;
+    unitNumber: string;
+    baseRent: number;
+    status: string;
+    tenantEmail: string;
+    buildingId: string;
+    createdAt: string;
+    documents?: { name: string; url: string; uploadedAt: string }[];
+}
+
 export default function BuildingUnitsPage() {
     const { id } = useParams();
     const router = useRouter();
     const { role, loading } = useAuth();
 
     const [building, setBuilding] = useState<any>(null);
-    const [units, setUnits] = useState<any[]>([]);
+    const [units, setUnits] = useState<Unit[]>([]);
     const [isGenerating, setIsGenerating] = useState(false);
 
     const [unitNumber, setUnitNumber] = useState("");
@@ -51,7 +62,7 @@ export default function BuildingUnitsPage() {
     useEffect(() => {
         if (!id) return;
         const unsub = onSnapshot(query(collection(db, "units"), where("buildingId", "==", id)), (snapshot) => {
-            setUnits(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => a.unitNumber.localeCompare(b.unitNumber, undefined, { numeric: true })));
+            setUnits(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Unit)).sort((a, b) => a.unitNumber.localeCompare(b.unitNumber, undefined, { numeric: true })));
         });
         return () => unsub();
     }, [id]);

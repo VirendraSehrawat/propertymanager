@@ -70,11 +70,11 @@ export default function TenantDashboard() {
             setIsFetchingUnit(false);
         });
 
-        const unsubBuildings = onSnapshot(collection(db, "buildings"), (snapshot) => { setBuildings(snapshot.docs.map(d => ({ id: d.id, ...d.data() }))); });
-        const unsubVacant = onSnapshot(query(collection(db, "units"), where("status", "==", "vacant")), (snapshot) => { setVacantUnits(snapshot.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.unitNumber.localeCompare(b.unitNumber, undefined, { numeric: true }))); });
-        const unsubApps = onSnapshot(query(collection(db, "applications"), where("tenantEmail", "==", emailLower)), (snapshot) => { setMyApplications(snapshot.docs.map(d => ({ id: d.id, ...d.data() }))); });
-        const unsubTickets = onSnapshot(query(collection(db, "maintenance"), where("tenantEmail", "==", emailLower)), (snapshot) => { setMyTickets(snapshot.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())); });
-        const unsubInvoices = onSnapshot(query(collection(db, "invoices"), where("tenantEmail", "==", emailLower)), (snapshot) => { setMyInvoices(snapshot.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())); });
+        const unsubBuildings = onSnapshot(collection(db, "buildings"), (snapshot) => { setBuildings(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any))); });
+        const unsubVacant = onSnapshot(query(collection(db, "units"), where("status", "==", "vacant")), (snapshot) => { setVacantUnits(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)).sort((a: any, b: any) => a.unitNumber.localeCompare(b.unitNumber, undefined, { numeric: true }))); });
+        const unsubApps = onSnapshot(query(collection(db, "applications"), where("tenantEmail", "==", emailLower)), (snapshot) => { setMyApplications(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any))); });
+        const unsubTickets = onSnapshot(query(collection(db, "maintenance"), where("tenantEmail", "==", emailLower)), (snapshot) => { setMyTickets(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)).sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())); });
+        const unsubInvoices = onSnapshot(query(collection(db, "invoices"), where("tenantEmail", "==", emailLower)), (snapshot) => { setMyInvoices(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)).sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())); });
 
         const unsubSettings = onSnapshot(doc(db, "settings", "payment"), (docSnap) => {
             if (docSnap.exists()) {

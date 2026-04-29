@@ -32,8 +32,8 @@ export default function EmployeeDashboard() {
     useEffect(() => {
         if (role !== "employee") return;
         const unsub = onSnapshot(collection(db, "maintenance"), (snapshot) => {
-            const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            data.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+            const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
+            data.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
             setTickets(data);
         });
         return () => unsub();
