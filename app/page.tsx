@@ -13,6 +13,7 @@ import { auth, db, googleProvider } from "@/lib/firebase";
 import { useAuth } from "@/context/AuthContext";
 import { useRouter } from "next/navigation";
 
+console.log("My API Key is:", process.env.NEXT_PUBLIC_FIREBASE_API_KEY);
 export default function LoginPage() {
   // Auth Modes: 'email' | 'phone'
   const [authMode, setAuthMode] = useState<"email" | "phone">("email");
