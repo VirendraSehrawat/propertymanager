@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
 import { useEffect, useState } from "react";
@@ -72,11 +73,11 @@ export default function TenantDashboard() {
             setIsFetchingUnit(false);
         });
 
-        const unsubBuildings = onSnapshot(collection(db, "buildings"), (snapshot) => { setBuildings(snapshot.docs.map(d => ({ id: d.id, ...d.data() }))); });
-        const unsubVacant = onSnapshot(query(collection(db, "units"), where("status", "==", "vacant")), (snapshot) => { setVacantUnits(snapshot.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.unitNumber.localeCompare(b.unitNumber, undefined, { numeric: true }))); });
-        const unsubApps = onSnapshot(query(collection(db, "applications"), where("tenantEmail", "==", emailLower)), (snapshot) => { setMyApplications(snapshot.docs.map(d => ({ id: d.id, ...d.data() }))); });
-        const unsubTickets = onSnapshot(query(collection(db, "maintenance"), where("tenantEmail", "==", emailLower)), (snapshot) => { setMyTickets(snapshot.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())); });
-        const unsubInvoices = onSnapshot(query(collection(db, "invoices"), where("tenantEmail", "==", emailLower)), (snapshot) => { setMyInvoices(snapshot.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())); });
+        const unsubBuildings = onSnapshot(collection(db, "buildings"), (snapshot) => { setBuildings(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any))); });
+        const unsubVacant = onSnapshot(query(collection(db, "units"), where("status", "==", "vacant")), (snapshot) => { setVacantUnits(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)).sort((a, b) => a.unitNumber.localeCompare(b.unitNumber, undefined, { numeric: true }))); });
+        const unsubApps = onSnapshot(query(collection(db, "applications"), where("tenantEmail", "==", emailLower)), (snapshot) => { setMyApplications(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any))); });
+        const unsubTickets = onSnapshot(query(collection(db, "maintenance"), where("tenantEmail", "==", emailLower)), (snapshot) => { setMyTickets(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())); });
+        const unsubInvoices = onSnapshot(query(collection(db, "invoices"), where("tenantEmail", "==", emailLower)), (snapshot) => { setMyInvoices(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())); });
 
         const unsubSettings = onSnapshot(doc(db, "settings", "payment"), (docSnap) => {
             if (docSnap.exists()) { setUpiId(docSnap.data().upiId || ""); setPayeeName(docSnap.data().payeeName || ""); }
@@ -84,7 +85,7 @@ export default function TenantDashboard() {
 
         // --- NEW: Fetch Announcements ---
         const unsubAnnouncements = onSnapshot(collection(db, "announcements"), (snapshot) => {
-            const annData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            const annData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
             annData.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
             setAnnouncements(annData);
         });
@@ -97,7 +98,7 @@ export default function TenantDashboard() {
     const handleAppSubmit = async (e: React.FormEvent) => { e.preventDefault(); if (!user?.email || !selectedUnit || !idFile) { alert("ID Proof is required!"); return; } setIsSubmittingApp(true); try { const idRef = ref(storage, `applications/${user.uid}/id_${Date.now()}_${idFile.name}`); await uploadBytes(idRef, idFile); const idUrl = await getDownloadURL(idRef); let payUrl = ""; if (paymentFile) { const payRef = ref(storage, `applications/${user.uid}/payment_${Date.now()}_${paymentFile.name}`); await uploadBytes(payRef, paymentFile); payUrl = await getDownloadURL(payRef); } await addDoc(collection(db, "applications"), { tenantEmail: user.email.toLowerCase(), unitId: selectedUnit.id, unitNumber: selectedUnit.unitNumber, buildingId: selectedUnit.buildingId, securityDeposit: selectedUnit.baseRent, transactionId: appTxnId || "", idProofUrl: idUrl, paymentProofUrl: payUrl, status: "pending", createdAt: new Date().toISOString() }); setIsAppModalOpen(false); setSelectedUnit(null); setIdFile(null); setPaymentFile(null); setAppTxnId(""); } catch (error) { console.error(error); alert("Upload failed. Please try again."); } finally { setIsSubmittingApp(false); } };
     const handleUpdatePayment = async (e: React.FormEvent) => { e.preventDefault(); if (!selectedAppToUpdate || !paymentFile || !appTxnId) return; setIsSubmittingApp(true); try { const payRef = ref(storage, `applications/${user?.uid}/payment_${Date.now()}_${paymentFile.name}`); await uploadBytes(payRef, paymentFile); const payUrl = await getDownloadURL(payRef); await updateDoc(doc(db, "applications", selectedAppToUpdate.id), { paymentProofUrl: payUrl, transactionId: appTxnId }); setIsUpdatePaymentModalOpen(false); setSelectedAppToUpdate(null); setPaymentFile(null); setAppTxnId(""); } catch (error) { console.error(error); alert("Payment upload failed."); } finally { setIsSubmittingApp(false); } };
     const handlePayInvoice = async (e: React.FormEvent) => { e.preventDefault(); if (!selectedInvoice || !payTxnId) return; setIsSubmittingPayment(true); try { await updateDoc(doc(db, "invoices", selectedInvoice.id), { status: "pending", transactionId: payTxnId, submittedAt: new Date().toISOString() }); setIsPayModalOpen(false); setSelectedInvoice(null); setPayTxnId(""); } catch (error) { console.error(error); alert("Failed to submit payment."); } finally { setIsSubmittingPayment(false); } };
-    const handleMaintenanceSubmit = async (e: React.FormEvent) => { e.preventDefault(); if (!user?.email || !unit || !maintDesc) return; setIsSubmittingMaint(true); try { let photoUrl = ""; if (maintFile) { const fileRef = ref(storage, `maintenance/${user.uid}/${Date.now()}_${maintFile.name}`); await uploadBytes(fileRef, maintFile); photoUrl = await getDownloadURL(fileRef); } await addDoc(collection(db, "maintenance"), { tenantEmail: user.email.toLowerCase(), unitId: unit.id, unitNumber: unit.unitNumber, buildingName, category: maintCategory, description: maintDesc, photoUrl, status: "pending", createdAt: new Date().toISOString() }); setMaintCategory("Plumbing"); setMaintDesc(""); setMaintFile(null); setIsMaintModalOpen(false); } catch (error) { alert("Failed to submit ticket."); } finally { setIsSubmittingMaint(false); } };
+    const handleMaintenanceSubmit = async (e: React.FormEvent) => { e.preventDefault(); if (!user?.email || !unit || !maintDesc) return; setIsSubmittingMaint(true); try { let photoUrl = ""; if (maintFile) { const fileRef = ref(storage, `maintenance/${user.uid}/${Date.now()}_${maintFile.name}`); await uploadBytes(fileRef, maintFile); photoUrl = await getDownloadURL(fileRef); } await addDoc(collection(db, "maintenance"), { tenantEmail: user.email.toLowerCase(), unitId: unit.id, unitNumber: unit.unitNumber, buildingName, category: maintCategory, description: maintDesc, photoUrl, status: "pending", createdAt: new Date().toISOString() }); setMaintCategory("Plumbing"); setMaintDesc(""); setMaintFile(null); setIsMaintModalOpen(false); } catch { alert("Failed to submit ticket."); } finally { setIsSubmittingMaint(false); } };
     const handleLogout = async () => { await signOut(auth); router.push("/"); };
 
     if (loading || isFetchingUnit) return <div className="min-h-screen flex items-center justify-center bg-gray-50">Loading your portal...</div>;
