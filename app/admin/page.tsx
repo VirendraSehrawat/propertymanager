@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { signOut } from "firebase/auth";
 import { collection, addDoc, onSnapshot, query, orderBy, where, doc, updateDoc, setDoc, getDocs, writeBatch, deleteDoc } from "firebase/firestore";
-import { auth, db } from "@/lib/firebase";
+import { auth, db, storage } from "@/lib/firebase";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 
 interface Building {
     id: string;
@@ -96,6 +97,17 @@ interface OccupiedUnit {
     baseRent?: number;
 }
 
+interface DocumentData {
+    id: string;
+    unitId: string;
+    unitNumber: string;
+    tenantEmail: string;
+    title: string;
+    fileUrl: string;
+    uploadedBy: string;
+    createdAt: string;
+}
+
 export default function AdminDashboard() {
     const { user, role, loading } = useAuth();
     const router = useRouter();
@@ -104,7 +116,6 @@ export default function AdminDashboard() {
     const [applications, setApplications] = useState<Application[]>([]);
     const [pendingInvoices, setPendingInvoices] = useState<Invoice[]>([]);
 
-    // --- NEW: Track Unpaid Invoices for Late Fees ---
     const [unpaidInvoices, setUnpaidInvoices] = useState<Invoice[]>([]);
     const [isLateFeeModalOpen, setIsLateFeeModalOpen] = useState(false);
     const [lateFeeAmount, setLateFeeAmount] = useState<number>(500);
@@ -163,99 +174,122 @@ export default function AdminDashboard() {
     const [noticeTitle, setNoticeTitle] = useState("");
     const [isGeneratingInvoices, setIsGeneratingInvoices] = useState(false);
 
+    const [documents, setDocuments] = useState<DocumentData[]>([]);
+    const [isDocModalOpen, setIsDocModalOpen] = useState(false);
+    const [docTargetUnit, setDocTargetUnit] = useState("");
+    const [docTitle, setDocTitle] = useState("");
+    const [docFile, setDocFile] = useState<File | null>(null);
+    const [isUploadingDoc, setIsUploadingDoc] = useState(false);
+
+    // --- NEW: Financial Export State ---
+    const [exportMonth, setExportMonth] = useState("");
+    const [isExporting, setIsExporting] = useState(false);
+
     const handleReadingChange = (unitId: string, value: string) => {
         setMeterReadings(prev => ({ ...prev, [unitId]: Number(value) }));
     };
 
-    useEffect(() => { 
-        if (!loading && (!user || role !== "admin")) router.push("/"); 
+    useEffect(() => {
+        if (!loading && (!user || role !== "admin")) router.push("/");
     }, [user, role, loading, router]);
 
     useEffect(() => {
         if (role !== "admin") return;
-    const unsubBldgs = onSnapshot(query(collection(db, "buildings"), orderBy("createdAt", "desc")), (snapshot) => { setBuildings(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Building))); });
-    const unsubApps = onSnapshot(query(collection(db, "applications"), where("status", "==", "pending")), (snapshot) => { const appsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Application)); appsData.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()); setApplications(appsData); });
-    const unsubPendingInvoices = onSnapshot(query(collection(db, "invoices"), where("status", "==", "pending")), (snapshot) => { const invData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Invoice)); invData.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()); setPendingInvoices(invData); });
-    const unsubTickets = onSnapshot(collection(db, "maintenance"), (snapshot) => { const tData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as MaintenanceTicket)); tData.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()); setMaintenanceTickets(tData); });
-    const unsubContacts = onSnapshot(collection(db, "contacts"), (snapshot) => { setContacts(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Contact))); });
+        const unsubBldgs = onSnapshot(query(collection(db, "buildings"), orderBy("createdAt", "desc")), (snapshot) => { setBuildings(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Building))); });
+        const unsubApps = onSnapshot(query(collection(db, "applications"), where("status", "==", "pending")), (snapshot) => { const appsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Application)); appsData.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()); setApplications(appsData); });
+        const unsubPendingInvoices = onSnapshot(query(collection(db, "invoices"), where("status", "==", "pending")), (snapshot) => { const invData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Invoice)); invData.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()); setPendingInvoices(invData); });
+        const unsubTickets = onSnapshot(collection(db, "maintenance"), (snapshot) => { const tData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as MaintenanceTicket)); tData.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()); setMaintenanceTickets(tData); });
+        const unsubContacts = onSnapshot(collection(db, "contacts"), (snapshot) => { setContacts(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Contact))); });
         const unsubOccupied = onSnapshot(query(collection(db, "units"), where("status", "==", "occupied")), (snapshot) => { setOccupiedUnits(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as OccupiedUnit)).sort((a, b) => a.unitNumber.localeCompare(b.unitNumber, undefined, { numeric: true }))); });
         const unsubPaidInvoices = onSnapshot(query(collection(db, "invoices"), where("status", "==", "paid")), (snapshot) => { setPaidInvoices(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Invoice))); });
         const unsubExpenses = onSnapshot(collection(db, "expenses"), (snapshot) => { const expData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Expense)); expData.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()); setExpenses(expData); });
         const unsubSettings = onSnapshot(doc(db, "settings", "payment"), (docSnap) => { if (docSnap.exists()) { setUpiId(docSnap.data().upiId || ""); setPayeeName(docSnap.data().payeeName || ""); } });
         const unsubAnnouncements = onSnapshot(collection(db, "announcements"), (snapshot) => { const annData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Announcement)); annData.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()); setAnnouncements(annData); });
+        const unsubUnpaidInvoices = onSnapshot(query(collection(db, "invoices"), where("status", "==", "unpaid")), (snapshot) => { setUnpaidInvoices(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Invoice))); });
+        const unsubDocs = onSnapshot(collection(db, "documents"), (snapshot) => { const docData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as DocumentData)); docData.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()); setDocuments(docData); });
 
-        // --- NEW: Fetch Unpaid Invoices (For Late Fees) ---
-        const unsubUnpaidInvoices = onSnapshot(query(collection(db, "invoices"), where("status", "==", "unpaid")), (snapshot) => {
-            setUnpaidInvoices(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Invoice)));
-        });
-
-        return () => { unsubBldgs(); unsubApps(); unsubPendingInvoices(); unsubTickets(); unsubContacts(); unsubOccupied(); unsubPaidInvoices(); unsubExpenses(); unsubSettings(); unsubAnnouncements(); unsubUnpaidInvoices(); };
+        return () => { unsubBldgs(); unsubApps(); unsubPendingInvoices(); unsubTickets(); unsubContacts(); unsubOccupied(); unsubPaidInvoices(); unsubExpenses(); unsubSettings(); unsubAnnouncements(); unsubUnpaidInvoices(); unsubDocs(); };
     }, [role]);
 
     const totalIncome = paidInvoices.reduce((sum, inv) => sum + Number(inv.totalAmount || 0), 0);
     const totalExpenses = expenses.reduce((sum, exp) => sum + Number(exp.amount || 0), 0);
     const netProfit = totalIncome - totalExpenses;
 
-    // --- NEW: LATE FEE ENFORCEMENT LOGIC ---
-    const handleApplyLateFees = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setIsApplyingLateFees(true);
+    // --- NEW: FINANCIAL EXPORT LOGIC ---
+    const handleExportFinancials = () => {
+        if (!exportMonth) {
+            alert("Please select a month to export.");
+            return;
+        }
+        setIsExporting(true);
+
         try {
-            // Find all unpaid invoices that are standard monthly rent bills (not custom charges)
-            const standardUnpaid = unpaidInvoices.filter(inv => !inv.isCustom);
+            const [year, month] = exportMonth.split("-");
+            const targetMonth = parseInt(month, 10);
+            const targetYear = parseInt(year, 10);
 
-            if (standardUnpaid.length === 0) {
-                alert("There are currently no unpaid standard invoices to penalize.");
-                setIsLateFeeModalOpen(false);
-                return;
-            }
+            // Filter Income (Paid Invoices) for the selected month
+            const monthIncome = paidInvoices.filter(inv => {
+                if (!inv.paidAt) return false;
+                const d = new Date(inv.paidAt);
+                return d.getFullYear() === targetYear && (d.getMonth() + 1) === targetMonth;
+            });
 
-            const batch = writeBatch(db);
-            let count = 0;
+            // Filter Expenses for the selected month
+            const monthExpenses = expenses.filter(exp => {
+                if (!exp.date) return false;
+                const d = new Date(exp.date);
+                return d.getFullYear() === targetYear && (d.getMonth() + 1) === targetMonth;
+            });
 
-            for (const inv of standardUnpaid) {
-                const penaltyTitle = `Late Fee: ${inv.billingPeriod}`;
+            // Build the CSV String
+            let csvContent = "Date,Type,Category/Unit,Description/Tenant,Amount (INR)\n";
+            let totalInc = 0;
+            let totalExp = 0;
 
-                // Double-check we haven't already created this specific late fee for this unit
-                const existingFeeQuery = query(
-                    collection(db, "invoices"),
-                    where("unitId", "==", inv.unitId),
-                    where("billingPeriod", "==", penaltyTitle)
-                );
-                const existingFeeSnap = await getDocs(existingFeeQuery);
+            monthIncome.forEach(inv => {
+                const dateStr = new Date(inv.paidAt!).toLocaleDateString();
+                const amount = Number(inv.totalAmount || 0);
+                totalInc += amount;
+                csvContent += `"${dateStr}","Income","Unit ${inv.unitNumber}","${inv.tenantEmail}","${amount}"\n`;
+            });
 
-                if (existingFeeSnap.empty) {
-                    const newInvRef = doc(collection(db, "invoices"));
-                    batch.set(newInvRef, {
-                        unitId: inv.unitId,
-                        unitNumber: inv.unitNumber,
-                        tenantEmail: inv.tenantEmail,
-                        totalAmount: Number(lateFeeAmount),
-                        billingPeriod: penaltyTitle,
-                        isCustom: true, // This flag seamlessly handles the Tenant UI!
-                        status: "unpaid",
-                        transactionId: "",
-                        createdAt: new Date().toISOString()
-                    });
-                    count++;
-                }
-            }
+            monthExpenses.forEach(exp => {
+                const dateStr = new Date(exp.date).toLocaleDateString();
+                const amount = Number(exp.amount || 0);
+                totalExp += amount;
+                csvContent += `"${dateStr}","Expense","${exp.category}","${exp.description}","-${amount}"\n`;
+            });
 
-            if (count > 0) {
-                await batch.commit();
-                alert(`Successfully generated late fees for ${count} overdue tenants.`);
-            } else {
-                alert("Late fees have already been generated for all currently overdue invoices.");
-            }
-            setIsLateFeeModalOpen(false);
+            const currentNetProfit = totalInc - totalExp;
+
+            // Add Summary Rows
+            csvContent += `\n"","","","TOTAL INCOME","${totalInc}"\n`;
+            csvContent += `"","","","TOTAL EXPENSES","-${totalExp}"\n`;
+            csvContent += `"","","","NET PROFIT","${currentNetProfit}"\n`;
+
+            // Create a Blob and trigger the browser download
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement("a");
+            const url = URL.createObjectURL(blob);
+            link.setAttribute("href", url);
+            link.setAttribute("download", `Property_Financials_${exportMonth}.csv`);
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+
         } catch (error) {
-            console.error(error);
-            alert("Failed to apply late fees.");
+            console.error("Export failed", error);
+            alert("Failed to generate report.");
         } finally {
-            setIsApplyingLateFees(false);
+            setIsExporting(false);
         }
     };
 
+    const handleApplyLateFees = async (e: React.FormEvent) => { e.preventDefault(); setIsApplyingLateFees(true); try { const standardUnpaid = unpaidInvoices.filter(inv => !inv.isCustom); if (standardUnpaid.length === 0) { alert("There are currently no unpaid standard invoices to penalize."); setIsLateFeeModalOpen(false); return; } const batch = writeBatch(db); let count = 0; for (const inv of standardUnpaid) { const penaltyTitle = `Late Fee: ${inv.billingPeriod}`; const existingFeeQuery = query(collection(db, "invoices"), where("unitId", "==", inv.unitId), where("billingPeriod", "==", penaltyTitle)); const existingFeeSnap = await getDocs(existingFeeQuery); if (existingFeeSnap.empty) { const newInvRef = doc(collection(db, "invoices")); batch.set(newInvRef, { unitId: inv.unitId, unitNumber: inv.unitNumber, tenantEmail: inv.tenantEmail, totalAmount: Number(lateFeeAmount), billingPeriod: penaltyTitle, isCustom: true, status: "unpaid", transactionId: "", createdAt: new Date().toISOString() }); count++; } } if (count > 0) { await batch.commit(); alert(`Successfully generated late fees for ${count} overdue tenants.`); } else { alert("Late fees have already been generated for all currently overdue invoices."); } setIsLateFeeModalOpen(false); } catch (error) { console.error(error); alert("Failed to apply late fees."); } finally { setIsApplyingLateFees(false); } };
+    const handleUploadDocument = async (e: React.FormEvent) => { e.preventDefault(); if (!docTargetUnit || !docTitle || !docFile) return; setIsUploadingDoc(true); try { const selectedUnit = occupiedUnits.find(u => u.id === docTargetUnit); if (!selectedUnit) return; const fileRef = ref(storage, `vault/${selectedUnit.id}/${Date.now()}_${docFile.name}`); await uploadBytes(fileRef, docFile); const fileUrl = await getDownloadURL(fileRef); await addDoc(collection(db, "documents"), { unitId: selectedUnit.id, unitNumber: selectedUnit.unitNumber, tenantEmail: selectedUnit.tenantEmail, title: docTitle, fileUrl: fileUrl, uploadedBy: user?.email, createdAt: new Date().toISOString() }); setIsDocModalOpen(false); setDocTitle(""); setDocTargetUnit(""); setDocFile(null); } catch (error) { console.error(error); alert("Failed to upload document."); } finally { setIsUploadingDoc(false); } };
+    const handleDeleteDocument = async (id: string) => { if (window.confirm("Delete this document? Tenants will no longer be able to see it.")) { await deleteDoc(doc(db, "documents", id)); } };
     const handleBroadcastNotice = async (e: React.FormEvent) => { e.preventDefault(); if (!noticeTitle || !noticeMessage) return; setIsSubmittingNotice(true); try { await addDoc(collection(db, "announcements"), { title: noticeTitle, message: noticeMessage, target: noticeTarget, author: user?.email, createdAt: new Date().toISOString() }); setIsNoticeModalOpen(false); setNoticeTitle(""); setNoticeMessage(""); setNoticeTarget("all"); } catch (error) { console.error(error); alert("Failed to broadcast notice."); } finally { setIsSubmittingNotice(false); } };
     const handleDeleteNotice = async (id: string) => { if (window.confirm("Remove this announcement from tenant boards?")) { await deleteDoc(doc(db, "announcements", id)); } };
     const handleSaveSettings = async (e: React.FormEvent) => { e.preventDefault(); setIsSubmittingSettings(true); try { await setDoc(doc(db, "settings", "payment"), { upiId, payeeName }, { merge: true }); alert("Payment settings updated successfully!"); } catch (error) { console.error(error); alert("Failed to save settings."); } finally { setIsSubmittingSettings(false); } };
@@ -292,7 +326,6 @@ export default function AdminDashboard() {
 
             <main className="p-6 max-w-7xl mx-auto space-y-8">
 
-                {/* HEADER WITH NEW LATE FEE BUTTON */}
                 <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 bg-white p-6 rounded-lg shadow-sm border border-gray-200">
                     <div><h2 className="text-xl font-bold text-gray-900">Command Center</h2><p className="text-sm text-gray-500">Manage billing, maintenance, portfolio, and staff.</p></div>
                     <div className="flex flex-wrap gap-3 w-full lg:w-auto">
@@ -320,6 +353,57 @@ export default function AdminDashboard() {
                     </div>
 
                     <div className="space-y-8">
+                        {/* --- NEW: FINANCIAL EXPORT CARD --- */}
+                        <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+                            <h2 className="text-lg font-semibold text-gray-800 mb-2">📊 Financial Export</h2>
+                            <p className="text-sm text-gray-600 mb-4">Download a CSV report of all income and expenses for tax season.</p>
+                            <div className="flex flex-col sm:flex-row gap-3">
+                                <input
+                                    type="month"
+                                    value={exportMonth}
+                                    onChange={(e) => setExportMonth(e.target.value)}
+                                    className="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm"
+                                />
+                                <button
+                                    onClick={handleExportFinancials}
+                                    disabled={isExporting || !exportMonth}
+                                    className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 text-sm font-medium shadow-sm disabled:bg-green-300 transition whitespace-nowrap"
+                                >
+                                    {isExporting ? "Generating..." : "Download CSV"}
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+                            <div className="flex justify-between items-center mb-4">
+                                <h2 className="text-lg font-semibold text-gray-800">📄 Document Vault</h2>
+                                <button onClick={() => setIsDocModalOpen(true)} className="bg-blue-600 text-white px-3 py-1.5 rounded-md hover:bg-blue-700 text-sm font-medium shadow-sm">
+                                    + Upload Doc
+                                </button>
+                            </div>
+                            <div className="space-y-3 max-h-64 overflow-y-auto">
+                                {documents.length === 0 ? (
+                                    <p className="text-sm text-gray-500">No documents uploaded.</p>
+                                ) : (
+                                    documents.map(doc => (
+                                        <div key={doc.id} className="flex justify-between items-center border border-gray-100 p-3 rounded-md bg-gray-50 hover:bg-gray-100 transition">
+                                            <div className="truncate pr-4">
+                                                <div className="flex items-center gap-2 mb-1">
+                                                    <span className="text-[10px] font-bold text-gray-500 uppercase bg-gray-200 px-1.5 py-0.5 rounded">Unit {doc.unitNumber}</span>
+                                                    <span className="text-xs text-gray-400">{new Date(doc.createdAt).toLocaleDateString()}</span>
+                                                </div>
+                                                <p className="font-medium text-gray-800 text-sm truncate">{doc.title}</p>
+                                            </div>
+                                            <div className="flex items-center gap-3">
+                                                <a href={doc.fileUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline text-xs font-bold">View</a>
+                                                <button onClick={() => handleDeleteDocument(doc.id)} className="text-gray-400 hover:text-red-500 text-xs">🗑️</button>
+                                            </div>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+                        </div>
+
                         <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200"><h2 className="text-lg font-semibold text-gray-800 mb-4">Payment Settings (UPI)</h2><form onSubmit={handleSaveSettings} className="space-y-4"><div><label className="block text-sm font-medium text-gray-700 mb-1">Company / Payee Name</label><input type="text" value={payeeName} onChange={(e) => setPayeeName(e.target.value)} required className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" placeholder="e.g. Acme Properties" /></div><div><label className="block text-sm font-medium text-gray-700 mb-1">Company UPI ID</label><input type="text" value={upiId} onChange={(e) => setUpiId(e.target.value)} required className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm font-mono" placeholder="e.g. company@ybl" /></div><button type="submit" disabled={isSubmittingSettings} className="w-full bg-blue-600 text-white py-2 rounded-md hover:bg-blue-700 text-sm font-medium">{isSubmittingSettings ? "Saving..." : "Save Payment Details"}</button></form></div>
                         <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200"><div className="flex justify-between items-center mb-4"><h2 className="text-lg font-semibold text-gray-800">Expense Ledger</h2><button onClick={() => setIsExpenseModalOpen(true)} className="bg-gray-800 text-white px-3 py-1.5 rounded-md hover:bg-gray-900 text-sm font-medium">+ Log Expense</button></div><div className="space-y-3 max-h-64 overflow-y-auto">{expenses.length === 0 ? <p className="text-sm text-gray-500">No expenses recorded.</p> : (expenses.map(exp => (<div key={exp.id} className="flex justify-between items-center border border-gray-100 p-3 rounded-md bg-gray-50"><div><div className="flex items-center gap-2 mb-1"><span className="text-[10px] font-bold text-gray-500 uppercase bg-gray-200 px-1.5 py-0.5 rounded">{exp.category}</span><span className="text-xs text-gray-400">{exp.date}</span></div><p className="font-medium text-gray-800 text-sm">{exp.description}</p></div><div className="flex items-center gap-3"><span className="font-bold text-red-600">-₹{exp.amount}</span><button onClick={() => handleDeleteExpense(exp.id)} className="text-gray-400 hover:text-red-500 text-xs">🗑️</button></div></div>)))}</div></div>
                         <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200"><h2 className="text-lg font-semibold text-gray-800 mb-4">Service Contacts</h2><form onSubmit={handleAddContact} className="flex flex-col sm:flex-row gap-2 mb-6"><select value={contactRole} onChange={(e) => setContactRole(e.target.value)} className="px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 text-sm"><option>Plumber</option><option>Electrician</option><option>HVAC</option><option>Cleaner</option><option>Other</option></select><input type="text" placeholder="Name" required value={contactName} onChange={(e) => setContactName(e.target.value)} className="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm" /><input type="text" placeholder="Phone" required value={contactPhone} onChange={(e) => setContactPhone(e.target.value)} className="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm" /><button type="submit" disabled={isSubmittingContact} className="bg-gray-800 text-white px-4 py-2 rounded-md hover:bg-gray-900 text-sm">+</button></form><div className="space-y-3 max-h-64 overflow-y-auto">{contacts.length === 0 ? <p className="text-sm text-gray-500">No contacts saved.</p> : (contacts.map(c => (<div key={c.id} className="flex justify-between items-center border border-gray-100 p-3 rounded-md bg-gray-50"><div><span className="text-xs font-bold text-gray-500 uppercase">{c.role}</span><p className="font-medium text-gray-800">{c.name}</p><p className="text-sm text-blue-600">{c.phone}</p></div><button onClick={() => handleDeleteContact(c.id)} className="text-red-500 hover:text-red-700 text-xs">🗑️</button></div>)))}</div></div>
@@ -329,7 +413,6 @@ export default function AdminDashboard() {
                 </div>
             </main>
 
-            {/* --- NEW: LATE FEE ENFORCEMENT MODAL --- */}
             {isLateFeeModalOpen && (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
                     <div className="bg-white rounded-lg p-6 max-w-md w-full shadow-xl">
@@ -365,6 +448,38 @@ export default function AdminDashboard() {
             {isExpenseModalOpen && (<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50"><div className="bg-white rounded-lg p-6 max-w-md w-full shadow-xl"><h2 className="text-xl font-bold mb-4">Log New Expense</h2><form onSubmit={handleAddExpense} className="space-y-4"><div><label className="block text-sm font-medium text-gray-700 mb-1">Amount (₹)</label><input type="number" required min="1" value={expenseAmount} onChange={(e) => setExpenseAmount(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md" /></div><div><label className="block text-sm font-medium text-gray-700 mb-1">Category</label><select value={expenseCategory} onChange={(e) => setExpenseCategory(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md"><option>Maintenance/Repairs</option><option>Utilities (Building)</option><option>Property Taxes</option><option>Staff Salary</option><option>Other</option></select></div><div><label className="block text-sm font-medium text-gray-700 mb-1">Description</label><input type="text" required value={expenseDesc} onChange={(e) => setExpenseDesc(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md" /></div><div><label className="block text-sm font-medium text-gray-700 mb-1">Date</label><input type="date" value={expenseDate} onChange={(e) => setExpenseDate(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md" /></div><div className="flex justify-end gap-3 mt-6 pt-4 border-t border-gray-100"><button type="button" onClick={() => setIsExpenseModalOpen(false)} disabled={isSubmittingExpense} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-md">Cancel</button><button type="submit" disabled={isSubmittingExpense} className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700">{isSubmittingExpense ? "Saving..." : "Save Expense"}</button></div></form></div></div>)}
             {isLeaseModalOpen && selectedUnitForLease && (<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto"><div className="bg-white rounded-lg p-6 max-w-md w-full shadow-xl"><h2 className="text-xl font-bold mb-2">Edit Tenant Profile</h2><form onSubmit={handleUpdateLease} className="space-y-4"><div><label className="block text-sm font-medium text-gray-700 mb-1">Tenant Phone Number</label><input type="text" value={tenantPhone} onChange={(e) => setTenantPhone(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md" /></div><div><label className="block text-sm font-medium text-gray-700 mb-1">Emergency Contact Info</label><input type="text" value={emergencyContact} onChange={(e) => setEmergencyContact(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md" /></div><div className="grid grid-cols-2 gap-4"><div><label className="block text-sm font-medium text-gray-700 mb-1">Lease Start</label><input type="date" value={leaseStart} onChange={(e) => setLeaseStart(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" /></div><div><label className="block text-sm font-medium text-gray-700 mb-1">Lease End</label><input type="date" value={leaseEnd} onChange={(e) => setLeaseEnd(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" /></div></div><div className="flex justify-end gap-3 mt-6 pt-4 border-t border-gray-100"><button type="button" onClick={() => setIsLeaseModalOpen(false)} disabled={isUpdatingLease} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-md">Cancel</button><button type="submit" disabled={isUpdatingLease} className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">{isUpdatingLease ? "Saving..." : "Save Profile"}</button></div></form></div></div>)}
             {isInvoiceModalOpen && (<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto"><div className="bg-white rounded-lg p-6 max-w-2xl w-full shadow-xl my-8"><h2 className="text-xl font-bold text-gray-900 mb-2">Generate Monthly Invoices</h2><form onSubmit={handleConfirmInvoices}><div className="mb-6 bg-blue-50 border border-blue-200 p-4 rounded-md flex justify-between"><div><label className="block text-sm font-bold text-blue-900 mb-1">Electricity Rate</label></div><input type="number" step="0.01" required value={electricityRate} onChange={(e) => setElectricityRate(Number(e.target.value))} className="w-24 px-3 py-2 border border-gray-300 rounded-md" /></div><div className="max-h-96 overflow-y-auto border border-gray-200 rounded-md mb-6"><table className="min-w-full divide-y divide-gray-200 text-sm"><tbody className="bg-white divide-y divide-gray-200">{occupiedUnits.map((unit) => (<tr key={unit.id} className="hover:bg-gray-50"><td className="px-4 py-3"><p className="font-bold">{unit.unitNumber}</p></td><td className="px-4 py-3 text-right"><input type="number" required min={unit.lastMeterReading || 0} value={meterReadings[unit.id] !== undefined ? meterReadings[unit.id] : ''} onChange={(e) => handleReadingChange(unit.id, e.target.value)} className="w-24 px-2 py-1 border border-gray-300 rounded-md text-right font-mono" /></td></tr>))}</tbody></table></div><div className="flex justify-end gap-3"><button type="button" onClick={() => setIsInvoiceModalOpen(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-md">Cancel</button><button type="submit" disabled={isGeneratingInvoices || occupiedUnits.length === 0} className="px-6 py-2 bg-gray-900 text-white rounded-md hover:bg-gray-800 disabled:bg-gray-400">Generate & Send Bills</button></div></form></div></div>)}
+
+            {/* --- NEW: DOCUMENT VAULT MODAL --- */}
+            {isDocModalOpen && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
+                    <div className="bg-white rounded-lg p-6 max-w-md w-full shadow-xl">
+                        <h2 className="text-xl font-bold mb-2">Upload Document</h2>
+                        <p className="text-sm text-gray-600 mb-4">Securely share a lease agreement, addendum, or receipt with a tenant.</p>
+                        <form onSubmit={handleUploadDocument} className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Assign to Unit</label>
+                                <select required value={docTargetUnit} onChange={(e) => setDocTargetUnit(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md">
+                                    <option value="" disabled>Select a unit...</option>
+                                    {occupiedUnits.map(u => <option key={u.id} value={u.id}>{u.unitNumber} - {u.tenantEmail}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Document Name / Title</label>
+                                <input type="text" required value={docTitle} onChange={(e) => setDocTitle(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md" placeholder="e.g., 2024 Signed Lease Agreement" />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">File (PDF or Image)</label>
+                                <input type="file" required accept=".pdf,image/*" onChange={(e) => setDocFile(e.target.files ? e.target.files[0] : null)} className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:bg-blue-50 file:text-blue-700" />
+                            </div>
+                            <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-gray-100">
+                                <button type="button" onClick={() => setIsDocModalOpen(false)} disabled={isUploadingDoc} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-md">Cancel</button>
+                                <button type="submit" disabled={isUploadingDoc} className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-blue-300">{isUploadingDoc ? "Uploading..." : "Upload to Vault"}</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
         </div>
     );
 }
