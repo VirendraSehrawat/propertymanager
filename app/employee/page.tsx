@@ -6,7 +6,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useRouter } from "next/navigation";
 import { signOut } from "firebase/auth";
 import { auth, db, storage } from "@/lib/firebase";
-import { collection, onSnapshot, doc, updateDoc, arrayUnion } from "firebase/firestore";
+import { collection, onSnapshot, doc, updateDoc, arrayUnion, query, where, writeBatch } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 
 export default function EmployeeDashboard() {
@@ -15,13 +15,31 @@ export default function EmployeeDashboard() {
 
     const [activeTickets, setActiveTickets] = useState<any[]>([]);
     const [resolvedTickets, setResolvedTickets] = useState<any[]>([]);
-    const [activeTab, setActiveTab] = useState<"active" | "resolved">("active");
+    const [activeTab, setActiveTab] = useState<"active" | "resolved" | "meter" | "dashboard">("dashboard");
 
     const [isResolveModalOpen, setIsResolveModalOpen] = useState(false);
     const [selectedTicket, setSelectedTicket] = useState<any>(null);
     const [resolutionNote, setResolutionNote] = useState("");
     const [resolutionFile, setResolutionFile] = useState<File | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
+
+    // Meter Reading States
+    const [occupiedUnits, setOccupiedUnits] = useState<any[]>([]);
+    const [selectedMeterUnit, setSelectedMeterUnit] = useState("");
+    const [currentReading, setCurrentReading] = useState("");
+    const [billingMonth, setBillingMonth] = useState(() => {
+        const now = new Date();
+        return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    });
+    const [isGeneratingInvoice, setIsGeneratingInvoice] = useState(false);
+    const [electricityRate] = useState(12); // ₹12 per unit consumed
+
+    // Monthly Dashboard States
+    const [allInvoices, setAllInvoices] = useState<any[]>([]);
+    const [dashboardMonth, setDashboardMonth] = useState(() => {
+        const now = new Date();
+        return now.toLocaleString('default', { month: 'long', year: 'numeric' });
+    });
 
     useEffect(() => {
         // Note: Adjust the role check if your system uses "caretaker" or something else
@@ -43,7 +61,15 @@ export default function EmployeeDashboard() {
             setResolvedTickets(allTickets.filter(t => t.status === "resolved"));
         });
 
-        return () => unsubTickets();
+        const unsubUnits = onSnapshot(query(collection(db, "units"), where("status", "==", "occupied")), (snapshot) => {
+            setOccupiedUnits(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)).sort((a, b) => a.unitNumber.localeCompare(b.unitNumber, undefined, { numeric: true })));
+        });
+
+        const unsubInvoices = onSnapshot(collection(db, "invoices"), (snapshot) => {
+            setAllInvoices(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)));
+        });
+
+        return () => { unsubTickets(); unsubUnits(); unsubInvoices(); };
     }, [role]);
 
     const handleMarkInProgress = async (ticketId: string) => {
@@ -102,6 +128,61 @@ export default function EmployeeDashboard() {
         router.push("/");
     };
 
+    const handleGenerateMeterInvoice = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!selectedMeterUnit || !currentReading || !billingMonth) return;
+
+        const unit = occupiedUnits.find(u => u.id === selectedMeterUnit);
+        if (!unit) return;
+
+        setIsGeneratingInvoice(true);
+        try {
+            const [year, month] = billingMonth.split("-");
+            const monthName = new Date(Number(year), Number(month) - 1).toLocaleString('default', { month: 'long', year: 'numeric' });
+            const monthKey = `${month}_${year}`;
+
+            const reading = Number(currentReading);
+            const previousReading = Number(unit.lastMeterReading) || 0;
+            const unitsConsumed = Math.max(0, reading - previousReading);
+            const electricityCharge = unitsConsumed * electricityRate;
+            const totalAmount = Number(unit.baseRent || 0) + electricityCharge;
+
+            const invoiceId = `inv_${unit.id}_${monthKey}`;
+            const batch = writeBatch(db);
+
+            // Create / update the invoice
+            batch.set(doc(db, "invoices", invoiceId), {
+                unitId: unit.id,
+                unitNumber: unit.unitNumber,
+                tenantEmail: unit.tenantEmail,
+                baseRent: unit.baseRent || 0,
+                previousReading,
+                currentReading: reading,
+                electricityConsumed: unitsConsumed,
+                electricityRate,
+                electricityCharge,
+                totalAmount,
+                billingPeriod: monthName,
+                status: "unpaid",
+                transactionId: "",
+                createdAt: new Date().toISOString()
+            }, { merge: true });
+
+            // Update last meter reading on the unit
+            batch.update(doc(db, "units", unit.id), { lastMeterReading: reading });
+
+            await batch.commit();
+            alert(`Invoice generated for ${unit.unitNumber}!\n\nRent: ₹${unit.baseRent || 0}\nElectricity: ${unitsConsumed} units × ₹${electricityRate} = ₹${electricityCharge}\nTotal: ₹${totalAmount}`);
+            setSelectedMeterUnit("");
+            setCurrentReading("");
+        } catch (error) {
+            console.error(error);
+            alert("Failed to generate invoice.");
+        } finally {
+            setIsGeneratingInvoice(false);
+        }
+    };
+
     if (loading) return <div className="min-h-screen flex items-center justify-center bg-gray-50">Loading...</div>;
     if (!user || role !== "employee") return null;
 
@@ -123,20 +204,190 @@ export default function EmployeeDashboard() {
                 {/* TABS */}
                 <div className="flex bg-gray-200 rounded-lg p-1 shadow-inner">
                     <button
+                        onClick={() => setActiveTab("dashboard")}
+                        className={`flex-1 py-3 text-sm font-bold rounded-md transition ${activeTab === "dashboard" ? "bg-white text-indigo-600 shadow-sm" : "text-gray-500"}`}
+                    >
+                        Dashboard
+                    </button>
+                    <button
                         onClick={() => setActiveTab("active")}
                         className={`flex-1 py-3 text-sm font-bold rounded-md transition ${activeTab === "active" ? "bg-white text-orange-600 shadow-sm" : "text-gray-500"}`}
                     >
-                        Active Tasks ({activeTickets.length})
+                        Tasks ({activeTickets.length})
+                    </button>
+                    <button
+                        onClick={() => setActiveTab("meter")}
+                        className={`flex-1 py-3 text-sm font-bold rounded-md transition ${activeTab === "meter" ? "bg-white text-purple-600 shadow-sm" : "text-gray-500"}`}
+                    >
+                        Meter
                     </button>
                     <button
                         onClick={() => setActiveTab("resolved")}
                         className={`flex-1 py-3 text-sm font-bold rounded-md transition ${activeTab === "resolved" ? "bg-white text-green-600 shadow-sm" : "text-gray-500"}`}
                     >
-                        Completed
+                        Done
                     </button>
                 </div>
 
+                {/* MONTHLY DASHBOARD TAB */}
+                {activeTab === "dashboard" && (() => {
+                    // Get list of unique billing periods from invoices
+                    const periods = [...new Set(allInvoices.filter(inv => !inv.isCustom).map(inv => inv.billingPeriod))].sort((a, b) => {
+                        const da = new Date(a); const db2 = new Date(b);
+                        return db2.getTime() - da.getTime();
+                    });
+
+                    const monthInvoices = allInvoices.filter(inv => inv.billingPeriod === dashboardMonth && !inv.isCustom);
+                    const totalRent = monthInvoices.reduce((sum, inv) => sum + Number(inv.baseRent || 0), 0);
+                    const totalElectricity = monthInvoices.reduce((sum, inv) => sum + Number(inv.electricityCharge || 0), 0);
+                    const totalBilled = totalRent + totalElectricity;
+
+                    const paidInvoices = monthInvoices.filter(inv => inv.status === "paid");
+                    const rentCollected = paidInvoices.reduce((sum, inv) => sum + Number(inv.baseRent || 0), 0);
+                    const electricityCollected = paidInvoices.reduce((sum, inv) => sum + Number(inv.electricityCharge || 0), 0);
+                    const totalCollected = rentCollected + electricityCollected;
+
+                    const pendingInvoices = monthInvoices.filter(inv => inv.status === "unpaid" || inv.status === "pending");
+                    const pendingRent = pendingInvoices.reduce((sum, inv) => sum + Number(inv.baseRent || 0), 0);
+                    const pendingElectricity = pendingInvoices.reduce((sum, inv) => sum + Number(inv.electricityCharge || 0), 0);
+                    const totalPending = pendingRent + pendingElectricity;
+
+                    return (
+                        <div className="space-y-4">
+                            {/* Month Selector */}
+                            <div className="bg-white rounded-xl shadow-sm border border-indigo-200 p-4">
+                                <label className="block text-sm font-medium text-gray-700 mb-2">Select Month</label>
+                                <select value={dashboardMonth} onChange={(e) => setDashboardMonth(e.target.value)} className="w-full px-3 py-2.5 border border-gray-300 rounded-lg font-medium">
+                                    {periods.length === 0 ? <option>No invoices yet</option> : periods.map(p => <option key={p} value={p}>{p}</option>)}
+                                </select>
+                            </div>
+
+                            {/* Summary Cards */}
+                            <div className="grid grid-cols-2 gap-3">
+                                <div className="bg-white rounded-xl shadow-sm border border-blue-200 p-4">
+                                    <p className="text-xs font-bold text-blue-600 uppercase">Month&apos;s Rent</p>
+                                    <p className="text-2xl font-bold text-gray-900 mt-1">₹{totalRent.toLocaleString()}</p>
+                                </div>
+                                <div className="bg-white rounded-xl shadow-sm border border-yellow-200 p-4">
+                                    <p className="text-xs font-bold text-yellow-600 uppercase">Month&apos;s Electricity</p>
+                                    <p className="text-2xl font-bold text-gray-900 mt-1">₹{totalElectricity.toLocaleString()}</p>
+                                </div>
+                                <div className="bg-white rounded-xl shadow-sm border border-green-200 p-4">
+                                    <p className="text-xs font-bold text-green-600 uppercase">Rent Collected</p>
+                                    <p className="text-2xl font-bold text-green-700 mt-1">₹{rentCollected.toLocaleString()}</p>
+                                </div>
+                                <div className="bg-white rounded-xl shadow-sm border border-green-200 p-4">
+                                    <p className="text-xs font-bold text-green-600 uppercase">Electricity Collected</p>
+                                    <p className="text-2xl font-bold text-green-700 mt-1">₹{electricityCollected.toLocaleString()}</p>
+                                </div>
+                            </div>
+
+                            {/* Totals Bar */}
+                            <div className="bg-indigo-50 rounded-xl border border-indigo-200 p-4 flex justify-between items-center">
+                                <div>
+                                    <p className="text-xs font-bold text-indigo-600 uppercase">Total Billed</p>
+                                    <p className="text-xl font-bold text-indigo-900">₹{totalBilled.toLocaleString()}</p>
+                                </div>
+                                <div className="text-right">
+                                    <p className="text-xs font-bold text-green-600 uppercase">Collected</p>
+                                    <p className="text-xl font-bold text-green-700">₹{totalCollected.toLocaleString()}</p>
+                                </div>
+                            </div>
+
+                            {/* Pending Section */}
+                            <div className="bg-white rounded-xl shadow-sm border border-red-200 overflow-hidden">
+                                <div className="bg-red-50 px-5 py-3 border-b border-red-100 flex justify-between items-center">
+                                    <h3 className="text-sm font-bold text-red-800">⏳ Pending Payments</h3>
+                                    <span className="text-xs font-bold bg-red-100 text-red-700 px-2 py-1 rounded-full">₹{totalPending.toLocaleString()}</span>
+                                </div>
+                                <div className="divide-y divide-gray-100 max-h-80 overflow-y-auto">
+                                    {pendingInvoices.length === 0 ? (
+                                        <p className="p-5 text-sm text-gray-500 text-center">🎉 All payments collected for this month!</p>
+                                    ) : (
+                                        pendingInvoices.map(inv => (
+                                            <div key={inv.id} className="px-5 py-3 flex justify-between items-center hover:bg-gray-50">
+                                                <div>
+                                                    <p className="font-bold text-gray-900">{inv.unitNumber}</p>
+                                                    <p className="text-xs text-gray-500">{inv.tenantEmail}</p>
+                                                </div>
+                                                <div className="text-right">
+                                                    <p className="font-bold text-red-600">₹{Number(inv.totalAmount || 0).toLocaleString()}</p>
+                                                    <p className="text-[10px] text-gray-400 uppercase mt-0.5">Rent: ₹{inv.baseRent || 0} + Elec: ₹{inv.electricityCharge || 0}</p>
+                                                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${inv.status === 'pending' ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'}`}>
+                                                        {inv.status === 'pending' ? 'VERIFICATION PENDING' : 'UNPAID'}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        ))
+                                    )}
+                                </div>
+                                {pendingInvoices.length > 0 && (
+                                    <div className="bg-gray-50 px-5 py-3 border-t border-gray-200 text-center">
+                                        <p className="text-xs text-gray-500">Pending Rent: <strong className="text-gray-800">₹{pendingRent.toLocaleString()}</strong> | Pending Electricity: <strong className="text-gray-800">₹{pendingElectricity.toLocaleString()}</strong></p>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    );
+                })()}
+
+                {/* METER READING TAB */}
+                {activeTab === "meter" && (
+                    <div className="bg-white rounded-xl shadow-sm border border-purple-200 overflow-hidden">
+                        <div className="bg-purple-50 px-5 py-4 border-b border-purple-100">
+                            <h2 className="text-lg font-bold text-purple-800">⚡ Record Meter Reading & Generate Invoice</h2>
+                            <p className="text-xs text-purple-600 mt-1">Enter the current meter reading to calculate the electricity bill (₹{electricityRate}/unit)</p>
+                        </div>
+                        <form onSubmit={handleGenerateMeterInvoice} className="p-5 space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Select Unit</label>
+                                <select required value={selectedMeterUnit} onChange={(e) => setSelectedMeterUnit(e.target.value)} className="w-full px-3 py-2.5 border border-gray-300 rounded-lg">
+                                    <option value="" disabled>Choose an occupied unit...</option>
+                                    {occupiedUnits.map(u => (
+                                        <option key={u.id} value={u.id}>{u.unitNumber} — {u.tenantEmail} (Last: {u.lastMeterReading || 0})</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Billing Month</label>
+                                <input type="month" required value={billingMonth} onChange={(e) => setBillingMonth(e.target.value)} className="w-full px-3 py-2.5 border border-gray-300 rounded-lg" />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Current Meter Reading</label>
+                                <input type="number" required min="0" value={currentReading} onChange={(e) => setCurrentReading(e.target.value)} className="w-full px-3 py-2.5 border border-gray-300 rounded-lg" placeholder="e.g. 1250" />
+                            </div>
+
+                            {/* Live Preview */}
+                            {selectedMeterUnit && currentReading && (() => {
+                                const unit = occupiedUnits.find(u => u.id === selectedMeterUnit);
+                                if (!unit) return null;
+                                const prev = Number(unit.lastMeterReading) || 0;
+                                const curr = Number(currentReading);
+                                const consumed = Math.max(0, curr - prev);
+                                const elecCharge = consumed * electricityRate;
+                                const total = Number(unit.baseRent || 0) + elecCharge;
+                                return (
+                                    <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 space-y-2 text-sm">
+                                        <p className="font-bold text-gray-800 text-base">Invoice Preview</p>
+                                        <div className="flex justify-between"><span className="text-gray-600">Previous Reading:</span><span className="font-mono">{prev}</span></div>
+                                        <div className="flex justify-between"><span className="text-gray-600">Current Reading:</span><span className="font-mono">{curr}</span></div>
+                                        <div className="flex justify-between"><span className="text-gray-600">Units Consumed:</span><span className="font-mono font-bold">{consumed}</span></div>
+                                        <div className="flex justify-between"><span className="text-gray-600">Electricity (×₹{electricityRate}):</span><span className="font-mono">₹{elecCharge}</span></div>
+                                        <div className="flex justify-between"><span className="text-gray-600">Base Rent:</span><span className="font-mono">₹{unit.baseRent || 0}</span></div>
+                                        <div className="flex justify-between border-t border-gray-300 pt-2 mt-2"><span className="font-bold text-gray-900">Total Invoice:</span><span className="font-bold text-lg text-green-700">₹{total}</span></div>
+                                    </div>
+                                );
+                            })()}
+
+                            <button type="submit" disabled={isGeneratingInvoice} className="w-full py-3 bg-purple-600 text-white rounded-lg font-bold hover:bg-purple-700 transition shadow-sm disabled:bg-purple-400">
+                                {isGeneratingInvoice ? "Generating..." : "Generate Invoice"}
+                            </button>
+                        </form>
+                    </div>
+                )}
+
                 {/* TICKET LIST */}
+                {activeTab !== "meter" && (
                 <div className="space-y-4">
                     {(activeTab === "active" ? activeTickets : resolvedTickets).length === 0 ? (
                         <div className="bg-white p-8 rounded-xl shadow-sm text-center border border-gray-200 mt-8">
@@ -207,6 +458,7 @@ export default function EmployeeDashboard() {
                         ))
                     )}
                 </div>
+                )}
             </main>
 
             {/* RESOLVE MODAL */}

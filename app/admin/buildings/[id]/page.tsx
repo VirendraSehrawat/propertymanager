@@ -15,6 +15,7 @@ interface Unit {
     tenantEmail: string;
     tenantName?: string;
     tenantPhone?: string;
+    lastMeterReading?: number;
     buildingId: string;
     createdAt: string;
     documents?: { name: string; url: string; uploadedAt: string }[];
@@ -54,6 +55,17 @@ export default function BuildingUnitsPage() {
     const [isAssignExistingModalOpen, setIsAssignExistingModalOpen] = useState(false);
     const [selectedVacantUnit, setSelectedVacantUnit] = useState<any>(null);
     const [selectedExistingTenant, setSelectedExistingTenant] = useState("");
+
+    // NEW: Single Room Meter Reading & Invoice
+    const [isMeterModalOpen, setIsMeterModalOpen] = useState(false);
+    const [meterUnit, setMeterUnit] = useState<any>(null);
+    const [meterReading, setMeterReading] = useState("");
+    const [meterMonth, setMeterMonth] = useState(() => {
+        const now = new Date();
+        return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    });
+    const [isGeneratingMeterInvoice, setIsGeneratingMeterInvoice] = useState(false);
+    const [meterElectricityRate] = useState(12);
 
     useEffect(() => {
         if (!loading && role !== "admin") router.push("/");
@@ -110,6 +122,49 @@ export default function BuildingUnitsPage() {
             await updateDoc(doc(db, "units", selectedVacantUnit.id), { status: "occupied", tenantEmail: sourceUnit.tenantEmail, tenantName: sourceUnit.tenantName || "", tenantPhone: sourceUnit.tenantPhone || "" });
             setIsAssignExistingModalOpen(false); setSelectedVacantUnit(null); setSelectedExistingTenant("");
         } catch (error) { console.error(error); }
+    };
+
+    const handleMeterInvoice = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!meterUnit || !meterReading || !meterMonth) return;
+        setIsGeneratingMeterInvoice(true);
+        try {
+            const [year, month] = meterMonth.split("-");
+            const monthName = new Date(Number(year), Number(month) - 1).toLocaleString('default', { month: 'long', year: 'numeric' });
+            const monthKey = `${month}_${year}`;
+
+            const reading = Number(meterReading);
+            const previousReading = Number(meterUnit.lastMeterReading) || 0;
+            const unitsConsumed = Math.max(0, reading - previousReading);
+            const electricityCharge = unitsConsumed * meterElectricityRate;
+            const totalAmount = Number(meterUnit.baseRent || 0) + electricityCharge;
+
+            const invoiceId = `inv_${meterUnit.id}_${monthKey}`;
+            const batch = writeBatch(db);
+
+            batch.set(doc(db, "invoices", invoiceId), {
+                unitId: meterUnit.id,
+                unitNumber: meterUnit.unitNumber,
+                tenantEmail: meterUnit.tenantEmail,
+                baseRent: meterUnit.baseRent || 0,
+                previousReading,
+                currentReading: reading,
+                electricityConsumed: unitsConsumed,
+                electricityRate: meterElectricityRate,
+                electricityCharge,
+                totalAmount,
+                billingPeriod: monthName,
+                status: "unpaid",
+                transactionId: "",
+                createdAt: new Date().toISOString()
+            }, { merge: true });
+
+            batch.update(doc(db, "units", meterUnit.id), { lastMeterReading: reading });
+            await batch.commit();
+
+            alert(`Invoice generated for ${meterUnit.unitNumber}!\n\nRent: ₹${meterUnit.baseRent || 0}\nElectricity: ${unitsConsumed} units × ₹${meterElectricityRate} = ₹${electricityCharge}\nTotal: ₹${totalAmount}`);
+            setIsMeterModalOpen(false); setMeterUnit(null); setMeterReading("");
+        } catch (error) { console.error(error); alert("Failed to generate invoice."); } finally { setIsGeneratingMeterInvoice(false); }
     };
 
     const handleEditSubmit = async (e: React.FormEvent) => {
@@ -228,7 +283,10 @@ export default function BuildingUnitsPage() {
                                                 <button onClick={() => { setSelectedUnit(unit); setIsAssignModalOpen(true); }} className="text-sm text-blue-600 hover:underline font-medium">New Tenant</button>
                                             </div>
                                         ) : (
-                                            <button onClick={() => handleRemoveTenant(unit.id)} className="text-sm text-red-600 hover:underline font-medium">Remove</button>
+                                            <div className="flex gap-2">
+                                                <button onClick={() => { setMeterUnit(unit); setMeterReading(""); setIsMeterModalOpen(true); }} className="text-sm text-purple-600 hover:underline font-medium">⚡ Meter</button>
+                                                <button onClick={() => handleRemoveTenant(unit.id)} className="text-sm text-red-600 hover:underline font-medium">Remove</button>
+                                            </div>
                                         )}
                                     </div>
 
@@ -285,6 +343,45 @@ export default function BuildingUnitsPage() {
             {isAssignExistingModalOpen && selectedVacantUnit && (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
                     <div className="bg-white rounded-lg p-6 max-w-md w-full shadow-xl"><h2 className="text-xl font-bold mb-4">Assign Existing Tenant to {selectedVacantUnit.unitNumber}</h2><form onSubmit={handleAssignExistingTenant}><div className="mb-4"><label className="block text-sm font-medium text-gray-700 mb-1">Select Existing Tenant</label><select required value={selectedExistingTenant} onChange={(e) => setSelectedExistingTenant(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md"><option value="" disabled>Choose a tenant...</option>{units.filter(u => u.status === "occupied").map(u => (<option key={u.id} value={u.id}>{u.unitNumber} - {u.tenantEmail}</option>))}</select></div><p className="text-xs text-gray-500 mb-4">This will assign the selected tenant to <strong>{selectedVacantUnit.unitNumber}</strong> as an additional room. The tenant will remain in their current unit as well.</p><div className="flex justify-end gap-3 mt-6"><button type="button" onClick={() => { setIsAssignExistingModalOpen(false); setSelectedVacantUnit(null); setSelectedExistingTenant(""); }} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-md">Cancel</button><button type="submit" className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700">Assign Room</button></div></form></div>
+                </div>
+            )}
+
+            {/* METER READING MODAL */}
+            {isMeterModalOpen && meterUnit && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+                    <div className="bg-white rounded-lg p-6 max-w-md w-full shadow-xl">
+                        <h2 className="text-xl font-bold mb-1">⚡ Meter Reading — {meterUnit.unitNumber}</h2>
+                        <p className="text-sm text-gray-500 mb-4">{meterUnit.tenantEmail} • Last reading: <strong className="font-mono">{meterUnit.lastMeterReading || 0}</strong></p>
+                        <form onSubmit={handleMeterInvoice} className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Billing Month</label>
+                                <input type="month" required value={meterMonth} onChange={(e) => setMeterMonth(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md" />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Current Meter Reading</label>
+                                <input type="number" required min={meterUnit.lastMeterReading || 0} value={meterReading} onChange={(e) => setMeterReading(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md font-mono" placeholder="e.g. 1250" />
+                            </div>
+                            {meterReading && (() => {
+                                const prev = Number(meterUnit.lastMeterReading) || 0;
+                                const curr = Number(meterReading);
+                                const consumed = Math.max(0, curr - prev);
+                                const elecCharge = consumed * meterElectricityRate;
+                                const total = Number(meterUnit.baseRent || 0) + elecCharge;
+                                return (
+                                    <div className="bg-gray-50 border border-gray-200 rounded-md p-3 text-sm space-y-1">
+                                        <div className="flex justify-between"><span>Units consumed:</span><span className="font-mono font-bold">{consumed}</span></div>
+                                        <div className="flex justify-between"><span>Electricity (×₹{meterElectricityRate}):</span><span className="font-mono">₹{elecCharge}</span></div>
+                                        <div className="flex justify-between"><span>Base Rent:</span><span className="font-mono">₹{meterUnit.baseRent || 0}</span></div>
+                                        <div className="flex justify-between border-t pt-1 mt-1"><span className="font-bold">Total Invoice:</span><span className="font-bold text-green-700">₹{total}</span></div>
+                                    </div>
+                                );
+                            })()}
+                            <div className="flex justify-end gap-3 mt-4">
+                                <button type="button" onClick={() => { setIsMeterModalOpen(false); setMeterUnit(null); }} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-md">Cancel</button>
+                                <button type="submit" disabled={isGeneratingMeterInvoice} className="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:bg-purple-400">{isGeneratingMeterInvoice ? "Generating..." : "Generate Invoice"}</button>
+                            </div>
+                        </form>
+                    </div>
                 </div>
             )}
 
