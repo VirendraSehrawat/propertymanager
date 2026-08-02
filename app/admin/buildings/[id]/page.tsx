@@ -13,6 +13,8 @@ interface Unit {
     baseRent: number;
     status: string;
     tenantEmail: string;
+    tenantName?: string;
+    tenantPhone?: string;
     buildingId: string;
     createdAt: string;
     documents?: { name: string; url: string; uploadedAt: string }[];
@@ -33,6 +35,8 @@ export default function BuildingUnitsPage() {
     const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
     const [selectedUnit, setSelectedUnit] = useState<any>(null);
     const [tenantEmail, setTenantEmail] = useState("");
+    const [tenantName, setTenantName] = useState("");
+    const [tenantPhone, setTenantPhone] = useState("");
 
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
     const [editingUnit, setEditingUnit] = useState<any>(null);
@@ -45,6 +49,11 @@ export default function BuildingUnitsPage() {
     const [docName, setDocName] = useState("");
     const [docFile, setDocFile] = useState<File | null>(null);
     const [isUploadingDoc, setIsUploadingDoc] = useState(false);
+
+    // NEW: Assign Existing Tenant to Another Room
+    const [isAssignExistingModalOpen, setIsAssignExistingModalOpen] = useState(false);
+    const [selectedVacantUnit, setSelectedVacantUnit] = useState<any>(null);
+    const [selectedExistingTenant, setSelectedExistingTenant] = useState("");
 
     useEffect(() => {
         if (!loading && role !== "admin") router.push("/");
@@ -85,12 +94,22 @@ export default function BuildingUnitsPage() {
 
     const handleAssignTenant = async (e: React.FormEvent) => {
         e.preventDefault(); if (!selectedUnit || !tenantEmail) return;
-        try { await updateDoc(doc(db, "units", selectedUnit.id), { status: "occupied", tenantEmail: tenantEmail.toLowerCase() }); setIsAssignModalOpen(false); setSelectedUnit(null); setTenantEmail(""); } catch (error) { console.error(error); }
+        try { await updateDoc(doc(db, "units", selectedUnit.id), { status: "occupied", tenantEmail: tenantEmail.toLowerCase(), tenantName, tenantPhone }); setIsAssignModalOpen(false); setSelectedUnit(null); setTenantEmail(""); setTenantName(""); setTenantPhone(""); } catch (error) { console.error(error); }
     };
 
     const handleRemoveTenant = async (unitId: string) => {
         if (!window.confirm("Remove this tenant?")) return;
         try { await updateDoc(doc(db, "units", unitId), { status: "vacant", tenantEmail: "" }); } catch (error) { console.error(error); }
+    };
+
+    const handleAssignExistingTenant = async (e: React.FormEvent) => {
+        e.preventDefault(); if (!selectedVacantUnit || !selectedExistingTenant) return;
+        const sourceUnit = units.find(u => u.id === selectedExistingTenant);
+        if (!sourceUnit) return;
+        try {
+            await updateDoc(doc(db, "units", selectedVacantUnit.id), { status: "occupied", tenantEmail: sourceUnit.tenantEmail, tenantName: sourceUnit.tenantName || "", tenantPhone: sourceUnit.tenantPhone || "" });
+            setIsAssignExistingModalOpen(false); setSelectedVacantUnit(null); setSelectedExistingTenant("");
+        } catch (error) { console.error(error); }
     };
 
     const handleEditSubmit = async (e: React.FormEvent) => {
@@ -204,7 +223,10 @@ export default function BuildingUnitsPage() {
                                         </span>
 
                                         {unit.status === 'vacant' ? (
-                                            <button onClick={() => { setSelectedUnit(unit); setIsAssignModalOpen(true); }} className="text-sm text-blue-600 hover:underline font-medium">Assign Tenant &rarr;</button>
+                                            <div className="flex gap-2">
+                                                <button onClick={() => { setSelectedVacantUnit(unit); setIsAssignExistingModalOpen(true); }} className="text-sm text-green-600 hover:underline font-medium">Existing Tenant</button>
+                                                <button onClick={() => { setSelectedUnit(unit); setIsAssignModalOpen(true); }} className="text-sm text-blue-600 hover:underline font-medium">New Tenant</button>
+                                            </div>
                                         ) : (
                                             <button onClick={() => handleRemoveTenant(unit.id)} className="text-sm text-red-600 hover:underline font-medium">Remove</button>
                                         )}
@@ -256,7 +278,13 @@ export default function BuildingUnitsPage() {
 
             {isAssignModalOpen && (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-                    <div className="bg-white rounded-lg p-6 max-w-md w-full shadow-xl"><h2 className="text-xl font-bold mb-4">Assign Tenant to {selectedUnit?.unitNumber}</h2><form onSubmit={handleAssignTenant}><div className="mb-4"><label className="block text-sm font-medium text-gray-700 mb-1">Tenant Email</label><input type="email" required value={tenantEmail} onChange={(e) => setTenantEmail(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md" placeholder="tenant@example.com" /></div><div className="flex justify-end gap-3 mt-6"><button type="button" onClick={() => setIsAssignModalOpen(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-md">Cancel</button><button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">Confirm Assignment</button></div></form></div>
+                    <div className="bg-white rounded-lg p-6 max-w-md w-full shadow-xl"><h2 className="text-xl font-bold mb-4">Assign Tenant to {selectedUnit?.unitNumber}</h2><form onSubmit={handleAssignTenant}><div className="mb-4"><label className="block text-sm font-medium text-gray-700 mb-1">Tenant Name</label><input type="text" required value={tenantName} onChange={(e) => setTenantName(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md" placeholder="John Doe" /></div><div className="mb-4"><label className="block text-sm font-medium text-gray-700 mb-1">Phone Number</label><input type="tel" required value={tenantPhone} onChange={(e) => setTenantPhone(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md" placeholder="+91 9876543210" /></div><div className="mb-4"><label className="block text-sm font-medium text-gray-700 mb-1">Tenant Email</label><input type="email" required value={tenantEmail} onChange={(e) => setTenantEmail(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md" placeholder="tenant@example.com" /></div><div className="flex justify-end gap-3 mt-6"><button type="button" onClick={() => setIsAssignModalOpen(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-md">Cancel</button><button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">Confirm Assignment</button></div></form></div>
+                </div>
+            )}
+
+            {isAssignExistingModalOpen && selectedVacantUnit && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+                    <div className="bg-white rounded-lg p-6 max-w-md w-full shadow-xl"><h2 className="text-xl font-bold mb-4">Assign Existing Tenant to {selectedVacantUnit.unitNumber}</h2><form onSubmit={handleAssignExistingTenant}><div className="mb-4"><label className="block text-sm font-medium text-gray-700 mb-1">Select Existing Tenant</label><select required value={selectedExistingTenant} onChange={(e) => setSelectedExistingTenant(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md"><option value="" disabled>Choose a tenant...</option>{units.filter(u => u.status === "occupied").map(u => (<option key={u.id} value={u.id}>{u.unitNumber} - {u.tenantEmail}</option>))}</select></div><p className="text-xs text-gray-500 mb-4">This will assign the selected tenant to <strong>{selectedVacantUnit.unitNumber}</strong> as an additional room. The tenant will remain in their current unit as well.</p><div className="flex justify-end gap-3 mt-6"><button type="button" onClick={() => { setIsAssignExistingModalOpen(false); setSelectedVacantUnit(null); setSelectedExistingTenant(""); }} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-md">Cancel</button><button type="submit" className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700">Assign Room</button></div></form></div>
                 </div>
             )}
 
