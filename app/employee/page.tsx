@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
 import { useEffect, useState } from "react";
@@ -5,7 +6,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useRouter } from "next/navigation";
 import { signOut } from "firebase/auth";
 import { auth, db, storage } from "@/lib/firebase";
-import { collection, query, onSnapshot, doc, updateDoc, arrayUnion } from "firebase/firestore";
+import { collection, onSnapshot, doc, updateDoc, arrayUnion } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 
 export default function EmployeeDashboard() {
@@ -33,7 +34,7 @@ export default function EmployeeDashboard() {
         if (role !== "employee") return;
 
         const unsubTickets = onSnapshot(collection(db, "maintenance"), (snapshot) => {
-            const allTickets = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            const allTickets = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
 
             // Sort newest first
             allTickets.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
