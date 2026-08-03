@@ -197,18 +197,21 @@ export default function AdminDashboard() {
         if (role !== "admin") return;
         const unsubBldgs = onSnapshot(query(collection(db, "buildings"), orderBy("createdAt", "desc")), (snapshot) => { setBuildings(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Building))); });
         const unsubApps = onSnapshot(query(collection(db, "applications"), where("status", "==", "pending")), (snapshot) => { const appsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Application)); appsData.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()); setApplications(appsData); });
-        const unsubPendingInvoices = onSnapshot(query(collection(db, "invoices"), where("status", "==", "pending")), (snapshot) => { const invData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Invoice)); invData.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()); setPendingInvoices(invData); });
+        const unsubAllInvoices = onSnapshot(collection(db, "invoices"), (snapshot) => {
+            const all = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Invoice));
+            setPendingInvoices(all.filter(i => i.status === "pending").sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()));
+            setPaidInvoices(all.filter(i => i.status === "paid"));
+            setUnpaidInvoices(all.filter(i => i.status === "unpaid"));
+        });
         const unsubTickets = onSnapshot(collection(db, "maintenance"), (snapshot) => { const tData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as MaintenanceTicket)); tData.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()); setMaintenanceTickets(tData); });
         const unsubContacts = onSnapshot(collection(db, "contacts"), (snapshot) => { setContacts(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Contact))); });
         const unsubOccupied = onSnapshot(query(collection(db, "units"), where("status", "==", "occupied")), (snapshot) => { setOccupiedUnits(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as OccupiedUnit)).sort((a, b) => a.unitNumber.localeCompare(b.unitNumber, undefined, { numeric: true }))); });
-        const unsubPaidInvoices = onSnapshot(query(collection(db, "invoices"), where("status", "==", "paid")), (snapshot) => { setPaidInvoices(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Invoice))); });
         const unsubExpenses = onSnapshot(collection(db, "expenses"), (snapshot) => { const expData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Expense)); expData.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()); setExpenses(expData); });
         const unsubSettings = onSnapshot(doc(db, "settings", "payment"), (docSnap) => { if (docSnap.exists()) { setUpiId(docSnap.data().upiId || ""); setPayeeName(docSnap.data().payeeName || ""); } });
         const unsubAnnouncements = onSnapshot(collection(db, "announcements"), (snapshot) => { const annData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Announcement)); annData.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()); setAnnouncements(annData); });
-        const unsubUnpaidInvoices = onSnapshot(query(collection(db, "invoices"), where("status", "==", "unpaid")), (snapshot) => { setUnpaidInvoices(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Invoice))); });
         const unsubDocs = onSnapshot(collection(db, "documents"), (snapshot) => { const docData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as DocumentData)); docData.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()); setDocuments(docData); });
 
-        return () => { unsubBldgs(); unsubApps(); unsubPendingInvoices(); unsubTickets(); unsubContacts(); unsubOccupied(); unsubPaidInvoices(); unsubExpenses(); unsubSettings(); unsubAnnouncements(); unsubUnpaidInvoices(); unsubDocs(); };
+        return () => { unsubBldgs(); unsubApps(); unsubAllInvoices(); unsubTickets(); unsubContacts(); unsubOccupied(); unsubExpenses(); unsubSettings(); unsubAnnouncements(); unsubDocs(); };
     }, [role]);
 
     const totalIncome = paidInvoices.reduce((sum, inv) => sum + Number(inv.totalAmount || 0), 0);

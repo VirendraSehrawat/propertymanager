@@ -6,7 +6,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useRouter } from "next/navigation";
 import { signOut } from "firebase/auth";
 import { auth, db, storage } from "@/lib/firebase";
-import { collection, onSnapshot, doc, updateDoc, arrayUnion, query, where, writeBatch } from "firebase/firestore";
+import { collection, onSnapshot, doc, updateDoc, arrayUnion, query, where, writeBatch, getDocs } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 
 export default function EmployeeDashboard() {
@@ -155,7 +155,14 @@ export default function EmployeeDashboard() {
             const previousReading = Number(unit.lastMeterReading) || 0;
             const unitsConsumed = Math.max(0, reading - previousReading);
             const electricityCharge = unitsConsumed * electricityRate;
-            const totalAmount = Number(unit.baseRent || 0) + electricityCharge;
+
+            // Fetch tenant ledger balance (carry-forward)
+            const ledgerSnap = await getDocs(query(collection(db, "ledger"), where("tenantEmail", "==", unit.tenantEmail)));
+            const runningBalance = ledgerSnap.docs.reduce((sum, d) => sum + Number(d.data().balance || 0), 0);
+            // Negative balance = tenant owes more, positive = tenant has credit
+            const carryForward = -runningBalance; // amount to add (positive if due, negative if credit)
+            const baseTotal = Number(unit.baseRent || 0) + electricityCharge;
+            const totalAmount = Math.max(0, baseTotal + carryForward);
 
             const invoiceId = `inv_${unit.id}_${monthKey}`;
             const batch = writeBatch(db);
@@ -171,6 +178,7 @@ export default function EmployeeDashboard() {
                 electricityConsumed: unitsConsumed,
                 electricityRate,
                 electricityCharge,
+                carryForward: carryForward !== 0 ? carryForward : undefined,
                 totalAmount,
                 billingPeriod: monthName,
                 status: "unpaid",
@@ -182,7 +190,8 @@ export default function EmployeeDashboard() {
             batch.update(doc(db, "units", unit.id), { lastMeterReading: reading });
 
             await batch.commit();
-            alert(`Invoice generated for ${unit.unitNumber}!\n\nRent: ₹${unit.baseRent || 0}\nElectricity: ${unitsConsumed} units × ₹${electricityRate} = ₹${electricityCharge}\nTotal: ₹${totalAmount}`);
+            const cfMsg = carryForward !== 0 ? `\nCarry Forward: ${carryForward > 0 ? '+' : ''}₹${carryForward}` : '';
+            alert(`Invoice generated for ${unit.unitNumber}!\n\nRent: ₹${unit.baseRent || 0}\nElectricity: ${unitsConsumed} units × ₹${electricityRate} = ₹${electricityCharge}${cfMsg}\nTotal: ₹${totalAmount}`);
             setSelectedMeterUnit("");
             setCurrentReading("");
         } catch (error) {
