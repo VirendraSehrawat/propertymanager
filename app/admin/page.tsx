@@ -5,7 +5,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { signOut } from "firebase/auth";
-import { collection, addDoc, onSnapshot, query, orderBy, where, doc, updateDoc, setDoc, getDocs, writeBatch, deleteDoc } from "firebase/firestore";
+import { collection, addDoc, onSnapshot, query, orderBy, where, doc, updateDoc, setDoc, getDocs, writeBatch, deleteDoc, getDoc } from "firebase/firestore";
 import { auth, db, storage } from "@/lib/firebase";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 
@@ -192,6 +192,13 @@ export default function AdminDashboard() {
     const [allLedgerEntries, setAllLedgerEntries] = useState<any[]>([]);
     const [ledgerFilter, setLedgerFilter] = useState("");
 
+    // --- Single Invoice Generation State ---
+    const [isSingleInvModalOpen, setIsSingleInvModalOpen] = useState(false);
+    const [singleInvUnit, setSingleInvUnit] = useState("");
+    const [singleInvMonth, setSingleInvMonth] = useState("");
+    const [singleInvReading, setSingleInvReading] = useState("");
+    const [isGeneratingSingleInv, setIsGeneratingSingleInv] = useState(false);
+
     const handleReadingChange = (unitId: string, value: string) => {
         setMeterReadings(prev => ({ ...prev, [unitId]: Number(value) }));
     };
@@ -322,6 +329,74 @@ export default function AdminDashboard() {
     const handleUpdateTicketStatus = async (ticketId: string, newStatus: string) => { try { await updateDoc(doc(db, "maintenance", ticketId), { status: newStatus }); } catch (error) { console.error(error); } };
     const openInvoiceModal = () => { const initialReadings: Record<string, number> = {}; occupiedUnits.forEach(u => { initialReadings[u.id] = u.lastMeterReading || 0; }); setMeterReadings(initialReadings); setIsInvoiceModalOpen(true); };
     const handleConfirmInvoices = async (e: React.FormEvent) => { e.preventDefault(); setIsGeneratingInvoices(true); try { const date = new Date(); const monthName = date.toLocaleString('default', { month: 'long', year: 'numeric' }); const monthKey = `${date.getMonth() + 1}_${date.getFullYear()}`; const batch = writeBatch(db); let count = 0; occupiedUnits.forEach((unit) => { const invoiceId = `inv_${unit.id}_${monthKey}`; const invoiceRef = doc(db, "invoices", invoiceId); const unitRef = doc(db, "units", unit.id); const currentReading = Number(meterReadings[unit.id]) || 0; const previousReading = Number(unit.lastMeterReading) || 0; const unitsConsumed = Math.max(0, currentReading - previousReading); const electricityCharge = unitsConsumed * electricityRate; const totalAmount = Number(unit.baseRent) + electricityCharge; batch.set(invoiceRef, { unitId: unit.id, unitNumber: unit.unitNumber, tenantEmail: unit.tenantEmail, baseRent: unit.baseRent, previousReading, currentReading, electricityConsumed: unitsConsumed, electricityRate, electricityCharge, totalAmount, billingPeriod: monthName, status: "unpaid", transactionId: "", createdAt: new Date().toISOString() }, { merge: true }); batch.update(unitRef, { lastMeterReading: currentReading }); count++; }); await batch.commit(); alert(`Successfully generated invoices for ${count} units.`); setIsInvoiceModalOpen(false); } catch { alert("Failed to generate invoices."); } finally { setIsGeneratingInvoices(false); } };
+
+    const handleGenerateSingleInvoice = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!singleInvUnit || !singleInvMonth || !singleInvReading) return;
+        const unit = occupiedUnits.find(u => u.id === singleInvUnit);
+        if (!unit) return;
+
+        const [year, month] = singleInvMonth.split("-");
+        const monthKey = `${month}_${year}`;
+        const invoiceId = `inv_${unit.id}_${monthKey}`;
+
+        // Check if invoice already exists
+        const existingSnap = await getDoc(doc(db, "invoices", invoiceId));
+        if (existingSnap.exists()) {
+            const existing = existingSnap.data();
+            if (!window.confirm(`⚠️ Invoice already exists for ${unit.unitNumber} — ${existing.billingPeriod}\n\nStatus: ${existing.status?.toUpperCase()}\nAmount: ₹${existing.totalAmount}\n\nDo you want to OVERRIDE this invoice?`)) return;
+        }
+
+        setIsGeneratingSingleInv(true);
+        try {
+            const monthName = new Date(Number(year), Number(month) - 1).toLocaleString('default', { month: 'long', year: 'numeric' });
+            const reading = Number(singleInvReading);
+            const previousReading = Number(unit.lastMeterReading) || 0;
+            const unitsConsumed = Math.max(0, reading - previousReading);
+            const electricityCharge = unitsConsumed * electricityRate;
+
+            // Fetch carry-forward
+            const ledgerSnap = await getDocs(query(collection(db, "ledger"), where("tenantEmail", "==", unit.tenantEmail)));
+            const runningBalance = ledgerSnap.docs.reduce((sum, d) => sum + Number(d.data().balance || 0), 0);
+            const carryForward = -runningBalance;
+            const baseTotal = Number(unit.baseRent || 0) + electricityCharge;
+            const totalAmount = Math.max(0, baseTotal + carryForward);
+
+            const batch = writeBatch(db);
+            batch.set(doc(db, "invoices", invoiceId), {
+                unitId: unit.id,
+                unitNumber: unit.unitNumber,
+                tenantEmail: unit.tenantEmail,
+                baseRent: unit.baseRent || 0,
+                previousReading,
+                currentReading: reading,
+                electricityConsumed: unitsConsumed,
+                electricityRate,
+                electricityCharge,
+                carryForward: carryForward !== 0 ? carryForward : undefined,
+                totalAmount,
+                billingPeriod: monthName,
+                status: "unpaid",
+                transactionId: "",
+                createdAt: new Date().toISOString()
+            }, { merge: true });
+            batch.update(doc(db, "units", unit.id), { lastMeterReading: reading });
+            await batch.commit();
+
+            const cfMsg = carryForward !== 0 ? `\nCarry Forward: ${carryForward > 0 ? '+' : ''}₹${carryForward}` : '';
+            alert(`Invoice generated for ${unit.unitNumber}!\n\nRent: ₹${unit.baseRent || 0}\nElectricity: ${unitsConsumed} units × ₹${electricityRate} = ₹${electricityCharge}${cfMsg}\nTotal: ₹${totalAmount}`);
+            setIsSingleInvModalOpen(false);
+            setSingleInvUnit("");
+            setSingleInvMonth("");
+            setSingleInvReading("");
+        } catch (error) {
+            console.error(error);
+            alert("Failed to generate invoice.");
+        } finally {
+            setIsGeneratingSingleInv(false);
+        }
+    };
+
     const handleApproveInvoice = async (invId: string) => {
         try {
             const inv = pendingInvoices.find(i => i.id === invId);
@@ -374,6 +449,7 @@ export default function AdminDashboard() {
                         <button onClick={() => setIsNoticeModalOpen(true)} className="px-5 py-2.5 bg-indigo-50 text-indigo-700 border border-indigo-200 font-medium rounded-md hover:bg-indigo-100 transition shadow-sm text-sm">📢 Broadcast Notice</button>
                         <button onClick={() => setIsLateFeeModalOpen(true)} className="px-5 py-2.5 bg-red-50 text-red-700 border border-red-200 font-medium rounded-md hover:bg-red-100 transition shadow-sm text-sm">🚨 Late Fees</button>
                         <button onClick={() => setIsCustomInvModalOpen(true)} className="px-5 py-2.5 bg-white border border-gray-300 text-gray-700 font-medium rounded-md hover:bg-gray-50 transition shadow-sm text-sm">+ Custom Bill</button>
+                        <button onClick={() => setIsSingleInvModalOpen(true)} className="px-5 py-2.5 bg-purple-50 text-purple-700 border border-purple-200 font-medium rounded-md hover:bg-purple-100 transition shadow-sm text-sm">⚡ Single Invoice</button>
                         <button onClick={openInvoiceModal} className="px-5 py-2.5 bg-gray-900 text-white font-medium rounded-md hover:bg-gray-800 transition shadow-sm text-sm">+ Generate Invoices</button>
                     </div>
                 </div>
@@ -614,6 +690,54 @@ export default function AdminDashboard() {
                             <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-gray-100">
                                 <button type="button" onClick={() => setIsDocModalOpen(false)} disabled={isUploadingDoc} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-md">Cancel</button>
                                 <button type="submit" disabled={isUploadingDoc} className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-blue-300">{isUploadingDoc ? "Uploading..." : "Upload to Vault"}</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* SINGLE INVOICE MODAL */}
+            {isSingleInvModalOpen && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
+                    <div className="bg-white rounded-lg p-6 max-w-md w-full shadow-xl">
+                        <h2 className="text-xl font-bold text-gray-900 mb-2">⚡ Generate Single Invoice</h2>
+                        <p className="text-sm text-gray-600 mb-4">Create an invoice for a specific unit and month.</p>
+                        <form onSubmit={handleGenerateSingleInvoice} className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Select Unit</label>
+                                <select required value={singleInvUnit} onChange={(e) => setSingleInvUnit(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md">
+                                    <option value="" disabled>Choose an occupied unit...</option>
+                                    {occupiedUnits.map(u => <option key={u.id} value={u.id}>{u.unitNumber} — {u.tenantEmail} (Last: {u.lastMeterReading || 0})</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Billing Month</label>
+                                <input type="month" required value={singleInvMonth} onChange={(e) => setSingleInvMonth(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md" />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Current Meter Reading</label>
+                                <input type="number" required min="0" value={singleInvReading} onChange={(e) => setSingleInvReading(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md" placeholder="e.g. 1250" />
+                                {singleInvUnit && (() => { const u = occupiedUnits.find(x => x.id === singleInvUnit); return u ? <p className="text-xs text-gray-500 mt-1">Previous reading: {u.lastMeterReading || 0}</p> : null; })()}
+                            </div>
+                            {/* Live preview */}
+                            {singleInvUnit && singleInvReading && (() => {
+                                const u = occupiedUnits.find(x => x.id === singleInvUnit);
+                                if (!u) return null;
+                                const prev = Number(u.lastMeterReading) || 0;
+                                const consumed = Math.max(0, Number(singleInvReading) - prev);
+                                const elecCharge = consumed * electricityRate;
+                                const total = Number(u.baseRent || 0) + elecCharge;
+                                return (
+                                    <div className="bg-purple-50 border border-purple-200 rounded-md p-3 text-sm">
+                                        <div className="flex justify-between"><span>Rent:</span><span>₹{u.baseRent || 0}</span></div>
+                                        <div className="flex justify-between"><span>Electricity ({consumed} units × ₹{electricityRate}):</span><span>₹{elecCharge}</span></div>
+                                        <div className="flex justify-between font-bold border-t border-purple-200 mt-2 pt-2"><span>Total:</span><span>₹{total}</span></div>
+                                    </div>
+                                );
+                            })()}
+                            <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-gray-100">
+                                <button type="button" onClick={() => setIsSingleInvModalOpen(false)} disabled={isGeneratingSingleInv} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-md">Cancel</button>
+                                <button type="submit" disabled={isGeneratingSingleInv} className="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:bg-purple-300">{isGeneratingSingleInv ? "Generating..." : "Generate Invoice"}</button>
                             </div>
                         </form>
                     </div>

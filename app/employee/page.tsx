@@ -6,7 +6,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useRouter } from "next/navigation";
 import { signOut } from "firebase/auth";
 import { auth, db, storage } from "@/lib/firebase";
-import { collection, onSnapshot, doc, updateDoc, arrayUnion, query, where, writeBatch, getDocs, addDoc } from "firebase/firestore";
+import { collection, onSnapshot, doc, updateDoc, arrayUnion, query, where, writeBatch, getDocs, addDoc, getDoc } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 
 export default function EmployeeDashboard() {
@@ -153,11 +153,20 @@ export default function EmployeeDashboard() {
         const unit = occupiedUnits.find(u => u.id === selectedMeterUnit);
         if (!unit) return;
 
+        const [year, month] = billingMonth.split("-");
+        const monthKey = `${month}_${year}`;
+        const invoiceId = `inv_${unit.id}_${monthKey}`;
+
+        // Check if invoice already exists
+        const existingSnap = await getDoc(doc(db, "invoices", invoiceId));
+        if (existingSnap.exists()) {
+            const existing = existingSnap.data();
+            if (!window.confirm(`⚠️ Invoice already exists for ${unit.unitNumber} — ${existing.billingPeriod}\n\nStatus: ${existing.status?.toUpperCase()}\nAmount: ₹${existing.totalAmount}\n\nDo you want to OVERRIDE this invoice?`)) return;
+        }
+
         setIsGeneratingInvoice(true);
         try {
-            const [year, month] = billingMonth.split("-");
             const monthName = new Date(Number(year), Number(month) - 1).toLocaleString('default', { month: 'long', year: 'numeric' });
-            const monthKey = `${month}_${year}`;
 
             const reading = Number(currentReading);
             const previousReading = Number(unit.lastMeterReading) || 0;
@@ -172,7 +181,6 @@ export default function EmployeeDashboard() {
             const baseTotal = Number(unit.baseRent || 0) + electricityCharge;
             const totalAmount = Math.max(0, baseTotal + carryForward);
 
-            const invoiceId = `inv_${unit.id}_${monthKey}`;
             const batch = writeBatch(db);
 
             // Create / update the invoice
