@@ -6,7 +6,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useRouter } from "next/navigation";
 import { signOut } from "firebase/auth";
 import { auth, db, storage } from "@/lib/firebase";
-import { collection, onSnapshot, doc, updateDoc, arrayUnion, query, where, writeBatch, getDocs } from "firebase/firestore";
+import { collection, onSnapshot, doc, updateDoc, arrayUnion, query, where, writeBatch, getDocs, addDoc } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 
 export default function EmployeeDashboard() {
@@ -214,7 +214,26 @@ export default function EmployeeDashboard() {
         if (!window.confirm("Mark this invoice as paid (cash collected)?")) return;
         setIsSettling(invId);
         try {
+            const inv = allInvoices.find((i: any) => i.id === invId);
             await updateDoc(doc(db, "invoices", invId), { status: "paid", paidAt: new Date().toISOString(), transactionId: "CASH_COLLECTED" });
+            if (inv) {
+                const invoiceAmount = Number(inv.totalAmount || 0);
+                const amountPaid = Number(inv.amountPaid || invoiceAmount);
+                await addDoc(collection(db, "ledger"), {
+                    tenantEmail: inv.tenantEmail,
+                    unitId: inv.unitId,
+                    unitNumber: inv.unitNumber,
+                    invoiceId: invId,
+                    billingPeriod: inv.billingPeriod || "Ad-Hoc",
+                    invoiceAmount,
+                    amountPaid,
+                    balance: amountPaid - invoiceAmount,
+                    transactionId: "CASH_COLLECTED",
+                    type: "payment",
+                    settledBy: "employee",
+                    createdAt: new Date().toISOString()
+                });
+            }
         } catch (error) {
             console.error(error);
             alert("Failed to settle invoice.");
