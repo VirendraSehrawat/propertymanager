@@ -39,6 +39,18 @@ export default function EmployeeDashboard() {
     const [collectionFilter, setCollectionFilter] = useState("all");
     const [isSettling, setIsSettling] = useState("");
 
+    // Tenant Profile States
+    const [isTenantProfileOpen, setIsTenantProfileOpen] = useState(false);
+    const [profileUnit, setProfileUnit] = useState<any>(null);
+    const [profileName, setProfileName] = useState("");
+    const [profilePhone, setProfilePhone] = useState("");
+    const [profileEmail, setProfileEmail] = useState("");
+    const [profileNote, setProfileNote] = useState("");
+    const [isSavingProfile, setIsSavingProfile] = useState(false);
+    const [profileDocName, setProfileDocName] = useState("");
+    const [profileDocFile, setProfileDocFile] = useState<File | null>(null);
+    const [isUploadingDoc, setIsUploadingDoc] = useState(false);
+
     useEffect(() => {
         // Note: Adjust the role check if your system uses "caretaker" or something else
         if (!loading && (!user || role !== "employee")) {
@@ -194,6 +206,49 @@ export default function EmployeeDashboard() {
         }
     };
 
+    const openTenantProfile = (unit: any) => {
+        setProfileUnit(unit);
+        setProfileName(unit.tenantName || "");
+        setProfilePhone(unit.tenantPhone || "");
+        setProfileEmail(unit.tenantEmail || "");
+        setProfileNote("");
+        setIsTenantProfileOpen(true);
+    };
+
+    const handleSaveTenantProfile = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!profileUnit) return;
+        setIsSavingProfile(true);
+        try {
+            await updateDoc(doc(db, "units", profileUnit.id), { tenantName: profileName, tenantPhone: profilePhone, tenantEmail: profileEmail.toLowerCase() });
+            setIsTenantProfileOpen(false); setProfileUnit(null);
+        } catch (error) { console.error(error); alert("Failed to update tenant."); } finally { setIsSavingProfile(false); }
+    };
+
+    const handleAddNote = async () => {
+        if (!profileUnit || !profileNote.trim()) return;
+        try {
+            await updateDoc(doc(db, "units", profileUnit.id), { notes: arrayUnion({ text: profileNote.trim(), author: "Staff", createdAt: new Date().toISOString() }) });
+            setProfileNote("");
+            // Refresh profileUnit from occupiedUnits
+            const updated = occupiedUnits.find(u => u.id === profileUnit.id);
+            if (updated) setProfileUnit({ ...updated });
+        } catch (error) { console.error(error); alert("Failed to add note."); }
+    };
+
+    const handleUploadTenantDoc = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!profileUnit || !profileDocName || !profileDocFile) return;
+        setIsUploadingDoc(true);
+        try {
+            const fileRef = ref(storage, `tenant_docs/${profileUnit.id}/${Date.now()}_${profileDocFile.name}`);
+            await uploadBytes(fileRef, profileDocFile);
+            const fileUrl = await getDownloadURL(fileRef);
+            await updateDoc(doc(db, "units", profileUnit.id), { documents: arrayUnion({ name: profileDocName, url: fileUrl, uploadedAt: new Date().toISOString() }) });
+            setProfileDocName(""); setProfileDocFile(null);
+        } catch (error) { console.error(error); alert("Failed to upload document."); } finally { setIsUploadingDoc(false); }
+    };
+
     if (loading) return <div className="min-h-screen flex items-center justify-center bg-gray-50">Loading...</div>;
     if (!user || role !== "employee") return null;
 
@@ -291,6 +346,7 @@ export default function EmployeeDashboard() {
                                                     <p className="font-bold text-gray-900">{inv.unitNumber}</p>
                                                     <p className="text-xs text-gray-500">{inv.tenantEmail}</p>
                                                     <p className="text-xs text-indigo-600 font-medium mt-0.5">{inv.billingPeriod}</p>
+                                                    <button onClick={() => { const unit = occupiedUnits.find(u => u.id === inv.unitId); if (unit) openTenantProfile(unit); }} className="text-[10px] text-indigo-600 hover:underline mt-1">View Profile →</button>
                                                 </div>
                                                 <div className="text-right flex flex-col items-end gap-2">
                                                     <div>
@@ -499,6 +555,64 @@ export default function EmployeeDashboard() {
                                 </button>
                             </div>
                         </form>
+                    </div>
+                </div>
+            )}
+
+            {/* TENANT PROFILE MODAL */}
+            {isTenantProfileOpen && profileUnit && (
+                <div className="fixed inset-0 bg-black bg-opacity-60 flex items-end sm:items-center justify-center p-4 z-50 overflow-y-auto">
+                    <div className="bg-white rounded-t-2xl sm:rounded-2xl p-6 w-full max-w-md shadow-2xl my-8">
+                        <h2 className="text-xl font-bold mb-1">👤 {profileUnit.unitNumber} — Tenant Profile</h2>
+                        <p className="text-sm text-gray-500 mb-5">Edit details, manage documents, and add notes.</p>
+
+                        {/* Edit Details */}
+                        <form onSubmit={handleSaveTenantProfile} className="space-y-3 mb-5">
+                            <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Name</label><input type="text" value={profileName} onChange={(e) => setProfileName(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg" /></div>
+                            <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Phone</label><input type="tel" value={profilePhone} onChange={(e) => setProfilePhone(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg" /></div>
+                            <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Email</label><input type="email" required value={profileEmail} onChange={(e) => setProfileEmail(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg" /></div>
+                            <button type="submit" disabled={isSavingProfile} className="w-full py-2.5 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700 disabled:bg-indigo-400">{isSavingProfile ? "Saving..." : "Save Details"}</button>
+                        </form>
+
+                        {/* Documents */}
+                        <div className="border-t border-gray-200 pt-4 mb-4">
+                            <h3 className="text-sm font-bold text-gray-800 mb-2">📄 Documents</h3>
+                            {profileUnit.documents && profileUnit.documents.length > 0 ? (
+                                <ul className="space-y-1 max-h-28 overflow-y-auto mb-3">
+                                    {profileUnit.documents.map((d: any, i: number) => (
+                                        <li key={i}><a href={d.url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">📄 {d.name}</a></li>
+                                    ))}
+                                </ul>
+                            ) : (<p className="text-xs text-gray-400 italic mb-3">No documents.</p>)}
+                            <form onSubmit={handleUploadTenantDoc} className="flex gap-2 items-end">
+                                <div className="flex-1">
+                                    <input type="text" value={profileDocName} onChange={(e) => setProfileDocName(e.target.value)} placeholder="Doc name" required className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs mb-1" />
+                                    <input type="file" accept="image/*,.pdf" required onChange={(e) => setProfileDocFile(e.target.files ? e.target.files[0] : null)} className="w-full text-xs text-gray-500" />
+                                </div>
+                                <button type="submit" disabled={isUploadingDoc} className="px-3 py-1.5 bg-blue-600 text-white rounded text-xs font-bold hover:bg-blue-700 disabled:bg-blue-400">{isUploadingDoc ? "..." : "Upload"}</button>
+                            </form>
+                        </div>
+
+                        {/* Notes */}
+                        <div className="border-t border-gray-200 pt-4">
+                            <h3 className="text-sm font-bold text-gray-800 mb-2">📝 Notes</h3>
+                            <div className="max-h-32 overflow-y-auto space-y-2 mb-3">
+                                {profileUnit.notes && profileUnit.notes.length > 0 ? (
+                                    profileUnit.notes.map((n: any, i: number) => (
+                                        <div key={i} className="bg-yellow-50 border border-yellow-200 rounded p-2 text-xs">
+                                            <p className="text-gray-800">{n.text}</p>
+                                            <p className="text-gray-400 mt-1">{n.author} • {new Date(n.createdAt).toLocaleDateString()}</p>
+                                        </div>
+                                    ))
+                                ) : (<p className="text-xs text-gray-400 italic">No notes yet.</p>)}
+                            </div>
+                            <div className="flex gap-2">
+                                <input type="text" value={profileNote} onChange={(e) => setProfileNote(e.target.value)} placeholder="Add a note..." className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+                                <button onClick={handleAddNote} disabled={!profileNote.trim()} className="px-4 py-2 bg-yellow-500 text-white rounded-lg text-sm font-bold hover:bg-yellow-600 disabled:bg-yellow-300">Add</button>
+                            </div>
+                        </div>
+
+                        <button onClick={() => { setIsTenantProfileOpen(false); setProfileUnit(null); }} className="w-full mt-5 py-3 text-gray-600 hover:bg-gray-100 rounded-xl font-bold transition">Close</button>
                     </div>
                 </div>
             )}
