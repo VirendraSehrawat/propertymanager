@@ -215,6 +215,14 @@ export default function AdminDashboard() {
     const totalExpenses = expenses.reduce((sum, exp) => sum + Number(exp.amount || 0), 0);
     const netProfit = totalIncome - totalExpenses;
 
+    // Monthly Dashboard calculations
+    const allInvoicesForDashboard = [...paidInvoices, ...unpaidInvoices, ...pendingInvoices];
+    const dashboardPeriods = [...new Set(allInvoicesForDashboard.filter(inv => !inv.isCustom && inv.billingPeriod).map(inv => inv.billingPeriod!))].sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
+    const [dashboardMonth, setDashboardMonth] = useState(() => {
+        const now = new Date();
+        return now.toLocaleString('default', { month: 'long', year: 'numeric' });
+    });
+
     // --- NEW: FINANCIAL EXPORT LOGIC ---
     const handleExportFinancials = () => {
         if (!exportMonth) {
@@ -341,6 +349,62 @@ export default function AdminDashboard() {
                     <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200 flex flex-col justify-center border-l-4 border-l-red-500"><span className="text-sm text-gray-500 font-medium">Total Expenses</span><span className="text-2xl font-bold text-red-700 mt-1">₹{totalExpenses.toLocaleString()}</span></div>
                     <div className="bg-gray-900 p-6 rounded-lg shadow-sm flex flex-col justify-center"><span className="text-sm text-gray-300 font-medium">Net Profit (ROI)</span><span className={`text-2xl font-bold mt-1 ${netProfit >= 0 ? 'text-white' : 'text-red-400'}`}>₹{netProfit.toLocaleString()}</span></div>
                 </div>
+
+                {/* MONTHLY DASHBOARD */}
+                {(() => {
+                    const monthInvoices = allInvoicesForDashboard.filter(inv => inv.billingPeriod === dashboardMonth && !inv.isCustom);
+                    const totalRent = monthInvoices.reduce((sum, inv) => sum + Number(inv.baseRent || 0), 0);
+                    const totalElectricity = monthInvoices.reduce((sum, inv) => sum + Number(inv.electricityCharge || 0), 0);
+                    const monthPaid = monthInvoices.filter(inv => inv.status === "paid");
+                    const rentCollected = monthPaid.reduce((sum, inv) => sum + Number(inv.baseRent || 0), 0);
+                    const electricityCollected = monthPaid.reduce((sum, inv) => sum + Number(inv.electricityCharge || 0), 0);
+                    const monthPending = monthInvoices.filter(inv => inv.status === "unpaid" || inv.status === "pending");
+                    const pendingRent = monthPending.reduce((sum, inv) => sum + Number(inv.baseRent || 0), 0);
+                    const pendingElectricity = monthPending.reduce((sum, inv) => sum + Number(inv.electricityCharge || 0), 0);
+                    const totalPending = pendingRent + pendingElectricity;
+
+                    return (
+                        <div className="bg-white rounded-lg shadow-sm border border-indigo-200 overflow-hidden">
+                            <div className="bg-indigo-50 px-6 py-4 border-b border-indigo-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                                <h2 className="text-lg font-bold text-indigo-800">📊 Monthly Dashboard</h2>
+                                <select value={dashboardMonth} onChange={(e) => setDashboardMonth(e.target.value)} className="px-3 py-2 border border-indigo-300 rounded-md text-sm font-medium bg-white">
+                                    {dashboardPeriods.length === 0 ? <option>No invoices yet</option> : dashboardPeriods.map(p => <option key={p} value={p}>{p}</option>)}
+                                </select>
+                            </div>
+                            <div className="p-6 space-y-4">
+                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4"><p className="text-xs font-bold text-blue-600 uppercase">Month&apos;s Rent</p><p className="text-xl font-bold text-gray-900 mt-1">₹{totalRent.toLocaleString()}</p></div>
+                                    <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4"><p className="text-xs font-bold text-yellow-600 uppercase">Month&apos;s Electricity</p><p className="text-xl font-bold text-gray-900 mt-1">₹{totalElectricity.toLocaleString()}</p></div>
+                                    <div className="bg-green-50 border border-green-200 rounded-lg p-4"><p className="text-xs font-bold text-green-600 uppercase">Rent Collected</p><p className="text-xl font-bold text-green-700 mt-1">₹{rentCollected.toLocaleString()}</p></div>
+                                    <div className="bg-green-50 border border-green-200 rounded-lg p-4"><p className="text-xs font-bold text-green-600 uppercase">Electricity Collected</p><p className="text-xl font-bold text-green-700 mt-1">₹{electricityCollected.toLocaleString()}</p></div>
+                                </div>
+                                {monthPending.length > 0 && (
+                                    <div className="border border-red-200 rounded-lg overflow-hidden">
+                                        <div className="bg-red-50 px-4 py-3 border-b border-red-100 flex justify-between items-center">
+                                            <h3 className="text-sm font-bold text-red-800">⏳ Pending Payments</h3>
+                                            <span className="text-xs font-bold bg-red-100 text-red-700 px-2 py-1 rounded-full">₹{totalPending.toLocaleString()}</span>
+                                        </div>
+                                        <div className="divide-y divide-gray-100 max-h-60 overflow-y-auto">
+                                            {monthPending.map(inv => (
+                                                <div key={inv.id} className="px-4 py-3 flex justify-between items-center hover:bg-gray-50">
+                                                    <div><p className="font-bold text-gray-900 text-sm">{inv.unitNumber}</p><p className="text-xs text-gray-500">{inv.tenantEmail}</p></div>
+                                                    <div className="text-right">
+                                                        <p className="font-bold text-red-600 text-sm">₹{Number(inv.totalAmount || 0).toLocaleString()}</p>
+                                                        <p className="text-[10px] text-gray-400">Rent: ₹{inv.baseRent || 0} + Elec: ₹{inv.electricityCharge || 0}</p>
+                                                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${inv.status === 'pending' ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'}`}>{inv.status === 'pending' ? 'VERIFICATION PENDING' : 'UNPAID'}</span>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                        <div className="bg-gray-50 px-4 py-2 border-t border-gray-200 text-center">
+                                            <p className="text-xs text-gray-500">Pending Rent: <strong>₹{pendingRent.toLocaleString()}</strong> | Pending Electricity: <strong>₹{pendingElectricity.toLocaleString()}</strong></p>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    );
+                })()}
 
                 <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden"><div className="bg-gray-50 px-6 py-4 border-b border-gray-200 flex justify-between items-center"><h2 className="text-lg font-bold text-gray-800">👥 Tenant Directory & Leases</h2><span className="bg-gray-200 text-gray-800 text-xs font-bold px-3 py-1 rounded-full">{occupiedUnits.length} Occupied</span></div><div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="bg-gray-50 text-gray-500 border-b border-gray-200"><tr><th className="px-6 py-3 font-medium">Unit & Tenant</th><th className="px-6 py-3 font-medium">Contact Details</th><th className="px-6 py-3 font-medium">Lease Status</th><th className="px-6 py-3 font-medium text-right">Actions</th></tr></thead><tbody className="divide-y divide-gray-100">{occupiedUnits.length === 0 ? <tr><td colSpan={4} className="px-6 py-8 text-center text-gray-500">No active tenants.</td></tr> : (occupiedUnits.map((unit) => { const status = getLeaseStatus(unit.leaseEnd); return (<tr key={unit.id} className="hover:bg-gray-50 transition"><td className="px-6 py-4"><p className="font-bold text-gray-900 text-base">{unit.unitNumber}</p><p className="text-blue-600 font-medium">{unit.tenantEmail}</p></td><td className="px-6 py-4 text-gray-600"><p>📱 {unit.tenantPhone || <span className="text-gray-400 italic">Not provided</span>}</p><p className="text-xs mt-1">🆘 {unit.emergencyContact || <span className="text-gray-400 italic">No emergency contact</span>}</p></td><td className="px-6 py-4"><span className={`px-2.5 py-1 rounded-full text-xs font-bold ${status.color}`}>{status.label}</span>{unit.leaseEnd && <p className="text-xs text-gray-500 mt-1 font-mono">{unit.leaseStart} to {unit.leaseEnd}</p>}</td><td className="px-6 py-4 text-right"><button onClick={() => { setSelectedUnitForLease(unit); setTenantPhone(unit.tenantPhone || ""); setEmergencyContact(unit.emergencyContact || ""); setLeaseStart(unit.leaseStart || ""); setLeaseEnd(unit.leaseEnd || ""); setIsLeaseModalOpen(true); }} className="text-sm bg-white border border-gray-300 px-3 py-1.5 rounded hover:bg-gray-50 text-gray-700 font-medium shadow-sm">Edit Profile</button></td></tr>); }))}</tbody></table></div></div>
 

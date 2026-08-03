@@ -15,7 +15,7 @@ export default function EmployeeDashboard() {
 
     const [activeTickets, setActiveTickets] = useState<any[]>([]);
     const [resolvedTickets, setResolvedTickets] = useState<any[]>([]);
-    const [activeTab, setActiveTab] = useState<"active" | "resolved" | "meter" | "dashboard">("dashboard");
+    const [activeTab, setActiveTab] = useState<"active" | "resolved" | "meter">("active");
 
     const [isResolveModalOpen, setIsResolveModalOpen] = useState(false);
     const [selectedTicket, setSelectedTicket] = useState<any>(null);
@@ -33,13 +33,6 @@ export default function EmployeeDashboard() {
     });
     const [isGeneratingInvoice, setIsGeneratingInvoice] = useState(false);
     const [electricityRate] = useState(12); // ₹12 per unit consumed
-
-    // Monthly Dashboard States
-    const [allInvoices, setAllInvoices] = useState<any[]>([]);
-    const [dashboardMonth, setDashboardMonth] = useState(() => {
-        const now = new Date();
-        return now.toLocaleString('default', { month: 'long', year: 'numeric' });
-    });
 
     useEffect(() => {
         // Note: Adjust the role check if your system uses "caretaker" or something else
@@ -65,11 +58,7 @@ export default function EmployeeDashboard() {
             setOccupiedUnits(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)).sort((a, b) => a.unitNumber.localeCompare(b.unitNumber, undefined, { numeric: true })));
         });
 
-        const unsubInvoices = onSnapshot(collection(db, "invoices"), (snapshot) => {
-            setAllInvoices(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)));
-        });
-
-        return () => { unsubTickets(); unsubUnits(); unsubInvoices(); };
+        return () => { unsubTickets(); unsubUnits(); };
     }, [role]);
 
     const handleMarkInProgress = async (ticketId: string) => {
@@ -204,12 +193,6 @@ export default function EmployeeDashboard() {
                 {/* TABS */}
                 <div className="flex bg-gray-200 rounded-lg p-1 shadow-inner">
                     <button
-                        onClick={() => setActiveTab("dashboard")}
-                        className={`flex-1 py-3 text-sm font-bold rounded-md transition ${activeTab === "dashboard" ? "bg-white text-indigo-600 shadow-sm" : "text-gray-500"}`}
-                    >
-                        Dashboard
-                    </button>
-                    <button
                         onClick={() => setActiveTab("active")}
                         className={`flex-1 py-3 text-sm font-bold rounded-md transition ${activeTab === "active" ? "bg-white text-orange-600 shadow-sm" : "text-gray-500"}`}
                     >
@@ -228,108 +211,6 @@ export default function EmployeeDashboard() {
                         Done
                     </button>
                 </div>
-
-                {/* MONTHLY DASHBOARD TAB */}
-                {activeTab === "dashboard" && (() => {
-                    // Get list of unique billing periods from invoices
-                    const periods = [...new Set(allInvoices.filter(inv => !inv.isCustom).map(inv => inv.billingPeriod))].sort((a, b) => {
-                        const da = new Date(a); const db2 = new Date(b);
-                        return db2.getTime() - da.getTime();
-                    });
-
-                    const monthInvoices = allInvoices.filter(inv => inv.billingPeriod === dashboardMonth && !inv.isCustom);
-                    const totalRent = monthInvoices.reduce((sum, inv) => sum + Number(inv.baseRent || 0), 0);
-                    const totalElectricity = monthInvoices.reduce((sum, inv) => sum + Number(inv.electricityCharge || 0), 0);
-                    const totalBilled = totalRent + totalElectricity;
-
-                    const paidInvoices = monthInvoices.filter(inv => inv.status === "paid");
-                    const rentCollected = paidInvoices.reduce((sum, inv) => sum + Number(inv.baseRent || 0), 0);
-                    const electricityCollected = paidInvoices.reduce((sum, inv) => sum + Number(inv.electricityCharge || 0), 0);
-                    const totalCollected = rentCollected + electricityCollected;
-
-                    const pendingInvoices = monthInvoices.filter(inv => inv.status === "unpaid" || inv.status === "pending");
-                    const pendingRent = pendingInvoices.reduce((sum, inv) => sum + Number(inv.baseRent || 0), 0);
-                    const pendingElectricity = pendingInvoices.reduce((sum, inv) => sum + Number(inv.electricityCharge || 0), 0);
-                    const totalPending = pendingRent + pendingElectricity;
-
-                    return (
-                        <div className="space-y-4">
-                            {/* Month Selector */}
-                            <div className="bg-white rounded-xl shadow-sm border border-indigo-200 p-4">
-                                <label className="block text-sm font-medium text-gray-700 mb-2">Select Month</label>
-                                <select value={dashboardMonth} onChange={(e) => setDashboardMonth(e.target.value)} className="w-full px-3 py-2.5 border border-gray-300 rounded-lg font-medium">
-                                    {periods.length === 0 ? <option>No invoices yet</option> : periods.map(p => <option key={p} value={p}>{p}</option>)}
-                                </select>
-                            </div>
-
-                            {/* Summary Cards */}
-                            <div className="grid grid-cols-2 gap-3">
-                                <div className="bg-white rounded-xl shadow-sm border border-blue-200 p-4">
-                                    <p className="text-xs font-bold text-blue-600 uppercase">Month&apos;s Rent</p>
-                                    <p className="text-2xl font-bold text-gray-900 mt-1">₹{totalRent.toLocaleString()}</p>
-                                </div>
-                                <div className="bg-white rounded-xl shadow-sm border border-yellow-200 p-4">
-                                    <p className="text-xs font-bold text-yellow-600 uppercase">Month&apos;s Electricity</p>
-                                    <p className="text-2xl font-bold text-gray-900 mt-1">₹{totalElectricity.toLocaleString()}</p>
-                                </div>
-                                <div className="bg-white rounded-xl shadow-sm border border-green-200 p-4">
-                                    <p className="text-xs font-bold text-green-600 uppercase">Rent Collected</p>
-                                    <p className="text-2xl font-bold text-green-700 mt-1">₹{rentCollected.toLocaleString()}</p>
-                                </div>
-                                <div className="bg-white rounded-xl shadow-sm border border-green-200 p-4">
-                                    <p className="text-xs font-bold text-green-600 uppercase">Electricity Collected</p>
-                                    <p className="text-2xl font-bold text-green-700 mt-1">₹{electricityCollected.toLocaleString()}</p>
-                                </div>
-                            </div>
-
-                            {/* Totals Bar */}
-                            <div className="bg-indigo-50 rounded-xl border border-indigo-200 p-4 flex justify-between items-center">
-                                <div>
-                                    <p className="text-xs font-bold text-indigo-600 uppercase">Total Billed</p>
-                                    <p className="text-xl font-bold text-indigo-900">₹{totalBilled.toLocaleString()}</p>
-                                </div>
-                                <div className="text-right">
-                                    <p className="text-xs font-bold text-green-600 uppercase">Collected</p>
-                                    <p className="text-xl font-bold text-green-700">₹{totalCollected.toLocaleString()}</p>
-                                </div>
-                            </div>
-
-                            {/* Pending Section */}
-                            <div className="bg-white rounded-xl shadow-sm border border-red-200 overflow-hidden">
-                                <div className="bg-red-50 px-5 py-3 border-b border-red-100 flex justify-between items-center">
-                                    <h3 className="text-sm font-bold text-red-800">⏳ Pending Payments</h3>
-                                    <span className="text-xs font-bold bg-red-100 text-red-700 px-2 py-1 rounded-full">₹{totalPending.toLocaleString()}</span>
-                                </div>
-                                <div className="divide-y divide-gray-100 max-h-80 overflow-y-auto">
-                                    {pendingInvoices.length === 0 ? (
-                                        <p className="p-5 text-sm text-gray-500 text-center">🎉 All payments collected for this month!</p>
-                                    ) : (
-                                        pendingInvoices.map(inv => (
-                                            <div key={inv.id} className="px-5 py-3 flex justify-between items-center hover:bg-gray-50">
-                                                <div>
-                                                    <p className="font-bold text-gray-900">{inv.unitNumber}</p>
-                                                    <p className="text-xs text-gray-500">{inv.tenantEmail}</p>
-                                                </div>
-                                                <div className="text-right">
-                                                    <p className="font-bold text-red-600">₹{Number(inv.totalAmount || 0).toLocaleString()}</p>
-                                                    <p className="text-[10px] text-gray-400 uppercase mt-0.5">Rent: ₹{inv.baseRent || 0} + Elec: ₹{inv.electricityCharge || 0}</p>
-                                                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${inv.status === 'pending' ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'}`}>
-                                                        {inv.status === 'pending' ? 'VERIFICATION PENDING' : 'UNPAID'}
-                                                    </span>
-                                                </div>
-                                            </div>
-                                        ))
-                                    )}
-                                </div>
-                                {pendingInvoices.length > 0 && (
-                                    <div className="bg-gray-50 px-5 py-3 border-t border-gray-200 text-center">
-                                        <p className="text-xs text-gray-500">Pending Rent: <strong className="text-gray-800">₹{pendingRent.toLocaleString()}</strong> | Pending Electricity: <strong className="text-gray-800">₹{pendingElectricity.toLocaleString()}</strong></p>
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    );
-                })()}
 
                 {/* METER READING TAB */}
                 {activeTab === "meter" && (
