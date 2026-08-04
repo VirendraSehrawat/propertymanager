@@ -6,7 +6,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useRouter } from "next/navigation";
 import { signOut } from "firebase/auth";
 import { auth, db, storage } from "@/lib/firebase";
-import { collection, onSnapshot, doc, updateDoc, arrayUnion, query, where, writeBatch, getDocs, addDoc, getDoc } from "firebase/firestore";
+import { collection, onSnapshot, doc, updateDoc, arrayUnion, query, where, writeBatch, getDocs, addDoc, getDoc, deleteField } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 
 export default function EmployeeDashboard() {
@@ -194,7 +194,7 @@ export default function EmployeeDashboard() {
                 electricityConsumed: unitsConsumed,
                 electricityRate,
                 electricityCharge,
-                carryForward: carryForward !== 0 ? carryForward : undefined,
+                ...(carryForward !== 0 ? { carryForward } : { carryForward: deleteField() }),
                 totalAmount,
                 billingPeriod: monthName,
                 status: "unpaid",

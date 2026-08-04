@@ -5,7 +5,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { signOut } from "firebase/auth";
-import { collection, addDoc, onSnapshot, query, orderBy, where, doc, updateDoc, setDoc, getDocs, writeBatch, deleteDoc, getDoc } from "firebase/firestore";
+import { collection, addDoc, onSnapshot, query, orderBy, where, doc, updateDoc, setDoc, getDocs, writeBatch, deleteDoc, getDoc, deleteField } from "firebase/firestore";
 import { auth, db, storage } from "@/lib/firebase";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 
@@ -373,7 +373,7 @@ export default function AdminDashboard() {
                 electricityConsumed: unitsConsumed,
                 electricityRate,
                 electricityCharge,
-                carryForward: carryForward !== 0 ? carryForward : undefined,
+                ...(carryForward !== 0 ? { carryForward } : { carryForward: deleteField() }),
                 totalAmount,
                 billingPeriod: monthName,
                 status: "unpaid",
