@@ -4,6 +4,7 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { signOut } from "firebase/auth";
 import { auth, db, storage } from "@/lib/firebase";
 import { collection, query, where, onSnapshot, doc, getDoc, addDoc, updateDoc } from "firebase/firestore";
@@ -57,6 +58,7 @@ export default function TenantDashboard() {
 
     useEffect(() => {
         if (!loading && (!user || role !== "tenant")) router.push("/");
+        if (role === "tenant") document.title = "Tenant Portal | Property Manager";
     }, [user, role, loading, router]);
 
     useEffect(() => {
@@ -156,7 +158,10 @@ export default function TenantDashboard() {
         <div className="min-h-screen bg-gray-50">
             <nav className="bg-blue-600 px-6 py-4 flex justify-between items-center text-white shadow-md">
                 <h1 className="text-xl font-bold">Tenant Portal</h1>
-                <button onClick={handleLogout} className="text-sm bg-blue-700 hover:bg-blue-800 px-4 py-2 rounded transition">Logout</button>
+                <div className="flex gap-2">
+                    <Link href="/tenant/help" className="text-sm bg-blue-700 hover:bg-blue-800 px-4 py-2 rounded transition">❓ Help</Link>
+                    <button onClick={handleLogout} className="text-sm bg-blue-700 hover:bg-blue-800 px-4 py-2 rounded transition">Logout</button>
+                </div>
             </nav>
 
             <main className="p-6 max-w-4xl mx-auto mt-4 space-y-6">

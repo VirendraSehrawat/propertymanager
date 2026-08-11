@@ -198,6 +198,9 @@ export default function AdminDashboard() {
     const [singleInvMonth, setSingleInvMonth] = useState("");
     const [singleInvReading, setSingleInvReading] = useState("");
     const [isGeneratingSingleInv, setIsGeneratingSingleInv] = useState(false);
+    const [singleInvMeterChanged, setSingleInvMeterChanged] = useState(false);
+    const [singleInvUnitsConsumed, setSingleInvUnitsConsumed] = useState("");
+    const [singleInvNewReading, setSingleInvNewReading] = useState("");
 
     const handleReadingChange = (unitId: string, value: string) => {
         setMeterReadings(prev => ({ ...prev, [unitId]: Number(value) }));
@@ -205,6 +208,7 @@ export default function AdminDashboard() {
 
     useEffect(() => {
         if (!loading && (!user || role !== "admin")) router.push("/");
+        if (role === "admin") document.title = "Admin Portal | Property Manager";
     }, [user, role, loading, router]);
 
     useEffect(() => {
@@ -332,7 +336,9 @@ export default function AdminDashboard() {
 
     const handleGenerateSingleInvoice = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!singleInvUnit || !singleInvMonth || !singleInvReading) return;
+        if (!singleInvUnit || !singleInvMonth) return;
+        if (!singleInvMeterChanged && !singleInvReading) return;
+        if (singleInvMeterChanged && !singleInvUnitsConsumed) return;
         const unit = occupiedUnits.find(u => u.id === singleInvUnit);
         if (!unit) return;
 
@@ -350,9 +356,20 @@ export default function AdminDashboard() {
         setIsGeneratingSingleInv(true);
         try {
             const monthName = new Date(Number(year), Number(month) - 1).toLocaleString('default', { month: 'long', year: 'numeric' });
-            const reading = Number(singleInvReading);
-            const previousReading = Number(unit.lastMeterReading) || 0;
-            const unitsConsumed = Math.max(0, reading - previousReading);
+
+            let reading: number;
+            let previousReading: number;
+            let unitsConsumed: number;
+
+            if (singleInvMeterChanged) {
+                unitsConsumed = Number(singleInvUnitsConsumed);
+                previousReading = Number(unit.lastMeterReading) || 0;
+                reading = singleInvNewReading ? Number(singleInvNewReading) : 0;
+            } else {
+                reading = Number(singleInvReading);
+                previousReading = Number(unit.lastMeterReading) || 0;
+                unitsConsumed = Math.max(0, reading - previousReading);
+            }
             const electricityCharge = unitsConsumed * electricityRate;
 
             // Fetch carry-forward
@@ -373,6 +390,7 @@ export default function AdminDashboard() {
                 electricityConsumed: unitsConsumed,
                 electricityRate,
                 electricityCharge,
+                ...(singleInvMeterChanged ? { meterChanged: true } : { meterChanged: deleteField() }),
                 ...(carryForward !== 0 ? { carryForward } : { carryForward: deleteField() }),
                 totalAmount,
                 billingPeriod: monthName,
@@ -384,11 +402,15 @@ export default function AdminDashboard() {
             await batch.commit();
 
             const cfMsg = carryForward !== 0 ? `\nCarry Forward: ${carryForward > 0 ? '+' : ''}₹${carryForward}` : '';
-            alert(`Invoice generated for ${unit.unitNumber}!\n\nRent: ₹${unit.baseRent || 0}\nElectricity: ${unitsConsumed} units × ₹${electricityRate} = ₹${electricityCharge}${cfMsg}\nTotal: ₹${totalAmount}`);
+            const meterNote = singleInvMeterChanged ? '\n⚠️ Meter was changed — units entered manually' : '';
+            alert(`Invoice generated for ${unit.unitNumber}!${meterNote}\n\nRent: ₹${unit.baseRent || 0}\nElectricity: ${unitsConsumed} units × ₹${electricityRate} = ₹${electricityCharge}${cfMsg}\nTotal: ₹${totalAmount}`);
             setIsSingleInvModalOpen(false);
             setSingleInvUnit("");
             setSingleInvMonth("");
             setSingleInvReading("");
+            setSingleInvMeterChanged(false);
+            setSingleInvUnitsConsumed("");
+            setSingleInvNewReading("");
         } catch (error) {
             console.error(error);
             alert("Failed to generate invoice.");
@@ -710,25 +732,58 @@ export default function AdminDashboard() {
                                     {occupiedUnits.map(u => <option key={u.id} value={u.id}>{u.unitNumber} — {u.tenantEmail} (Last: {u.lastMeterReading || 0})</option>)}
                                 </select>
                             </div>
+                            {singleInvUnit && (() => {
+                                const u = occupiedUnits.find(x => x.id === singleInvUnit);
+                                if (!u) return null;
+                                return (
+                                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-800 space-y-1">
+                                        <p><strong>Unit:</strong> {u.unitNumber} | <strong>Tenant:</strong> {u.tenantEmail}</p>
+                                        <p><strong>Last Meter Reading:</strong> {u.lastMeterReading || 0} | <strong>Base Rent:</strong> ₹{u.baseRent || 0}</p>
+                                    </div>
+                                );
+                            })()}
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Billing Month</label>
                                 <input type="month" required value={singleInvMonth} onChange={(e) => setSingleInvMonth(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md" />
                             </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Current Meter Reading</label>
-                                <input type="number" required min="0" value={singleInvReading} onChange={(e) => setSingleInvReading(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md" placeholder="e.g. 1250" />
-                                {singleInvUnit && (() => { const u = occupiedUnits.find(x => x.id === singleInvUnit); return u ? <p className="text-xs text-gray-500 mt-1">Previous reading: {u.lastMeterReading || 0}</p> : null; })()}
+
+                            {/* Meter Changed Toggle */}
+                            <div className="flex items-center gap-3 bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                                <input type="checkbox" id="adminMeterChanged" checked={singleInvMeterChanged} onChange={(e) => setSingleInvMeterChanged(e.target.checked)} className="w-4 h-4 accent-yellow-600" />
+                                <label htmlFor="adminMeterChanged" className="text-sm text-yellow-800 font-medium cursor-pointer">⚠️ Meter was changed / replaced</label>
                             </div>
+
+                            {!singleInvMeterChanged ? (
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Current Meter Reading</label>
+                                    <input type="number" required min="0" value={singleInvReading} onChange={(e) => setSingleInvReading(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md" placeholder="e.g. 1250" />
+                                </div>
+                            ) : (
+                                <div className="space-y-3 bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                                    <p className="text-xs text-yellow-700 font-medium">Enter units consumed manually (from old + new meter final readings)</p>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Units Consumed</label>
+                                        <input type="number" required min="0" value={singleInvUnitsConsumed} onChange={(e) => setSingleInvUnitsConsumed(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md" placeholder="e.g. 120" />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">New Meter Reading (starting reading of new meter)</label>
+                                        <input type="number" min="0" value={singleInvNewReading} onChange={(e) => setSingleInvNewReading(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md" placeholder="e.g. 0" />
+                                        <p className="text-xs text-gray-500 mt-1">Saved as last reading for next month</p>
+                                    </div>
+                                </div>
+                            )}
+
                             {/* Live preview */}
-                            {singleInvUnit && singleInvReading && (() => {
+                            {singleInvUnit && (singleInvMeterChanged ? singleInvUnitsConsumed : singleInvReading) && (() => {
                                 const u = occupiedUnits.find(x => x.id === singleInvUnit);
                                 if (!u) return null;
                                 const prev = Number(u.lastMeterReading) || 0;
-                                const consumed = Math.max(0, Number(singleInvReading) - prev);
+                                const consumed = singleInvMeterChanged ? Number(singleInvUnitsConsumed) : Math.max(0, Number(singleInvReading) - prev);
                                 const elecCharge = consumed * electricityRate;
                                 const total = Number(u.baseRent || 0) + elecCharge;
                                 return (
                                     <div className="bg-purple-50 border border-purple-200 rounded-md p-3 text-sm">
+                                        {singleInvMeterChanged && <div className="bg-yellow-50 border border-yellow-200 rounded p-2 text-xs text-yellow-800 mb-2">⚠️ Meter changed — units entered manually</div>}
                                         <div className="flex justify-between"><span>Rent:</span><span>₹{u.baseRent || 0}</span></div>
                                         <div className="flex justify-between"><span>Electricity ({consumed} units × ₹{electricityRate}):</span><span>₹{elecCharge}</span></div>
                                         <div className="flex justify-between font-bold border-t border-purple-200 mt-2 pt-2"><span>Total:</span><span>₹{total}</span></div>
