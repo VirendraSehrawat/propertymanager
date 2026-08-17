@@ -195,6 +195,9 @@ export default function AdminDashboard() {
     const [editLedgerAmount, setEditLedgerAmount] = useState("");
     const [editLedgerNote, setEditLedgerNote] = useState("");
 
+    // --- User Management State ---
+    const [allUsers, setAllUsers] = useState<any[]>([]);
+
     // --- Single Invoice Generation State ---
     const [isSingleInvModalOpen, setIsSingleInvModalOpen] = useState(false);
     const [singleInvUnit, setSingleInvUnit] = useState("");
@@ -232,8 +235,9 @@ export default function AdminDashboard() {
         const unsubAnnouncements = onSnapshot(collection(db, "announcements"), (snapshot) => { const annData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Announcement)); annData.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()); setAnnouncements(annData); });
         const unsubDocs = onSnapshot(collection(db, "documents"), (snapshot) => { const docData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as DocumentData)); docData.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()); setDocuments(docData); });
         const unsubLedger = onSnapshot(collection(db, "ledger"), (snapshot) => { setAllLedgerEntries(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)).sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())); });
+        const unsubUsers = onSnapshot(collection(db, "users"), (snapshot) => { setAllUsers(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)).sort((a: any, b: any) => (a.email || "").localeCompare(b.email || ""))); });
 
-        return () => { unsubBldgs(); unsubApps(); unsubAllInvoices(); unsubTickets(); unsubContacts(); unsubOccupied(); unsubExpenses(); unsubSettings(); unsubAnnouncements(); unsubDocs(); unsubLedger(); };
+        return () => { unsubBldgs(); unsubApps(); unsubAllInvoices(); unsubTickets(); unsubContacts(); unsubOccupied(); unsubExpenses(); unsubSettings(); unsubAnnouncements(); unsubDocs(); unsubLedger(); unsubUsers(); };
     }, [role]);
 
     const totalIncome = paidInvoices.reduce((sum, inv) => sum + Number(inv.totalAmount || 0), 0);
@@ -479,6 +483,21 @@ export default function AdminDashboard() {
         } catch (error) { console.error(error); alert("Failed to delete ledger entry."); }
     };
 
+    const handleChangeUserRole = async (userId: string, email: string, newRole: string) => {
+        if (email === user?.email) { alert("You cannot change your own role."); return; }
+        if (!window.confirm(`Change role of ${email} to "${newRole}"?`)) return;
+        try {
+            await updateDoc(doc(db, "users", userId), { role: newRole });
+        } catch (error) { console.error(error); alert("Failed to update role."); }
+    };
+    const handleDeleteUser = async (userId: string, email: string) => {
+        if (email === user?.email) { alert("You cannot delete your own account."); return; }
+        if (!window.confirm(`Remove ${email} from the system? They will need to be re-added to login again.`)) return;
+        try {
+            await deleteDoc(doc(db, "users", userId));
+        } catch (error) { console.error(error); alert("Failed to delete user."); }
+    };
+
     const handleAddBuilding = async (e: React.FormEvent) => { e.preventDefault(); setIsSubmitting(true); try { await addDoc(collection(db, "buildings"), { name, address, totalUnits: Number(totalUnits), createdAt: new Date().toISOString() }); setName(""); setAddress(""); setTotalUnits(""); } catch (error) { console.error(error); } finally { setIsSubmitting(false); } };
     const handleApproveApp = async (appId: string, unitId: string, tenantEmail: string) => { try { await updateDoc(doc(db, "units", unitId), { status: "occupied", tenantEmail, lastMeterReading: 0 }); await updateDoc(doc(db, "applications", appId), { status: "approved" }); } catch (error) { console.error(error); } };
     const handleRejectApp = async (appId: string) => { try { await updateDoc(doc(db, "applications", appId), { status: "rejected" }); } catch (error) { console.error(error); } };
@@ -698,6 +717,40 @@ export default function AdminDashboard() {
                                             <div className="flex items-center gap-3">
                                                 <a href={doc.fileUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline text-xs font-bold">View</a>
                                                 <button onClick={() => handleDeleteDocument(doc.id)} className="text-gray-400 hover:text-red-500 text-xs">🗑️</button>
+                                            </div>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+                        </div>
+
+                        {/* --- USER MANAGEMENT --- */}
+                        <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+                            <h2 className="text-lg font-semibold text-gray-800 mb-4">👥 User Management</h2>
+                            <div className="space-y-3 max-h-80 overflow-y-auto">
+                                {allUsers.length === 0 ? (
+                                    <p className="text-sm text-gray-500">No registered users.</p>
+                                ) : (
+                                    allUsers.map(u => (
+                                        <div key={u.id} className="flex flex-col sm:flex-row justify-between sm:items-center gap-2 border border-gray-100 p-3 rounded-md bg-gray-50">
+                                            <div className="min-w-0">
+                                                <p className="font-medium text-gray-800 text-sm truncate">{u.email}</p>
+                                                <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${u.role === 'admin' ? 'bg-purple-100 text-purple-700' : u.role === 'employee' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>{u.role}</span>
+                                            </div>
+                                            <div className="flex items-center gap-2 shrink-0">
+                                                <select
+                                                    value={u.role}
+                                                    onChange={(e) => handleChangeUserRole(u.id, u.email, e.target.value)}
+                                                    disabled={u.email === user?.email}
+                                                    className="text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white disabled:opacity-50"
+                                                >
+                                                    <option value="admin">Admin</option>
+                                                    <option value="employee">Employee</option>
+                                                    <option value="tenant">Tenant</option>
+                                                </select>
+                                                {u.email !== user?.email && (
+                                                    <button onClick={() => handleDeleteUser(u.id, u.email)} className="text-gray-400 hover:text-red-500 text-xs" title="Remove user">🗑️</button>
+                                                )}
                                             </div>
                                         </div>
                                     ))
