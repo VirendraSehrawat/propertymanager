@@ -32,7 +32,7 @@ export default function BuildingUnitsPage() {
     const [isGenerating, setIsGenerating] = useState(false);
 
     const [unitNumber, setUnitNumber] = useState("");
-    const [baseRent, setBaseRent] = useState("");
+    const [baseRent, setBaseRent] = useState("8000");
 
     const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
     const [selectedUnit, setSelectedUnit] = useState<any>(null);
@@ -103,7 +103,7 @@ export default function BuildingUnitsPage() {
         try {
             const batch = writeBatch(db);
             for (let i = 1; i <= building.totalUnits; i++) {
-                batch.set(doc(collection(db, "units")), { buildingId: id, unitNumber: `Unit ${i}`, baseRent: 0, status: "vacant", tenantEmail: "", createdAt: new Date().toISOString() });
+                batch.set(doc(collection(db, "units")), { buildingId: id, unitNumber: `Unit ${i}`, baseRent: 8000, status: "vacant", tenantEmail: "", createdAt: new Date().toISOString() });
             }
             await batch.commit();
         } catch (error) { console.error(error); } finally { setIsGenerating(false); }
@@ -111,7 +111,7 @@ export default function BuildingUnitsPage() {
 
     const handleManualAdd = async (e: React.FormEvent) => {
         e.preventDefault(); if (!unitNumber || !baseRent) return;
-        try { await addDoc(collection(db, "units"), { buildingId: id, unitNumber, baseRent: Number(baseRent), status: "vacant", tenantEmail: "", createdAt: new Date().toISOString() }); setUnitNumber(""); setBaseRent(""); } catch (error) { console.error(error); }
+        try { await addDoc(collection(db, "units"), { buildingId: id, unitNumber, baseRent: Number(baseRent), status: "vacant", tenantEmail: "", createdAt: new Date().toISOString() }); setUnitNumber(""); setBaseRent("8000"); } catch (error) { console.error(error); }
     };
 
     const handleAssignTenant = async (e: React.FormEvent) => {
