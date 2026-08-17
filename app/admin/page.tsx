@@ -191,6 +191,9 @@ export default function AdminDashboard() {
     // --- Tenant Ledger State ---
     const [allLedgerEntries, setAllLedgerEntries] = useState<any[]>([]);
     const [ledgerFilter, setLedgerFilter] = useState("");
+    const [editLedger, setEditLedger] = useState<any>(null);
+    const [editLedgerAmount, setEditLedgerAmount] = useState("");
+    const [editLedgerNote, setEditLedgerNote] = useState("");
 
     // --- Single Invoice Generation State ---
     const [isSingleInvModalOpen, setIsSingleInvModalOpen] = useState(false);
@@ -444,6 +447,38 @@ export default function AdminDashboard() {
         } catch (error) { console.error(error); }
     };
     const handleRejectInvoice = async (invId: string) => { if (!window.confirm("Reject this payment?")) return; try { await updateDoc(doc(db, "invoices", invId), { status: "unpaid", transactionId: "" }); } catch (error) { console.error(error); } };
+
+    // --- Ledger Rectification (Admin only) ---
+    const handleEditLedgerOpen = (entry: any) => {
+        setEditLedger(entry);
+        setEditLedgerAmount(String(entry.amountPaid));
+        setEditLedgerNote("");
+    };
+    const handleEditLedgerSave = async () => {
+        if (!editLedger) return;
+        const newAmountPaid = Number(editLedgerAmount);
+        if (isNaN(newAmountPaid) || newAmountPaid < 0) { alert("Enter a valid amount."); return; }
+        if (!editLedgerNote.trim()) { alert("Please provide a reason for this correction."); return; }
+        const newBalance = newAmountPaid - Number(editLedger.invoiceAmount);
+        try {
+            await updateDoc(doc(db, "ledger", editLedger.id), {
+                amountPaid: newAmountPaid,
+                balance: newBalance,
+                correctedAt: new Date().toISOString(),
+                correctionNote: editLedgerNote.trim(),
+                correctedBy: user?.email || "admin",
+                originalAmountPaid: editLedger.originalAmountPaid ?? editLedger.amountPaid,
+            });
+            setEditLedger(null);
+        } catch (error) { console.error(error); alert("Failed to update ledger entry."); }
+    };
+    const handleDeleteLedger = async (entry: any) => {
+        if (!window.confirm(`Delete ledger entry for ${entry.billingPeriod} (₹${entry.amountPaid} paid)? This cannot be undone.`)) return;
+        try {
+            await deleteDoc(doc(db, "ledger", entry.id));
+        } catch (error) { console.error(error); alert("Failed to delete ledger entry."); }
+    };
+
     const handleAddBuilding = async (e: React.FormEvent) => { e.preventDefault(); setIsSubmitting(true); try { await addDoc(collection(db, "buildings"), { name, address, totalUnits: Number(totalUnits), createdAt: new Date().toISOString() }); setName(""); setAddress(""); setTotalUnits(""); } catch (error) { console.error(error); } finally { setIsSubmitting(false); } };
     const handleApproveApp = async (appId: string, unitId: string, tenantEmail: string) => { try { await updateDoc(doc(db, "units", unitId), { status: "occupied", tenantEmail, lastMeterReading: 0 }); await updateDoc(doc(db, "applications", appId), { status: "approved" }); } catch (error) { console.error(error); } };
     const handleRejectApp = async (appId: string) => { try { await updateDoc(doc(db, "applications", appId), { status: "rejected" }); } catch (error) { console.error(error); } };
@@ -602,8 +637,8 @@ export default function AdminDashboard() {
                                                     <div className="flex justify-between items-center"><span className="text-sm font-medium">Net Balance</span><span className={`font-bold ${tenantBalances[ledgerFilter]?.balance >= 0 ? 'text-green-700' : 'text-red-700'}`}>{tenantBalances[ledgerFilter]?.balance >= 0 ? `₹${tenantBalances[ledgerFilter]?.balance} Credit` : `₹${Math.abs(tenantBalances[ledgerFilter]?.balance || 0)} Due`}</span></div>
                                                 </div>
                                                 <table className="w-full text-xs">
-                                                    <thead><tr className="border-b text-gray-500"><th className="pb-1 text-left">Date</th><th className="pb-1 text-left">Period</th><th className="pb-1 text-right">Invoice</th><th className="pb-1 text-right">Paid</th><th className="pb-1 text-right">Bal</th></tr></thead>
-                                                    <tbody>{filtered.map(entry => (<tr key={entry.id} className="border-b border-gray-100"><td className="py-1.5">{new Date(entry.createdAt).toLocaleDateString()}</td><td className="py-1.5">{entry.billingPeriod}</td><td className="py-1.5 text-right">₹{entry.invoiceAmount}</td><td className="py-1.5 text-right text-green-700">₹{entry.amountPaid}</td><td className={`py-1.5 text-right font-bold ${Number(entry.balance) >= 0 ? 'text-green-700' : 'text-red-700'}`}>{Number(entry.balance) >= 0 ? '+' : ''}₹{entry.balance}</td></tr>))}</tbody>
+                                                    <thead><tr className="border-b text-gray-500"><th className="pb-1 text-left">Date</th><th className="pb-1 text-left">Period</th><th className="pb-1 text-right">Invoice</th><th className="pb-1 text-right">Paid</th><th className="pb-1 text-right">Bal</th><th className="pb-1 text-right">Actions</th></tr></thead>
+                                                    <tbody>{filtered.map(entry => (<tr key={entry.id} className="border-b border-gray-100"><td className="py-1.5">{new Date(entry.createdAt).toLocaleDateString()}</td><td className="py-1.5">{entry.billingPeriod}{entry.correctionNote && <span title={`Corrected: ${entry.correctionNote}`} className="ml-1 text-amber-500">✎</span>}</td><td className="py-1.5 text-right">₹{entry.invoiceAmount}</td><td className="py-1.5 text-right text-green-700">₹{entry.amountPaid}</td><td className={`py-1.5 text-right font-bold ${Number(entry.balance) >= 0 ? 'text-green-700' : 'text-red-700'}`}>{Number(entry.balance) >= 0 ? '+' : ''}₹{entry.balance}</td><td className="py-1.5 text-right"><button onClick={() => handleEditLedgerOpen(entry)} className="text-blue-600 hover:underline mr-2" title="Edit">✏️</button><button onClick={() => handleDeleteLedger(entry)} className="text-red-500 hover:underline" title="Delete">🗑️</button></td></tr>))}</tbody>
                                                 </table>
                                             </div>
                                         )}
@@ -611,6 +646,34 @@ export default function AdminDashboard() {
                                 );
                             })()}
                         </div>
+
+                        {/* --- LEDGER EDIT MODAL --- */}
+                        {editLedger && (
+                            <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setEditLedger(null)}>
+                                <div className="bg-white p-6 rounded-lg shadow-xl max-w-md w-full mx-4 space-y-4" onClick={(e) => e.stopPropagation()}>
+                                    <h3 className="text-lg font-semibold text-gray-800">✏️ Rectify Ledger Entry</h3>
+                                    <div className="bg-gray-50 p-3 rounded-md text-sm space-y-1">
+                                        <p><span className="text-gray-500">Period:</span> <span className="font-medium">{editLedger.billingPeriod}</span></p>
+                                        <p><span className="text-gray-500">Tenant:</span> <span className="font-medium">{editLedger.tenantEmail}</span></p>
+                                        <p><span className="text-gray-500">Invoice Amount:</span> <span className="font-medium">₹{editLedger.invoiceAmount}</span></p>
+                                        <p><span className="text-gray-500">Original Amount Paid:</span> <span className="font-medium">₹{editLedger.originalAmountPaid ?? editLedger.amountPaid}</span></p>
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Corrected Amount Paid (₹)</label>
+                                        <input type="number" value={editLedgerAmount} onChange={(e) => setEditLedgerAmount(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" min="0" />
+                                        {editLedgerAmount && <p className="text-xs text-gray-500 mt-1">New balance: <span className={Number(editLedgerAmount) - Number(editLedger.invoiceAmount) >= 0 ? 'text-green-700' : 'text-red-700'}>₹{Number(editLedgerAmount) - Number(editLedger.invoiceAmount)}</span></p>}
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Reason for Correction *</label>
+                                        <textarea value={editLedgerNote} onChange={(e) => setEditLedgerNote(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" rows={2} placeholder="e.g. Incorrect amount entered, bank confirmation shows ₹5000" />
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <button onClick={() => setEditLedger(null)} className="flex-1 py-2 border border-gray-300 rounded-md text-sm text-gray-600">Cancel</button>
+                                        <button onClick={handleEditLedgerSave} className="flex-1 py-2 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700">Save Correction</button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
 
                         <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
                             <div className="flex justify-between items-center mb-4">
