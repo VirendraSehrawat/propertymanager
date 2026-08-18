@@ -676,41 +676,74 @@ export default function EmployeeDashboard() {
                 {/* UNITS TAB */}
                 {activeTab === "units" && (
                     <div className="space-y-4">
-                        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                            <div className="bg-blue-50 px-5 py-4 border-b border-blue-200">
-                                <h2 className="text-lg font-bold text-blue-800">🏠 All Units</h2>
-                                <p className="text-xs text-blue-600 mt-1">{vacantUnits.length} vacant · {occupiedForAssign.length} occupied</p>
+                        {/* VACANT UNITS - Grouped by Building */}
+                        <div className="bg-white rounded-xl shadow-sm border border-green-200 overflow-hidden">
+                            <div className="bg-green-50 px-5 py-4 border-b border-green-200">
+                                <h2 className="text-lg font-bold text-green-800">🟢 Vacant Apartments ({vacantUnits.length})</h2>
+                                <p className="text-xs text-green-600 mt-1">Ready to assign tenants</p>
                             </div>
-                            <div className="p-4 space-y-3 max-h-[70vh] overflow-y-auto">
-                                {allUnits.length === 0 ? (
-                                    <p className="text-sm text-gray-500 text-center py-8">No units found.</p>
+                            <div className="p-4 space-y-4 max-h-[50vh] overflow-y-auto">
+                                {vacantUnits.length === 0 ? (
+                                    <p className="text-sm text-gray-500 text-center py-4">All units are occupied! 🎉</p>
                                 ) : (
-                                    allUnits.map(unit => (
-                                        <div key={unit.id} className={`border rounded-lg p-4 ${unit.status === "vacant" ? "border-green-200 bg-green-50" : "border-gray-200 bg-white"}`}>
+                                    (() => {
+                                        const grouped: Record<string, any[]> = {};
+                                        vacantUnits.forEach(u => {
+                                            const bName = getBuildingName(u.buildingId);
+                                            if (!grouped[bName]) grouped[bName] = [];
+                                            grouped[bName].push(u);
+                                        });
+                                        return Object.entries(grouped).map(([bName, units]) => (
+                                            <div key={bName}>
+                                                <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 px-1">🏢 {bName} ({units.length})</h3>
+                                                <div className="space-y-2">
+                                                    {units.map(unit => (
+                                                        <div key={unit.id} className="border border-green-200 bg-green-50 rounded-lg p-3 flex justify-between items-center">
+                                                            <div>
+                                                                <h4 className="font-bold text-gray-900 text-sm">{unit.unitNumber}</h4>
+                                                                <p className="text-xs text-gray-500">Rent: ₹{unit.baseRent || 8000}/mo</p>
+                                                            </div>
+                                                            <div className="flex gap-2">
+                                                                <button onClick={() => { setEditUnit(unit); setEditUnitNumber(unit.unitNumber); setEditBaseRent(String(unit.baseRent || 8000)); setIsEditUnitModalOpen(true); }} className="text-xs text-blue-600 hover:underline">✏️</button>
+                                                                <button onClick={() => { setAssignUnit(unit); setAssignMode("new"); setAssignEmail(""); setAssignName(""); setAssignPhone(""); setAssignExistingUnit(""); setIsAssignModalOpen(true); }} className="text-xs bg-green-600 text-white px-2.5 py-1 rounded-md font-medium hover:bg-green-700">+ Assign</button>
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        ));
+                                    })()
+                                )}
+                            </div>
+                        </div>
+
+                        {/* OCCUPIED UNITS */}
+                        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                            <div className="bg-orange-50 px-5 py-4 border-b border-orange-200">
+                                <h2 className="text-lg font-bold text-orange-800">🟠 Occupied Apartments ({occupiedForAssign.length})</h2>
+                            </div>
+                            <div className="p-4 space-y-3 max-h-[50vh] overflow-y-auto">
+                                {occupiedForAssign.length === 0 ? (
+                                    <p className="text-sm text-gray-500 text-center py-4">No occupied units.</p>
+                                ) : (
+                                    occupiedForAssign.map(unit => (
+                                        <div key={unit.id} className="border border-gray-200 bg-white rounded-lg p-4">
                                             <div className="flex justify-between items-start">
                                                 <div>
                                                     <div className="flex items-center gap-2">
                                                         <h3 className="font-bold text-gray-900">{unit.unitNumber}</h3>
-                                                        <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${unit.status === "vacant" ? "bg-green-200 text-green-800" : "bg-orange-100 text-orange-700"}`}>{unit.status}</span>
+                                                        <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-orange-100 text-orange-700">occupied</span>
                                                     </div>
                                                     <p className="text-xs text-gray-500 mt-1">{getBuildingName(unit.buildingId)} · Rent: ₹{unit.baseRent || 8000}</p>
-                                                    {unit.tenantEmail && (
-                                                        <div className="mt-2 text-xs text-gray-600">
-                                                            <p>👤 {unit.tenantName || "—"} · {unit.tenantEmail}</p>
-                                                            {unit.tenantPhone && <p>📞 {unit.tenantPhone}</p>}
-                                                        </div>
-                                                    )}
+                                                    <div className="mt-2 text-xs text-gray-600">
+                                                        <p>👤 {unit.tenantName || "—"} · {unit.tenantEmail}</p>
+                                                        {unit.tenantPhone && <p>📞 {unit.tenantPhone}</p>}
+                                                    </div>
                                                 </div>
                                                 <div className="flex flex-col gap-1.5 shrink-0">
                                                     <button onClick={() => { setEditUnit(unit); setEditUnitNumber(unit.unitNumber); setEditBaseRent(String(unit.baseRent || 8000)); setIsEditUnitModalOpen(true); }} className="text-xs text-blue-600 hover:underline">✏️ Edit</button>
-                                                    {unit.status === "vacant" ? (
-                                                        <button onClick={() => { setAssignUnit(unit); setAssignMode("new"); setAssignEmail(""); setAssignName(""); setAssignPhone(""); setAssignExistingUnit(""); setIsAssignModalOpen(true); }} className="text-xs text-green-700 font-medium hover:underline">+ Assign</button>
-                                                    ) : (
-                                                        <>
-                                                            <button onClick={() => handleRemoveTenant(unit.id)} className="text-xs text-red-500 hover:underline">Remove</button>
-                                                            <button onClick={() => { setUnitDocUnit(unit); setUnitDocName(""); setUnitDocFile(null); setIsUnitDocModalOpen(true); }} className="text-xs text-purple-600 hover:underline">📄 Doc</button>
-                                                        </>
-                                                    )}
+                                                    <button onClick={() => handleRemoveTenant(unit.id)} className="text-xs text-red-500 hover:underline">Remove</button>
+                                                    <button onClick={() => { setUnitDocUnit(unit); setUnitDocName(""); setUnitDocFile(null); setIsUnitDocModalOpen(true); }} className="text-xs text-purple-600 hover:underline">📄 Doc</button>
                                                 </div>
                                             </div>
                                             {unit.documents && unit.documents.length > 0 && (
