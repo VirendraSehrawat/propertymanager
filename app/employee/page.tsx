@@ -17,7 +17,7 @@ export default function EmployeeDashboard() {
 
     const [activeTickets, setActiveTickets] = useState<any[]>([]);
     const [resolvedTickets, setResolvedTickets] = useState<any[]>([]);
-    const [activeTab, setActiveTab] = useState<"active" | "resolved" | "meter" | "collections" | "ledger">("active");
+    const [activeTab, setActiveTab] = useState<"active" | "resolved" | "meter" | "collections" | "ledger" | "units">("active");
 
     const [isResolveModalOpen, setIsResolveModalOpen] = useState(false);
     const [selectedTicket, setSelectedTicket] = useState<any>(null);
@@ -60,6 +60,25 @@ export default function EmployeeDashboard() {
     const [allLedgerEntries, setAllLedgerEntries] = useState<any[]>([]);
     const [ledgerFilter, setLedgerFilter] = useState("");
 
+    // Unit Management States
+    const [allUnits, setAllUnits] = useState<any[]>([]);
+    const [buildings, setBuildings] = useState<any[]>([]);
+    const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
+    const [assignUnit, setAssignUnit] = useState<any>(null);
+    const [assignEmail, setAssignEmail] = useState("");
+    const [assignName, setAssignName] = useState("");
+    const [assignPhone, setAssignPhone] = useState("");
+    const [assignMode, setAssignMode] = useState<"new" | "existing">("new");
+    const [assignExistingUnit, setAssignExistingUnit] = useState("");
+    const [isEditUnitModalOpen, setIsEditUnitModalOpen] = useState(false);
+    const [editUnit, setEditUnit] = useState<any>(null);
+    const [editUnitNumber, setEditUnitNumber] = useState("");
+    const [editBaseRent, setEditBaseRent] = useState("");
+    const [unitDocUnit, setUnitDocUnit] = useState<any>(null);
+    const [unitDocName, setUnitDocName] = useState("");
+    const [unitDocFile, setUnitDocFile] = useState<File | null>(null);
+    const [isUnitDocModalOpen, setIsUnitDocModalOpen] = useState(false);
+
     useEffect(() => {
         if (!loading && (!user || role !== "employee")) {
             router.push("/");
@@ -92,7 +111,15 @@ export default function EmployeeDashboard() {
             setAllLedgerEntries(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)).sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
         });
 
-        return () => { unsubTickets(); unsubUnits(); unsubInvoices(); unsubLedger(); };
+        const unsubAllUnits = onSnapshot(collection(db, "units"), (snapshot) => {
+            setAllUnits(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)).sort((a: any, b: any) => a.unitNumber.localeCompare(b.unitNumber, undefined, { numeric: true })));
+        });
+
+        const unsubBuildings = onSnapshot(collection(db, "buildings"), (snapshot) => {
+            setBuildings(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)));
+        });
+
+        return () => { unsubTickets(); unsubUnits(); unsubInvoices(); unsubLedger(); unsubAllUnits(); unsubBuildings(); };
     }, [role]);
 
     const handleMarkInProgress = async (ticketId: string) => {
@@ -312,6 +339,62 @@ export default function EmployeeDashboard() {
         } catch (error) { console.error(error); alert("Failed to upload document."); } finally { setIsUploadingDoc(false); }
     };
 
+    // --- Unit Management Handlers ---
+    const vacantUnits = allUnits.filter(u => u.status === "vacant");
+    const occupiedForAssign = allUnits.filter(u => u.status === "occupied");
+
+    const handleAssignTenant = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!assignUnit) return;
+        if (assignMode === "new") {
+            if (!assignEmail) return;
+            try {
+                await updateDoc(doc(db, "units", assignUnit.id), { status: "occupied", tenantEmail: assignEmail.toLowerCase(), tenantName: assignName, tenantPhone: assignPhone });
+                setIsAssignModalOpen(false); setAssignUnit(null); setAssignEmail(""); setAssignName(""); setAssignPhone("");
+            } catch (error) { console.error(error); alert("Failed to assign tenant."); }
+        } else {
+            if (!assignExistingUnit) return;
+            const source = occupiedForAssign.find(u => u.id === assignExistingUnit);
+            if (!source) return;
+            try {
+                await updateDoc(doc(db, "units", assignUnit.id), { status: "occupied", tenantEmail: source.tenantEmail, tenantName: source.tenantName || "", tenantPhone: source.tenantPhone || "" });
+                setIsAssignModalOpen(false); setAssignUnit(null); setAssignExistingUnit("");
+            } catch (error) { console.error(error); alert("Failed to assign tenant."); }
+        }
+    };
+
+    const handleEditUnit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!editUnit || !editUnitNumber || !editBaseRent) return;
+        try {
+            await updateDoc(doc(db, "units", editUnit.id), { unitNumber: editUnitNumber, baseRent: Number(editBaseRent) });
+            setIsEditUnitModalOpen(false); setEditUnit(null);
+        } catch (error) { console.error(error); alert("Failed to update unit."); }
+    };
+
+    const handleRemoveTenant = async (unitId: string) => {
+        if (!window.confirm("Remove this tenant from the unit?")) return;
+        try {
+            await updateDoc(doc(db, "units", unitId), { status: "vacant", tenantEmail: "", tenantName: "", tenantPhone: "" });
+        } catch (error) { console.error(error); alert("Failed to remove tenant."); }
+    };
+
+    const handleUnitDocUpload = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!unitDocUnit || !unitDocName || !unitDocFile) return;
+        setIsUploadingDoc(true);
+        try {
+            const fileUrl = await uploadFile(`tenant_docs/${unitDocUnit.id}/${Date.now()}_${unitDocFile.name}`, unitDocFile);
+            await updateDoc(doc(db, "units", unitDocUnit.id), { documents: arrayUnion({ name: unitDocName, url: fileUrl, uploadedAt: new Date().toISOString() }) });
+            setIsUnitDocModalOpen(false); setUnitDocUnit(null); setUnitDocName(""); setUnitDocFile(null);
+        } catch (error) { console.error(error); alert("Failed to upload document."); } finally { setIsUploadingDoc(false); }
+    };
+
+    const getBuildingName = (buildingId: string) => {
+        const bldg = buildings.find(b => b.id === buildingId);
+        return bldg?.name || "Unknown";
+    };
+
     if (loading) return <div className="min-h-screen flex items-center justify-center bg-gray-50">Loading...</div>;
     if (!user || role !== "employee") return null;
 
@@ -364,6 +447,12 @@ export default function EmployeeDashboard() {
                         className={`flex-1 py-3 text-sm font-bold rounded-md transition ${activeTab === "ledger" ? "bg-white text-teal-600 shadow-sm" : "text-gray-500"}`}
                     >
                         Ledger
+                    </button>
+                    <button
+                        onClick={() => setActiveTab("units")}
+                        className={`flex-1 py-3 text-sm font-bold rounded-md transition ${activeTab === "units" ? "bg-white text-blue-600 shadow-sm" : "text-gray-500"}`}
+                    >
+                        Units
                     </button>
                 </div>
 
@@ -584,8 +673,64 @@ export default function EmployeeDashboard() {
                     </div>
                 )}
 
+                {/* UNITS TAB */}
+                {activeTab === "units" && (
+                    <div className="space-y-4">
+                        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                            <div className="bg-blue-50 px-5 py-4 border-b border-blue-200">
+                                <h2 className="text-lg font-bold text-blue-800">🏠 All Units</h2>
+                                <p className="text-xs text-blue-600 mt-1">{vacantUnits.length} vacant · {occupiedForAssign.length} occupied</p>
+                            </div>
+                            <div className="p-4 space-y-3 max-h-[70vh] overflow-y-auto">
+                                {allUnits.length === 0 ? (
+                                    <p className="text-sm text-gray-500 text-center py-8">No units found.</p>
+                                ) : (
+                                    allUnits.map(unit => (
+                                        <div key={unit.id} className={`border rounded-lg p-4 ${unit.status === "vacant" ? "border-green-200 bg-green-50" : "border-gray-200 bg-white"}`}>
+                                            <div className="flex justify-between items-start">
+                                                <div>
+                                                    <div className="flex items-center gap-2">
+                                                        <h3 className="font-bold text-gray-900">{unit.unitNumber}</h3>
+                                                        <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${unit.status === "vacant" ? "bg-green-200 text-green-800" : "bg-orange-100 text-orange-700"}`}>{unit.status}</span>
+                                                    </div>
+                                                    <p className="text-xs text-gray-500 mt-1">{getBuildingName(unit.buildingId)} · Rent: ₹{unit.baseRent || 8000}</p>
+                                                    {unit.tenantEmail && (
+                                                        <div className="mt-2 text-xs text-gray-600">
+                                                            <p>👤 {unit.tenantName || "—"} · {unit.tenantEmail}</p>
+                                                            {unit.tenantPhone && <p>📞 {unit.tenantPhone}</p>}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                <div className="flex flex-col gap-1.5 shrink-0">
+                                                    <button onClick={() => { setEditUnit(unit); setEditUnitNumber(unit.unitNumber); setEditBaseRent(String(unit.baseRent || 8000)); setIsEditUnitModalOpen(true); }} className="text-xs text-blue-600 hover:underline">✏️ Edit</button>
+                                                    {unit.status === "vacant" ? (
+                                                        <button onClick={() => { setAssignUnit(unit); setAssignMode("new"); setAssignEmail(""); setAssignName(""); setAssignPhone(""); setAssignExistingUnit(""); setIsAssignModalOpen(true); }} className="text-xs text-green-700 font-medium hover:underline">+ Assign</button>
+                                                    ) : (
+                                                        <>
+                                                            <button onClick={() => handleRemoveTenant(unit.id)} className="text-xs text-red-500 hover:underline">Remove</button>
+                                                            <button onClick={() => { setUnitDocUnit(unit); setUnitDocName(""); setUnitDocFile(null); setIsUnitDocModalOpen(true); }} className="text-xs text-purple-600 hover:underline">📄 Doc</button>
+                                                        </>
+                                                    )}
+                                                </div>
+                                            </div>
+                                            {unit.documents && unit.documents.length > 0 && (
+                                                <div className="mt-2 pt-2 border-t border-gray-100">
+                                                    <p className="text-[10px] font-bold text-gray-500 uppercase mb-1">Documents</p>
+                                                    {unit.documents.map((d: any, i: number) => (
+                                                        <a key={i} href={d.url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline block">📎 {d.name}</a>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 {/* TICKET LIST */}
-                {activeTab !== "meter" && activeTab !== "collections" && activeTab !== "ledger" && (
+                {activeTab !== "meter" && activeTab !== "collections" && activeTab !== "ledger" && activeTab !== "units" && (
                 <div className="space-y-4">
                     {(activeTab === "active" ? activeTickets : resolvedTickets).length === 0 ? (
                         <div className="bg-white p-8 rounded-xl shadow-sm text-center border border-gray-200 mt-8">
@@ -773,6 +918,81 @@ export default function EmployeeDashboard() {
                         </div>
 
                         <button onClick={() => { setIsTenantProfileOpen(false); setProfileUnit(null); }} className="w-full mt-5 py-3 text-gray-600 hover:bg-gray-100 rounded-xl font-bold transition">Close</button>
+                    </div>
+                </div>
+            )}
+
+            {/* ASSIGN TENANT MODAL */}
+            {isAssignModalOpen && assignUnit && (
+                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setIsAssignModalOpen(false)}>
+                    <div className="bg-white p-6 rounded-xl shadow-xl max-w-md w-full space-y-4" onClick={(e) => e.stopPropagation()}>
+                        <h3 className="text-lg font-bold text-gray-800">Assign Tenant to {assignUnit.unitNumber}</h3>
+                        <div className="flex gap-2">
+                            <button onClick={() => setAssignMode("new")} className={`flex-1 py-2 rounded-md text-sm font-medium ${assignMode === "new" ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600"}`}>New Tenant</button>
+                            <button onClick={() => setAssignMode("existing")} className={`flex-1 py-2 rounded-md text-sm font-medium ${assignMode === "existing" ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600"}`}>Existing Tenant</button>
+                        </div>
+                        <form onSubmit={handleAssignTenant} className="space-y-3">
+                            {assignMode === "new" ? (
+                                <>
+                                    <input type="email" required placeholder="Tenant Email *" value={assignEmail} onChange={(e) => setAssignEmail(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
+                                    <input type="text" placeholder="Tenant Name" value={assignName} onChange={(e) => setAssignName(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
+                                    <input type="text" placeholder="Phone Number" value={assignPhone} onChange={(e) => setAssignPhone(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
+                                </>
+                            ) : (
+                                <select required value={assignExistingUnit} onChange={(e) => setAssignExistingUnit(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm">
+                                    <option value="">Select existing tenant...</option>
+                                    {occupiedForAssign.map(u => (
+                                        <option key={u.id} value={u.id}>{u.unitNumber} — {u.tenantName || u.tenantEmail}</option>
+                                    ))}
+                                </select>
+                            )}
+                            <div className="flex gap-2">
+                                <button type="button" onClick={() => setIsAssignModalOpen(false)} className="flex-1 py-2 border border-gray-300 rounded-md text-sm text-gray-600">Cancel</button>
+                                <button type="submit" className="flex-1 py-2 bg-green-600 text-white rounded-md text-sm font-medium hover:bg-green-700">Assign Tenant</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* EDIT UNIT MODAL */}
+            {isEditUnitModalOpen && editUnit && (
+                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setIsEditUnitModalOpen(false)}>
+                    <div className="bg-white p-6 rounded-xl shadow-xl max-w-md w-full space-y-4" onClick={(e) => e.stopPropagation()}>
+                        <h3 className="text-lg font-bold text-gray-800">Edit Unit</h3>
+                        <form onSubmit={handleEditUnit} className="space-y-3">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Unit Name</label>
+                                <input type="text" required value={editUnitNumber} onChange={(e) => setEditUnitNumber(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Base Rent (₹)</label>
+                                <input type="number" required value={editBaseRent} onChange={(e) => setEditBaseRent(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
+                            </div>
+                            <div className="flex gap-2">
+                                <button type="button" onClick={() => setIsEditUnitModalOpen(false)} className="flex-1 py-2 border border-gray-300 rounded-md text-sm text-gray-600">Cancel</button>
+                                <button type="submit" className="flex-1 py-2 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700">Save Changes</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* UNIT DOCUMENT UPLOAD MODAL */}
+            {isUnitDocModalOpen && unitDocUnit && (
+                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setIsUnitDocModalOpen(false)}>
+                    <div className="bg-white p-6 rounded-xl shadow-xl max-w-md w-full space-y-4" onClick={(e) => e.stopPropagation()}>
+                        <h3 className="text-lg font-bold text-gray-800">Upload Document for {unitDocUnit.unitNumber}</h3>
+                        <p className="text-xs text-gray-500">{unitDocUnit.tenantName || unitDocUnit.tenantEmail}</p>
+                        <form onSubmit={handleUnitDocUpload} className="space-y-3">
+                            <input type="text" required placeholder="Document Name (e.g. Aadhaar, Lease)" value={unitDocName} onChange={(e) => setUnitDocName(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
+                            <input type="file" required accept="image/*,.pdf" onChange={(e) => setUnitDocFile(e.target.files ? e.target.files[0] : null)} className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:bg-blue-50 file:text-blue-700" />
+                            {isUploading && <UploadProgressBar progress={uploadProgress} />}
+                            <div className="flex gap-2">
+                                <button type="button" onClick={() => setIsUnitDocModalOpen(false)} className="flex-1 py-2 border border-gray-300 rounded-md text-sm text-gray-600">Cancel</button>
+                                <button type="submit" disabled={isUploadingDoc || isUploading} className="flex-1 py-2 bg-purple-600 text-white rounded-md text-sm font-medium hover:bg-purple-700 disabled:bg-purple-300">{isUploadingDoc ? "Uploading..." : "Upload Document"}</button>
+                            </div>
+                        </form>
                     </div>
                 </div>
             )}
