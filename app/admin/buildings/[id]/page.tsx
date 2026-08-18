@@ -3,8 +3,8 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { doc, getDoc, collection, query, where, onSnapshot, writeBatch, addDoc, updateDoc, arrayUnion } from "firebase/firestore";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { db, storage } from "@/lib/firebase";
+import { db } from "@/lib/firebase";
+import { useUploadWithProgress, UploadProgressBar } from "@/lib/useUpload";
 import { useAuth } from "@/context/AuthContext";
 
 interface Unit {
@@ -26,6 +26,7 @@ export default function BuildingUnitsPage() {
     const { id } = useParams();
     const router = useRouter();
     const { role, loading } = useAuth();
+    const { uploadFile, uploadProgress, isUploading } = useUploadWithProgress();
 
     const [building, setBuilding] = useState<any>(null);
     const [units, setUnits] = useState<Unit[]>([]);
@@ -189,9 +190,7 @@ export default function BuildingUnitsPage() {
         setIsUploadingDoc(true);
 
         try {
-            const fileRef = ref(storage, `tenant_docs/${selectedUnitForDoc.id}/${Date.now()}_${docFile.name}`);
-            await uploadBytes(fileRef, docFile);
-            const fileUrl = await getDownloadURL(fileRef);
+            const fileUrl = await uploadFile(`tenant_docs/${selectedUnitForDoc.id}/${Date.now()}_${docFile.name}`, docFile);
 
             await updateDoc(doc(db, "units", selectedUnitForDoc.id), {
                 documents: arrayUnion({
@@ -363,9 +362,10 @@ export default function BuildingUnitsPage() {
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Select File (PDF/Image)</label>
                                 <input type="file" accept="image/*,.pdf" required onChange={(e) => setDocFile(e.target.files ? e.target.files[0] : null)} className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:bg-gray-100" />
                             </div>
+                            {isUploading && <UploadProgressBar progress={uploadProgress} />}
                             <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-gray-100">
-                                <button type="button" onClick={() => setIsDocModalOpen(false)} disabled={isUploadingDoc} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-md">Cancel</button>
-                                <button type="submit" disabled={isUploadingDoc} className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">{isUploadingDoc ? "Uploading..." : "Save Document"}</button>
+                                <button type="button" onClick={() => setIsDocModalOpen(false)} disabled={isUploadingDoc || isUploading} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-md">Cancel</button>
+                                <button type="submit" disabled={isUploadingDoc || isUploading} className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">{isUploadingDoc ? "Uploading..." : "Save Document"}</button>
                             </div>
                         </form>
                     </div>

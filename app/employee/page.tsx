@@ -6,13 +6,14 @@ import { useAuth } from "@/context/AuthContext";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { signOut } from "firebase/auth";
-import { auth, db, storage } from "@/lib/firebase";
+import { auth, db } from "@/lib/firebase";
 import { collection, onSnapshot, doc, updateDoc, arrayUnion, query, where, writeBatch, getDocs, addDoc, getDoc, deleteField } from "firebase/firestore";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { useUploadWithProgress, UploadProgressBar } from "@/lib/useUpload";
 
 export default function EmployeeDashboard() {
     const { user, role, loading } = useAuth();
     const router = useRouter();
+    const { uploadFile, uploadProgress, isUploading } = useUploadWithProgress();
 
     const [activeTickets, setActiveTickets] = useState<any[]>([]);
     const [resolvedTickets, setResolvedTickets] = useState<any[]>([]);
@@ -117,9 +118,7 @@ export default function EmployeeDashboard() {
         setIsSubmitting(true);
         try {
             // 1. Upload the proof photo to Firebase Storage
-            const fileRef = ref(storage, `maintenance_resolutions/${selectedTicket.id}/${Date.now()}_${resolutionFile.name}`);
-            await uploadBytes(fileRef, resolutionFile);
-            const photoUrl = await getDownloadURL(fileRef);
+            const photoUrl = await uploadFile(`maintenance_resolutions/${selectedTicket.id}/${Date.now()}_${resolutionFile.name}`, resolutionFile);
 
             // 2. Update the Firestore ticket
             await updateDoc(doc(db, "maintenance", selectedTicket.id), {
@@ -307,9 +306,7 @@ export default function EmployeeDashboard() {
         if (!profileUnit || !profileDocName || !profileDocFile) return;
         setIsUploadingDoc(true);
         try {
-            const fileRef = ref(storage, `tenant_docs/${profileUnit.id}/${Date.now()}_${profileDocFile.name}`);
-            await uploadBytes(fileRef, profileDocFile);
-            const fileUrl = await getDownloadURL(fileRef);
+            const fileUrl = await uploadFile(`tenant_docs/${profileUnit.id}/${Date.now()}_${profileDocFile.name}`, profileDocFile);
             await updateDoc(doc(db, "units", profileUnit.id), { documents: arrayUnion({ name: profileDocName, url: fileUrl, uploadedAt: new Date().toISOString() }) });
             setProfileDocName(""); setProfileDocFile(null);
         } catch (error) { console.error(error); alert("Failed to upload document."); } finally { setIsUploadingDoc(false); }
@@ -700,9 +697,10 @@ export default function EmployeeDashboard() {
                             </div>
 
                             <div className="flex flex-col gap-3 mt-8">
+                                {isUploading && <UploadProgressBar progress={uploadProgress} />}
                                 <button
                                     type="submit"
-                                    disabled={isSubmitting}
+                                    disabled={isSubmitting || isUploading}
                                     className="w-full py-4 bg-green-600 text-white rounded-xl font-bold text-lg hover:bg-green-700 shadow-md disabled:bg-green-400 transition"
                                 >
                                     {isSubmitting ? "Uploading..." : "Submit Resolution"}

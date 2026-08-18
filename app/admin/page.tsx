@@ -6,8 +6,8 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { signOut } from "firebase/auth";
 import { collection, addDoc, onSnapshot, query, orderBy, where, doc, updateDoc, setDoc, getDocs, writeBatch, deleteDoc, getDoc, deleteField } from "firebase/firestore";
-import { auth, db, storage } from "@/lib/firebase";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { auth, db } from "@/lib/firebase";
+import { useUploadWithProgress, UploadProgressBar } from "@/lib/useUpload";
 
 interface Building {
     id: string;
@@ -114,6 +114,7 @@ interface DocumentData {
 export default function AdminDashboard() {
     const { user, role, loading } = useAuth();
     const router = useRouter();
+    const { uploadFile, uploadProgress, isUploading } = useUploadWithProgress();
 
     const [buildings, setBuildings] = useState<Building[]>([]);
     const [applications, setApplications] = useState<Application[]>([]);
@@ -325,7 +326,7 @@ export default function AdminDashboard() {
     };
 
     const handleApplyLateFees = async (e: React.FormEvent) => { e.preventDefault(); setIsApplyingLateFees(true); try { const standardUnpaid = unpaidInvoices.filter(inv => !inv.isCustom); if (standardUnpaid.length === 0) { alert("There are currently no unpaid standard invoices to penalize."); setIsLateFeeModalOpen(false); return; } const batch = writeBatch(db); let count = 0; for (const inv of standardUnpaid) { const penaltyTitle = `Late Fee: ${inv.billingPeriod}`; const existingFeeQuery = query(collection(db, "invoices"), where("unitId", "==", inv.unitId), where("billingPeriod", "==", penaltyTitle)); const existingFeeSnap = await getDocs(existingFeeQuery); if (existingFeeSnap.empty) { const newInvRef = doc(collection(db, "invoices")); batch.set(newInvRef, { unitId: inv.unitId, unitNumber: inv.unitNumber, tenantEmail: inv.tenantEmail, totalAmount: Number(lateFeeAmount), billingPeriod: penaltyTitle, isCustom: true, status: "unpaid", transactionId: "", createdAt: new Date().toISOString() }); count++; } } if (count > 0) { await batch.commit(); alert(`Successfully generated late fees for ${count} overdue tenants.`); } else { alert("Late fees have already been generated for all currently overdue invoices."); } setIsLateFeeModalOpen(false); } catch (error) { console.error(error); alert("Failed to apply late fees."); } finally { setIsApplyingLateFees(false); } };
-    const handleUploadDocument = async (e: React.FormEvent) => { e.preventDefault(); if (!docTargetUnit || !docTitle || !docFile) return; setIsUploadingDoc(true); try { const selectedUnit = occupiedUnits.find(u => u.id === docTargetUnit); if (!selectedUnit) return; const fileRef = ref(storage, `vault/${selectedUnit.id}/${Date.now()}_${docFile.name}`); await uploadBytes(fileRef, docFile); const fileUrl = await getDownloadURL(fileRef); await addDoc(collection(db, "documents"), { unitId: selectedUnit.id, unitNumber: selectedUnit.unitNumber, tenantEmail: selectedUnit.tenantEmail, title: docTitle, fileUrl: fileUrl, uploadedBy: user?.email, createdAt: new Date().toISOString() }); setIsDocModalOpen(false); setDocTitle(""); setDocTargetUnit(""); setDocFile(null); } catch (error) { console.error(error); alert("Failed to upload document."); } finally { setIsUploadingDoc(false); } };
+    const handleUploadDocument = async (e: React.FormEvent) => { e.preventDefault(); if (!docTargetUnit || !docTitle || !docFile) return; setIsUploadingDoc(true); try { const selectedUnit = occupiedUnits.find(u => u.id === docTargetUnit); if (!selectedUnit) return; const fileUrl = await uploadFile(`vault/${selectedUnit.id}/${Date.now()}_${docFile.name}`, docFile); await addDoc(collection(db, "documents"), { unitId: selectedUnit.id, unitNumber: selectedUnit.unitNumber, tenantEmail: selectedUnit.tenantEmail, title: docTitle, fileUrl: fileUrl, uploadedBy: user?.email, createdAt: new Date().toISOString() }); setIsDocModalOpen(false); setDocTitle(""); setDocTargetUnit(""); setDocFile(null); } catch (error) { console.error(error); alert("Failed to upload document."); } finally { setIsUploadingDoc(false); } };
     const handleDeleteDocument = async (id: string) => { if (window.confirm("Delete this document? Tenants will no longer be able to see it.")) { await deleteDoc(doc(db, "documents", id)); } };
     const handleBroadcastNotice = async (e: React.FormEvent) => { e.preventDefault(); if (!noticeTitle || !noticeMessage) return; setIsSubmittingNotice(true); try { await addDoc(collection(db, "announcements"), { title: noticeTitle, message: noticeMessage, target: noticeTarget, author: user?.email, createdAt: new Date().toISOString() }); setIsNoticeModalOpen(false); setNoticeTitle(""); setNoticeMessage(""); setNoticeTarget("all"); } catch (error) { console.error(error); alert("Failed to broadcast notice."); } finally { setIsSubmittingNotice(false); } };
     const handleDeleteNotice = async (id: string) => { if (window.confirm("Remove this announcement from tenant boards?")) { await deleteDoc(doc(db, "announcements", id)); } };
@@ -825,9 +826,10 @@ export default function AdminDashboard() {
                                 <label className="block text-sm font-medium text-gray-700 mb-1">File (PDF or Image)</label>
                                 <input type="file" required accept=".pdf,image/*" onChange={(e) => setDocFile(e.target.files ? e.target.files[0] : null)} className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:bg-blue-50 file:text-blue-700" />
                             </div>
+                            {isUploading && <UploadProgressBar progress={uploadProgress} />}
                             <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-gray-100">
-                                <button type="button" onClick={() => setIsDocModalOpen(false)} disabled={isUploadingDoc} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-md">Cancel</button>
-                                <button type="submit" disabled={isUploadingDoc} className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-blue-300">{isUploadingDoc ? "Uploading..." : "Upload to Vault"}</button>
+                                <button type="button" onClick={() => setIsDocModalOpen(false)} disabled={isUploadingDoc || isUploading} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-md">Cancel</button>
+                                <button type="submit" disabled={isUploadingDoc || isUploading} className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-blue-300">{isUploadingDoc ? "Uploading..." : "Upload to Vault"}</button>
                             </div>
                         </form>
                     </div>
