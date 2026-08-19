@@ -17,7 +17,7 @@ export default function EmployeeDashboard() {
 
     const [activeTickets, setActiveTickets] = useState<any[]>([]);
     const [resolvedTickets, setResolvedTickets] = useState<any[]>([]);
-    const [activeTab, setActiveTab] = useState<"active" | "resolved" | "meter" | "collections" | "ledger" | "units">("active");
+    const [activeTab, setActiveTab] = useState<"active" | "resolved" | "meter" | "collections" | "ledger" | "units" | "occupancy" | "checklist">("active");
 
     const [isResolveModalOpen, setIsResolveModalOpen] = useState(false);
     const [selectedTicket, setSelectedTicket] = useState<any>(null);
@@ -80,6 +80,22 @@ export default function EmployeeDashboard() {
     const [isUnitDocModalOpen, setIsUnitDocModalOpen] = useState(false);
     const [expandedBuildings, setExpandedBuildings] = useState<string[]>([]);
 
+    // Move-in/Move-out Checklist States
+    const [checklistType, setChecklistType] = useState<"move-in" | "move-out">("move-in");
+    const [checklistUnit, setChecklistUnit] = useState("");
+    const [checklistRooms, setChecklistRooms] = useState<{ room: string; condition: string; photo: File | null; photoUrl?: string; damages: string }[]>([{ room: "Living Room", condition: "good", photo: null, damages: "" }]);
+    const [checklistNotes, setChecklistNotes] = useState("");
+    const [isSubmittingChecklist, setIsSubmittingChecklist] = useState(false);
+    const [allChecklists, setAllChecklists] = useState<any[]>([]);
+    const [checklistDeduction, setChecklistDeduction] = useState("");
+
+    // Multiple Tenants States
+    const [isAddCoTenantOpen, setIsAddCoTenantOpen] = useState(false);
+    const [coTenantUnit, setCoTenantUnit] = useState<any>(null);
+    const [coTenantName, setCoTenantName] = useState("");
+    const [coTenantPhone, setCoTenantPhone] = useState("");
+    const [coTenantEmail, setCoTenantEmail] = useState("");
+
     useEffect(() => {
         if (!loading && (!user || role !== "employee")) {
             router.push("/");
@@ -120,7 +136,11 @@ export default function EmployeeDashboard() {
             setBuildings(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)));
         });
 
-        return () => { unsubTickets(); unsubUnits(); unsubInvoices(); unsubLedger(); unsubAllUnits(); unsubBuildings(); };
+        const unsubChecklists = onSnapshot(collection(db, "checklists"), (snapshot) => {
+            setAllChecklists(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)).sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
+        });
+
+        return () => { unsubTickets(); unsubUnits(); unsubInvoices(); unsubLedger(); unsubAllUnits(); unsubBuildings(); unsubChecklists(); };
     }, [role]);
 
     const handleMarkInProgress = async (ticketId: string) => {
@@ -391,6 +411,71 @@ export default function EmployeeDashboard() {
         } catch (error) { console.error(error); alert("Failed to upload document."); } finally { setIsUploadingDoc(false); }
     };
 
+    // --- Checklist Handlers ---
+    const handleAddRoom = () => {
+        setChecklistRooms(prev => [...prev, { room: "", condition: "good", photo: null, damages: "" }]);
+    };
+
+    const handleRemoveRoom = (idx: number) => {
+        setChecklistRooms(prev => prev.filter((_, i) => i !== idx));
+    };
+
+    const handleSubmitChecklist = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!checklistUnit) return;
+        setIsSubmittingChecklist(true);
+        try {
+            const unit = allUnits.find(u => u.id === checklistUnit);
+            // Upload all room photos
+            const roomsData = [];
+            for (const room of checklistRooms) {
+                let photoUrl = "";
+                if (room.photo) {
+                    photoUrl = await uploadFile(`checklists/${checklistUnit}/${Date.now()}_${room.photo.name}`, room.photo);
+                }
+                roomsData.push({ room: room.room, condition: room.condition, damages: room.damages, photoUrl });
+            }
+            await addDoc(collection(db, "checklists"), {
+                unitId: checklistUnit,
+                unitNumber: unit?.unitNumber || "",
+                buildingId: unit?.buildingId || "",
+                type: checklistType,
+                rooms: roomsData,
+                notes: checklistNotes,
+                deduction: checklistType === "move-out" ? Number(checklistDeduction) || 0 : 0,
+                tenantEmail: unit?.tenantEmail || "",
+                tenantName: unit?.tenantName || "",
+                createdAt: new Date().toISOString(),
+                createdBy: user?.email || ""
+            });
+            alert(`${checklistType === "move-in" ? "Move-in" : "Move-out"} checklist saved!`);
+            setChecklistUnit("");
+            setChecklistRooms([{ room: "Living Room", condition: "good", photo: null, damages: "" }]);
+            setChecklistNotes("");
+            setChecklistDeduction("");
+        } catch (error) { console.error(error); alert("Failed to save checklist."); } finally { setIsSubmittingChecklist(false); }
+    };
+
+    // --- Multiple Tenants (Co-Tenants) ---
+    const handleAddCoTenant = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!coTenantUnit || !coTenantEmail) return;
+        try {
+            const newCoTenant = { name: coTenantName, phone: coTenantPhone, email: coTenantEmail.toLowerCase(), addedAt: new Date().toISOString() };
+            await updateDoc(doc(db, "units", coTenantUnit.id), { coTenants: arrayUnion(newCoTenant) });
+            setIsAddCoTenantOpen(false); setCoTenantUnit(null); setCoTenantName(""); setCoTenantPhone(""); setCoTenantEmail("");
+        } catch (error) { console.error(error); alert("Failed to add co-tenant."); }
+    };
+
+    const handleRemoveCoTenant = async (unitId: string, coTenant: any) => {
+        if (!window.confirm(`Remove co-tenant ${coTenant.name || coTenant.email}?`)) return;
+        try {
+            const unitDoc = allUnits.find(u => u.id === unitId);
+            const updatedCoTenants = (unitDoc?.coTenants || []).filter((ct: any) => ct.email !== coTenant.email);
+            await updateDoc(doc(db, "units", unitId), { coTenants: updatedCoTenants });
+        } catch (error) { console.error(error); alert("Failed to remove co-tenant."); }
+    };
+
     const getBuildingName = (buildingId: string) => {
         const bldg = buildings.find(b => b.id === buildingId);
         return bldg?.name || "Unknown";
@@ -418,42 +503,54 @@ export default function EmployeeDashboard() {
             <main className="p-4 max-w-2xl mx-auto space-y-6 mt-2">
 
                 {/* TABS */}
-                <div className="flex bg-gray-200 rounded-lg p-1 shadow-inner">
+                <div className="flex flex-wrap bg-gray-200 rounded-lg p-1 shadow-inner gap-1">
                     <button
                         onClick={() => setActiveTab("collections")}
-                        className={`flex-1 py-3 text-sm font-bold rounded-md transition ${activeTab === "collections" ? "bg-white text-indigo-600 shadow-sm" : "text-gray-500"}`}
+                        className={`flex-1 min-w-[80px] py-2.5 text-xs font-bold rounded-md transition ${activeTab === "collections" ? "bg-white text-indigo-600 shadow-sm" : "text-gray-500"}`}
                     >
                         Collections
                     </button>
                     <button
                         onClick={() => setActiveTab("active")}
-                        className={`flex-1 py-3 text-sm font-bold rounded-md transition ${activeTab === "active" ? "bg-white text-orange-600 shadow-sm" : "text-gray-500"}`}
+                        className={`flex-1 min-w-[80px] py-2.5 text-xs font-bold rounded-md transition ${activeTab === "active" ? "bg-white text-orange-600 shadow-sm" : "text-gray-500"}`}
                     >
                         Tasks ({activeTickets.length})
                     </button>
                     <button
                         onClick={() => setActiveTab("meter")}
-                        className={`flex-1 py-3 text-sm font-bold rounded-md transition ${activeTab === "meter" ? "bg-white text-purple-600 shadow-sm" : "text-gray-500"}`}
+                        className={`flex-1 min-w-[80px] py-2.5 text-xs font-bold rounded-md transition ${activeTab === "meter" ? "bg-white text-purple-600 shadow-sm" : "text-gray-500"}`}
                     >
                         Meter
                     </button>
                     <button
                         onClick={() => setActiveTab("resolved")}
-                        className={`flex-1 py-3 text-sm font-bold rounded-md transition ${activeTab === "resolved" ? "bg-white text-green-600 shadow-sm" : "text-gray-500"}`}
+                        className={`flex-1 min-w-[80px] py-2.5 text-xs font-bold rounded-md transition ${activeTab === "resolved" ? "bg-white text-green-600 shadow-sm" : "text-gray-500"}`}
                     >
                         Done
                     </button>
                     <button
                         onClick={() => setActiveTab("ledger")}
-                        className={`flex-1 py-3 text-sm font-bold rounded-md transition ${activeTab === "ledger" ? "bg-white text-teal-600 shadow-sm" : "text-gray-500"}`}
+                        className={`flex-1 min-w-[80px] py-2.5 text-xs font-bold rounded-md transition ${activeTab === "ledger" ? "bg-white text-teal-600 shadow-sm" : "text-gray-500"}`}
                     >
                         Ledger
                     </button>
                     <button
                         onClick={() => setActiveTab("units")}
-                        className={`flex-1 py-3 text-sm font-bold rounded-md transition ${activeTab === "units" ? "bg-white text-blue-600 shadow-sm" : "text-gray-500"}`}
+                        className={`flex-1 min-w-[80px] py-2.5 text-xs font-bold rounded-md transition ${activeTab === "units" ? "bg-white text-blue-600 shadow-sm" : "text-gray-500"}`}
                     >
                         Units
+                    </button>
+                    <button
+                        onClick={() => setActiveTab("occupancy")}
+                        className={`flex-1 min-w-[80px] py-2.5 text-xs font-bold rounded-md transition ${activeTab === "occupancy" ? "bg-white text-emerald-600 shadow-sm" : "text-gray-500"}`}
+                    >
+                        📊 Occupancy
+                    </button>
+                    <button
+                        onClick={() => setActiveTab("checklist")}
+                        className={`flex-1 min-w-[80px] py-2.5 text-xs font-bold rounded-md transition ${activeTab === "checklist" ? "bg-white text-pink-600 shadow-sm" : "text-gray-500"}`}
+                    >
+                        📋 Checklist
                     </button>
                 </div>
 
@@ -726,6 +823,18 @@ export default function EmployeeDashboard() {
                                                                                 <div className="mt-1.5 text-xs text-gray-600">
                                                                                     <p>👤 {unit.tenantName || "—"} · {unit.tenantEmail}</p>
                                                                                     {unit.tenantPhone && <p>📞 {unit.tenantPhone}</p>}
+                                                                                    {/* Co-tenants display */}
+                                                                                    {unit.coTenants && unit.coTenants.length > 0 && (
+                                                                                        <div className="mt-1 pl-2 border-l-2 border-indigo-200">
+                                                                                            <p className="text-[10px] font-bold text-indigo-600 uppercase">Co-tenants ({unit.coTenants.length})</p>
+                                                                                            {unit.coTenants.map((ct: any, i: number) => (
+                                                                                                <div key={i} className="flex items-center gap-1 mt-0.5">
+                                                                                                    <span className="text-[10px] text-gray-600">👤 {ct.name || ct.email}</span>
+                                                                                                    <button onClick={() => handleRemoveCoTenant(unit.id, ct)} className="text-[10px] text-red-400 hover:text-red-600">✕</button>
+                                                                                                </div>
+                                                                                            ))}
+                                                                                        </div>
+                                                                                    )}
                                                                                 </div>
                                                                             )}
                                                                         </div>
@@ -737,6 +846,7 @@ export default function EmployeeDashboard() {
                                                                                 <>
                                                                                     <button onClick={() => handleRemoveTenant(unit.id)} className="text-xs text-red-500 hover:underline">Remove</button>
                                                                                     <button onClick={() => { setUnitDocUnit(unit); setUnitDocName(""); setUnitDocFile(null); setIsUnitDocModalOpen(true); }} className="text-xs text-purple-600 hover:underline">📄 Doc</button>
+                                                                                    <button onClick={() => { setCoTenantUnit(unit); setCoTenantName(""); setCoTenantPhone(""); setCoTenantEmail(""); setIsAddCoTenantOpen(true); }} className="text-xs text-indigo-600 hover:underline">👥 Add</button>
                                                                                 </>
                                                                             )}
                                                                         </div>
@@ -763,8 +873,190 @@ export default function EmployeeDashboard() {
                     </div>
                 )}
 
+                {/* OCCUPANCY DASHBOARD TAB */}
+                {activeTab === "occupancy" && (
+                    <div className="space-y-4">
+                        <div className="bg-white rounded-xl shadow-sm border border-emerald-200 overflow-hidden">
+                            <div className="bg-emerald-50 px-5 py-4 border-b border-emerald-200">
+                                <h2 className="text-lg font-bold text-emerald-800">📊 Occupancy Dashboard</h2>
+                                <p className="text-xs text-emerald-600 mt-1">Visual overview of occupancy across all buildings</p>
+                            </div>
+                            <div className="p-5 space-y-5">
+                                {/* Overall Stats */}
+                                {(() => {
+                                    const totalUnits = allUnits.length;
+                                    const occupiedCount = allUnits.filter(u => u.status === "occupied").length;
+                                    const vacantCount = totalUnits - occupiedCount;
+                                    const overallRate = totalUnits > 0 ? Math.round((occupiedCount / totalUnits) * 100) : 0;
+                                    return (
+                                        <div className="grid grid-cols-3 gap-3">
+                                            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-center">
+                                                <p className="text-2xl font-bold text-emerald-700">{overallRate}%</p>
+                                                <p className="text-[10px] font-bold text-emerald-600 uppercase">Occupied</p>
+                                            </div>
+                                            <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-center">
+                                                <p className="text-2xl font-bold text-blue-700">{occupiedCount}</p>
+                                                <p className="text-[10px] font-bold text-blue-600 uppercase">Filled</p>
+                                            </div>
+                                            <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 text-center">
+                                                <p className="text-2xl font-bold text-orange-700">{vacantCount}</p>
+                                                <p className="text-[10px] font-bold text-orange-600 uppercase">Vacant</p>
+                                            </div>
+                                        </div>
+                                    );
+                                })()}
+
+                                {/* Per-building breakdown */}
+                                <div className="space-y-3">
+                                    {buildings.map(bldg => {
+                                        const bldgUnits = allUnits.filter(u => u.buildingId === bldg.id);
+                                        const bldgOccupied = bldgUnits.filter(u => u.status === "occupied").length;
+                                        const bldgTotal = bldgUnits.length;
+                                        const rate = bldgTotal > 0 ? Math.round((bldgOccupied / bldgTotal) * 100) : 0;
+                                        const barColor = rate >= 80 ? "bg-emerald-500" : rate >= 50 ? "bg-yellow-500" : "bg-red-500";
+                                        return (
+                                            <div key={bldg.id} className="border border-gray-200 rounded-lg p-4">
+                                                <div className="flex justify-between items-center mb-2">
+                                                    <div>
+                                                        <h3 className="font-bold text-gray-900 text-sm">{bldg.name}</h3>
+                                                        <p className="text-[10px] text-gray-500">{bldg.address}</p>
+                                                    </div>
+                                                    <span className={`text-lg font-bold ${rate >= 80 ? "text-emerald-700" : rate >= 50 ? "text-yellow-700" : "text-red-700"}`}>{rate}%</span>
+                                                </div>
+                                                {/* Progress Bar */}
+                                                <div className="w-full bg-gray-200 rounded-full h-4 overflow-hidden">
+                                                    <div className={`h-full rounded-full transition-all duration-500 ${barColor}`} style={{ width: `${rate}%` }}></div>
+                                                </div>
+                                                <div className="flex justify-between mt-1.5 text-[10px] text-gray-500">
+                                                    <span>{bldgOccupied} occupied</span>
+                                                    <span>{bldgTotal - bldgOccupied} vacant</span>
+                                                    <span>{bldgTotal} total</span>
+                                                </div>
+                                                {/* Vacant unit list */}
+                                                {bldgUnits.filter(u => u.status === "vacant").length > 0 && (
+                                                    <div className="mt-2 pt-2 border-t border-gray-100">
+                                                        <p className="text-[10px] font-bold text-gray-500 uppercase mb-1">Vacant Units:</p>
+                                                        <div className="flex flex-wrap gap-1">
+                                                            {bldgUnits.filter(u => u.status === "vacant").map(u => (
+                                                                <span key={u.id} className="text-[10px] bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full font-medium">{u.unitNumber}</span>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* CHECKLIST TAB */}
+                {activeTab === "checklist" && (
+                    <div className="space-y-4">
+                        <div className="bg-white rounded-xl shadow-sm border border-pink-200 overflow-hidden">
+                            <div className="bg-pink-50 px-5 py-4 border-b border-pink-200">
+                                <h2 className="text-lg font-bold text-pink-800">📋 Move-in / Move-out Checklist</h2>
+                                <p className="text-xs text-pink-600 mt-1">Photographic room inspection with damage tracking</p>
+                            </div>
+                            <form onSubmit={handleSubmitChecklist} className="p-5 space-y-4">
+                                {/* Type */}
+                                <div className="flex gap-2">
+                                    <button type="button" onClick={() => setChecklistType("move-in")} className={`flex-1 py-2.5 rounded-lg text-sm font-bold transition ${checklistType === "move-in" ? "bg-green-600 text-white" : "bg-gray-100 text-gray-600"}`}>🏠 Move-In</button>
+                                    <button type="button" onClick={() => setChecklistType("move-out")} className={`flex-1 py-2.5 rounded-lg text-sm font-bold transition ${checklistType === "move-out" ? "bg-red-600 text-white" : "bg-gray-100 text-gray-600"}`}>📦 Move-Out</button>
+                                </div>
+
+                                {/* Unit Selection */}
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Select Unit</label>
+                                    <select required value={checklistUnit} onChange={(e) => setChecklistUnit(e.target.value)} className="w-full px-3 py-2.5 border border-gray-300 rounded-lg">
+                                        <option value="" disabled>Choose a unit...</option>
+                                        {(checklistType === "move-in" ? allUnits : occupiedUnits).map(u => (
+                                            <option key={u.id} value={u.id}>{u.unitNumber} — {u.tenantEmail || "Vacant"} ({getBuildingName(u.buildingId)})</option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                                {/* Rooms */}
+                                <div className="space-y-3">
+                                    <div className="flex justify-between items-center">
+                                        <label className="text-sm font-bold text-gray-700">Room Inspection</label>
+                                        <button type="button" onClick={handleAddRoom} className="text-xs bg-pink-100 text-pink-700 px-3 py-1 rounded-full font-bold hover:bg-pink-200">+ Add Room</button>
+                                    </div>
+                                    {checklistRooms.map((room, idx) => (
+                                        <div key={idx} className="border border-gray-200 rounded-lg p-3 space-y-2 bg-gray-50">
+                                            <div className="flex gap-2 items-center">
+                                                <input type="text" placeholder="Room name (e.g. Bedroom 1)" value={room.room} onChange={(e) => { const updated = [...checklistRooms]; updated[idx].room = e.target.value; setChecklistRooms(updated); }} className="flex-1 px-2 py-1.5 border border-gray-300 rounded text-sm" required />
+                                                {checklistRooms.length > 1 && <button type="button" onClick={() => handleRemoveRoom(idx)} className="text-red-500 text-lg font-bold hover:text-red-700">×</button>}
+                                            </div>
+                                            <div className="flex gap-2">
+                                                <select value={room.condition} onChange={(e) => { const updated = [...checklistRooms]; updated[idx].condition = e.target.value; setChecklistRooms(updated); }} className="flex-1 px-2 py-1.5 border border-gray-300 rounded text-sm">
+                                                    <option value="good">✅ Good</option>
+                                                    <option value="fair">⚠️ Fair</option>
+                                                    <option value="damaged">❌ Damaged</option>
+                                                </select>
+                                                <input type="file" accept="image/*" onChange={(e) => { const updated = [...checklistRooms]; updated[idx].photo = e.target.files?.[0] || null; setChecklistRooms(updated); }} className="flex-1 text-xs text-gray-500" />
+                                            </div>
+                                            {(room.condition === "fair" || room.condition === "damaged") && (
+                                                <textarea placeholder="Describe damages..." value={room.damages} onChange={(e) => { const updated = [...checklistRooms]; updated[idx].damages = e.target.value; setChecklistRooms(updated); }} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm" rows={2} />
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {/* Deduction for move-out */}
+                                {checklistType === "move-out" && (
+                                    <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                                        <label className="block text-sm font-medium text-red-700 mb-1">Security Deposit Deduction (₹)</label>
+                                        <input type="number" min="0" value={checklistDeduction} onChange={(e) => setChecklistDeduction(e.target.value)} className="w-full px-3 py-2 border border-red-300 rounded-lg" placeholder="0 if no deduction" />
+                                        <p className="text-[10px] text-red-500 mt-1">Amount to deduct from security deposit for damages</p>
+                                    </div>
+                                )}
+
+                                {/* Notes */}
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">General Notes</label>
+                                    <textarea value={checklistNotes} onChange={(e) => setChecklistNotes(e.target.value)} rows={2} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" placeholder="Any additional observations..." />
+                                </div>
+
+                                {isUploading && <UploadProgressBar progress={uploadProgress} />}
+                                <button type="submit" disabled={isSubmittingChecklist || isUploading} className="w-full py-3 bg-pink-600 text-white rounded-lg font-bold hover:bg-pink-700 transition shadow-sm disabled:bg-pink-400">
+                                    {isSubmittingChecklist ? "Saving..." : `Save ${checklistType === "move-in" ? "Move-In" : "Move-Out"} Checklist`}
+                                </button>
+                            </form>
+                        </div>
+
+                        {/* Past Checklists */}
+                        {allChecklists.length > 0 && (
+                            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                                <div className="bg-gray-50 px-5 py-3 border-b border-gray-200">
+                                    <h3 className="text-sm font-bold text-gray-800">Recent Inspections</h3>
+                                </div>
+                                <div className="divide-y divide-gray-100 max-h-72 overflow-y-auto">
+                                    {allChecklists.slice(0, 20).map(cl => (
+                                        <div key={cl.id} className="px-5 py-3 hover:bg-gray-50">
+                                            <div className="flex justify-between items-center">
+                                                <div>
+                                                    <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${cl.type === "move-in" ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>{cl.type}</span>
+                                                    <p className="font-bold text-gray-900 text-sm mt-0.5">{cl.unitNumber}</p>
+                                                    <p className="text-[10px] text-gray-500">{cl.tenantName || cl.tenantEmail} · {new Date(cl.createdAt).toLocaleDateString()}</p>
+                                                </div>
+                                                <div className="text-right">
+                                                    <p className="text-xs text-gray-600">{cl.rooms?.length || 0} rooms</p>
+                                                    {cl.deduction > 0 && <p className="text-xs text-red-600 font-bold">-₹{cl.deduction}</p>}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )}
+
                 {/* TICKET LIST */}
-                {activeTab !== "meter" && activeTab !== "collections" && activeTab !== "ledger" && activeTab !== "units" && (
+                {activeTab !== "meter" && activeTab !== "collections" && activeTab !== "ledger" && activeTab !== "units" && activeTab !== "occupancy" && activeTab !== "checklist" && (
                 <div className="space-y-4">
                     {(activeTab === "active" ? activeTickets : resolvedTickets).length === 0 ? (
                         <div className="bg-white p-8 rounded-xl shadow-sm text-center border border-gray-200 mt-8">
@@ -1025,6 +1317,33 @@ export default function EmployeeDashboard() {
                             <div className="flex gap-2">
                                 <button type="button" onClick={() => setIsUnitDocModalOpen(false)} className="flex-1 py-2 border border-gray-300 rounded-md text-sm text-gray-600">Cancel</button>
                                 <button type="submit" disabled={isUploadingDoc || isUploading} className="flex-1 py-2 bg-purple-600 text-white rounded-md text-sm font-medium hover:bg-purple-700 disabled:bg-purple-300">{isUploadingDoc ? "Uploading..." : "Upload Document"}</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* ADD CO-TENANT MODAL */}
+            {isAddCoTenantOpen && coTenantUnit && (
+                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setIsAddCoTenantOpen(false)}>
+                    <div className="bg-white p-6 rounded-xl shadow-xl max-w-md w-full space-y-4" onClick={(e) => e.stopPropagation()}>
+                        <h3 className="text-lg font-bold text-gray-800">👥 Add Co-Tenant to {coTenantUnit.unitNumber}</h3>
+                        <p className="text-xs text-gray-500">Primary: {coTenantUnit.tenantName || coTenantUnit.tenantEmail}</p>
+                        {coTenantUnit.coTenants && coTenantUnit.coTenants.length > 0 && (
+                            <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3">
+                                <p className="text-[10px] font-bold text-indigo-600 uppercase mb-1">Current Co-tenants</p>
+                                {coTenantUnit.coTenants.map((ct: any, i: number) => (
+                                    <p key={i} className="text-xs text-gray-700">• {ct.name || ct.email} {ct.phone ? `(${ct.phone})` : ""}</p>
+                                ))}
+                            </div>
+                        )}
+                        <form onSubmit={handleAddCoTenant} className="space-y-3">
+                            <input type="email" required placeholder="Co-tenant Email *" value={coTenantEmail} onChange={(e) => setCoTenantEmail(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
+                            <input type="text" placeholder="Co-tenant Name" value={coTenantName} onChange={(e) => setCoTenantName(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
+                            <input type="text" placeholder="Phone Number" value={coTenantPhone} onChange={(e) => setCoTenantPhone(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
+                            <div className="flex gap-2">
+                                <button type="button" onClick={() => setIsAddCoTenantOpen(false)} className="flex-1 py-2 border border-gray-300 rounded-md text-sm text-gray-600">Cancel</button>
+                                <button type="submit" className="flex-1 py-2 bg-indigo-600 text-white rounded-md text-sm font-medium hover:bg-indigo-700">Add Co-Tenant</button>
                             </div>
                         </form>
                     </div>
