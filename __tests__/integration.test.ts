@@ -346,4 +346,237 @@ describe('Property Manager Integration Tests', () => {
             expect(totalBalance).toBe(-400);
         });
     });
+
+    describe('8. Expense Tracking', () => {
+        let expenseId: string;
+
+        it('should log an expense linked to a building', async () => {
+            const ref = await db.collection('expenses').add({
+                amount: 1500,
+                category: 'Plumbing',
+                description: 'Fixed leaking pipe in unit A101',
+                date: '2026-08-15',
+                buildingId: TEST_BUILDING_ID,
+                buildingName: 'Test Building',
+                receiptUrl: '',
+                createdBy: 'staff@test.com',
+                createdAt: new Date().toISOString(),
+            });
+            expenseId = ref.id;
+            trackDoc(`expenses/${expenseId}`);
+
+            const snap = await ref.get();
+            expect(snap.exists).toBe(true);
+            expect(snap.data()!.amount).toBe(1500);
+            expect(snap.data()!.category).toBe('Plumbing');
+            expect(snap.data()!.buildingId).toBe(TEST_BUILDING_ID);
+        });
+
+        it('should log a general expense (no building)', async () => {
+            const ref = await db.collection('expenses').add({
+                amount: 300,
+                category: 'Supplies',
+                description: 'Cleaning supplies',
+                date: '2026-08-16',
+                buildingId: '',
+                buildingName: 'General',
+                createdBy: 'staff@test.com',
+                createdAt: new Date().toISOString(),
+            });
+            trackDoc(`expenses/${ref.id}`);
+
+            const snap = await ref.get();
+            expect(snap.data()!.buildingName).toBe('General');
+            expect(snap.data()!.amount).toBe(300);
+        });
+
+        it('should query expenses by building', async () => {
+            const snap = await db.collection('expenses')
+                .where('buildingId', '==', TEST_BUILDING_ID)
+                .get();
+            const found = snap.docs.find(d => d.id === expenseId);
+            expect(found).toBeDefined();
+            expect(found!.data().amount).toBe(1500);
+        });
+    });
+
+    describe('9. Inventory Management', () => {
+        let inventoryId: string;
+
+        it('should add an inventory item to a building', async () => {
+            const ref = await db.collection('inventory').add({
+                name: 'Fire Extinguisher',
+                quantity: 4,
+                buildingId: TEST_BUILDING_ID,
+                buildingName: 'Test Building',
+                location: 'Ground Floor',
+                condition: 'good',
+                notes: 'Expires 2027',
+                createdBy: 'staff@test.com',
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+            });
+            inventoryId = ref.id;
+            trackDoc(`inventory/${inventoryId}`);
+
+            const snap = await ref.get();
+            expect(snap.exists).toBe(true);
+            expect(snap.data()!.name).toBe('Fire Extinguisher');
+            expect(snap.data()!.quantity).toBe(4);
+            expect(snap.data()!.condition).toBe('good');
+        });
+
+        it('should increment inventory quantity', async () => {
+            const ref = db.collection('inventory').doc(inventoryId);
+            await ref.update({ quantity: 5, updatedAt: new Date().toISOString() });
+            const snap = await ref.get();
+            expect(snap.data()!.quantity).toBe(5);
+        });
+
+        it('should decrement inventory quantity', async () => {
+            const ref = db.collection('inventory').doc(inventoryId);
+            await ref.update({ quantity: 3, updatedAt: new Date().toISOString() });
+            const snap = await ref.get();
+            expect(snap.data()!.quantity).toBe(3);
+        });
+
+        it('should filter inventory by building', async () => {
+            const snap = await db.collection('inventory')
+                .where('buildingId', '==', TEST_BUILDING_ID)
+                .get();
+            expect(snap.docs.length).toBeGreaterThanOrEqual(1);
+            expect(snap.docs.some(d => d.data().name === 'Fire Extinguisher')).toBe(true);
+        });
+    });
+
+    describe('10. Move-in/Move-out Checklist', () => {
+        let checklistId: string;
+
+        it('should create a move-in checklist with room inspections', async () => {
+            const ref = await db.collection('checklists').add({
+                unitId: `${TEST_PREFIX}_unit`,
+                unitNumber: TEST_UNIT_NUMBER,
+                buildingId: TEST_BUILDING_ID,
+                type: 'move-in',
+                rooms: [
+                    { room: 'Living Room', condition: 'good', damages: '', photoUrl: '' },
+                    { room: 'Bedroom', condition: 'good', damages: '', photoUrl: '' },
+                    { room: 'Bathroom', condition: 'fair', damages: 'Minor stain on wall', photoUrl: 'https://test.com/photo.jpg' },
+                ],
+                notes: 'Overall good condition',
+                deduction: 0,
+                tenantEmail: TEST_TENANT_EMAIL,
+                tenantName: 'Test Tenant',
+                createdAt: new Date().toISOString(),
+                createdBy: 'staff@test.com',
+            });
+            checklistId = ref.id;
+            trackDoc(`checklists/${checklistId}`);
+
+            const snap = await ref.get();
+            expect(snap.exists).toBe(true);
+            expect(snap.data()!.type).toBe('move-in');
+            expect(snap.data()!.rooms).toHaveLength(3);
+            expect(snap.data()!.rooms[2].condition).toBe('fair');
+            expect(snap.data()!.rooms[2].damages).toBe('Minor stain on wall');
+        });
+
+        it('should create a move-out checklist with security deposit deduction', async () => {
+            const ref = await db.collection('checklists').add({
+                unitId: `${TEST_PREFIX}_unit`,
+                unitNumber: TEST_UNIT_NUMBER,
+                buildingId: TEST_BUILDING_ID,
+                type: 'move-out',
+                rooms: [
+                    { room: 'Living Room', condition: 'good', damages: '', photoUrl: '' },
+                    { room: 'Bedroom', condition: 'damaged', damages: 'Broken window latch', photoUrl: 'https://test.com/damage.jpg' },
+                ],
+                notes: 'Window latch needs replacement',
+                deduction: 2000,
+                tenantEmail: TEST_TENANT_EMAIL,
+                tenantName: 'Test Tenant',
+                createdAt: new Date().toISOString(),
+                createdBy: 'staff@test.com',
+            });
+            trackDoc(`checklists/${ref.id}`);
+
+            const snap = await ref.get();
+            expect(snap.data()!.type).toBe('move-out');
+            expect(snap.data()!.deduction).toBe(2000);
+            expect(snap.data()!.rooms[1].condition).toBe('damaged');
+        });
+
+        it('should query checklists by unit', async () => {
+            const snap = await db.collection('checklists')
+                .where('unitId', '==', `${TEST_PREFIX}_unit`)
+                .get();
+            expect(snap.docs.length).toBe(2); // move-in + move-out
+            const types = snap.docs.map(d => d.data().type);
+            expect(types).toContain('move-in');
+            expect(types).toContain('move-out');
+        });
+    });
+
+    describe('11. Multiple Tenants (Co-Tenants)', () => {
+        it('should add co-tenants to a unit', async () => {
+            const unitRef = db.collection('units').doc(`${TEST_PREFIX}_unit`);
+            const coTenant1 = { name: 'Roommate A', phone: '1111111111', email: 'roommate_a@test.com', addedAt: new Date().toISOString() };
+            const coTenant2 = { name: 'Roommate B', phone: '2222222222', email: 'roommate_b@test.com', addedAt: new Date().toISOString() };
+
+            await unitRef.update({ coTenants: [coTenant1, coTenant2] });
+
+            const snap = await unitRef.get();
+            expect(snap.data()!.coTenants).toHaveLength(2);
+            expect(snap.data()!.coTenants[0].email).toBe('roommate_a@test.com');
+            expect(snap.data()!.coTenants[1].name).toBe('Roommate B');
+        });
+
+        it('should remove a co-tenant', async () => {
+            const unitRef = db.collection('units').doc(`${TEST_PREFIX}_unit`);
+            const snap = await unitRef.get();
+            const coTenants = snap.data()!.coTenants.filter((ct: any) => ct.email !== 'roommate_a@test.com');
+
+            await unitRef.update({ coTenants });
+
+            const updated = await unitRef.get();
+            expect(updated.data()!.coTenants).toHaveLength(1);
+            expect(updated.data()!.coTenants[0].email).toBe('roommate_b@test.com');
+        });
+
+        it('should keep primary tenant unchanged after co-tenant operations', async () => {
+            const snap = await db.collection('units').doc(`${TEST_PREFIX}_unit`).get();
+            expect(snap.data()!.tenantEmail).toBe(TEST_TENANT_EMAIL);
+            expect(snap.data()!.tenantName).toBe('Test Tenant');
+            expect(snap.data()!.status).toBe('occupied');
+        });
+    });
+
+    describe('12. Occupancy Rate Calculation', () => {
+        it('should correctly compute occupancy from unit statuses', async () => {
+            // Create a second vacant unit in the same building
+            const vacantRef = db.collection('units').doc(`${TEST_PREFIX}_unit_vacant`);
+            await vacantRef.set({
+                unitNumber: `${TEST_PREFIX}_A102`,
+                buildingId: TEST_BUILDING_ID,
+                baseRent: 6000,
+                status: 'vacant',
+                lastMeterReading: 0,
+                createdAt: new Date().toISOString(),
+            });
+            trackDoc(`units/${TEST_PREFIX}_unit_vacant`);
+
+            // Query all units in building
+            const snap = await db.collection('units')
+                .where('buildingId', '==', TEST_BUILDING_ID)
+                .get();
+
+            const total = snap.docs.length;
+            const occupied = snap.docs.filter(d => d.data().status === 'occupied').length;
+            const rate = Math.round((occupied / total) * 100);
+
+            expect(total).toBe(2);
+            expect(occupied).toBe(1);
+            expect(rate).toBe(50);
+        });
+    });
 });

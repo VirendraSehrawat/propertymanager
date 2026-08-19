@@ -17,7 +17,7 @@ export default function EmployeeDashboard() {
 
     const [activeTickets, setActiveTickets] = useState<any[]>([]);
     const [resolvedTickets, setResolvedTickets] = useState<any[]>([]);
-    const [activeTab, setActiveTab] = useState<"active" | "resolved" | "meter" | "collections" | "ledger" | "units" | "occupancy" | "checklist">("active");
+    const [activeTab, setActiveTab] = useState<"active" | "resolved" | "meter" | "collections" | "ledger" | "units" | "occupancy" | "checklist" | "expenses" | "inventory">("active");
 
     const [isResolveModalOpen, setIsResolveModalOpen] = useState(false);
     const [selectedTicket, setSelectedTicket] = useState<any>(null);
@@ -96,6 +96,29 @@ export default function EmployeeDashboard() {
     const [coTenantPhone, setCoTenantPhone] = useState("");
     const [coTenantEmail, setCoTenantEmail] = useState("");
 
+    // Expense States
+    const [allExpenses, setAllExpenses] = useState<any[]>([]);
+    const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
+    const [expenseAmount, setExpenseAmount] = useState("");
+    const [expenseCategory, setExpenseCategory] = useState("Maintenance");
+    const [expenseDesc, setExpenseDesc] = useState("");
+    const [expenseDate, setExpenseDate] = useState("");
+    const [expenseBuilding, setExpenseBuilding] = useState("");
+    const [expenseReceipt, setExpenseReceipt] = useState<File | null>(null);
+    const [isSubmittingExpense, setIsSubmittingExpense] = useState(false);
+
+    // Inventory States
+    const [allInventory, setAllInventory] = useState<any[]>([]);
+    const [isInventoryModalOpen, setIsInventoryModalOpen] = useState(false);
+    const [invItemName, setInvItemName] = useState("");
+    const [invItemQty, setInvItemQty] = useState("");
+    const [invItemBuilding, setInvItemBuilding] = useState("");
+    const [invItemLocation, setInvItemLocation] = useState("");
+    const [invItemCondition, setInvItemCondition] = useState("good");
+    const [invItemNotes, setInvItemNotes] = useState("");
+    const [isSubmittingInventory, setIsSubmittingInventory] = useState(false);
+    const [inventoryFilter, setInventoryFilter] = useState("");
+
     useEffect(() => {
         if (!loading && (!user || role !== "employee")) {
             router.push("/");
@@ -140,7 +163,15 @@ export default function EmployeeDashboard() {
             setAllChecklists(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)).sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
         });
 
-        return () => { unsubTickets(); unsubUnits(); unsubInvoices(); unsubLedger(); unsubAllUnits(); unsubBuildings(); unsubChecklists(); };
+        const unsubExpenses = onSnapshot(collection(db, "expenses"), (snapshot) => {
+            setAllExpenses(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)).sort((a: any, b: any) => new Date(b.date || b.createdAt).getTime() - new Date(a.date || a.createdAt).getTime()));
+        });
+
+        const unsubInventory = onSnapshot(collection(db, "inventory"), (snapshot) => {
+            setAllInventory(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)).sort((a: any, b: any) => a.name?.localeCompare(b.name)));
+        });
+
+        return () => { unsubTickets(); unsubUnits(); unsubInvoices(); unsubLedger(); unsubAllUnits(); unsubBuildings(); unsubChecklists(); unsubExpenses(); unsubInventory(); };
     }, [role]);
 
     const handleMarkInProgress = async (ticketId: string) => {
@@ -476,6 +507,63 @@ export default function EmployeeDashboard() {
         } catch (error) { console.error(error); alert("Failed to remove co-tenant."); }
     };
 
+    // --- Expense Handlers ---
+    const handleAddExpense = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!expenseAmount || !expenseDesc) return;
+        setIsSubmittingExpense(true);
+        try {
+            let receiptUrl = "";
+            if (expenseReceipt) {
+                receiptUrl = await uploadFile(`expense_receipts/${Date.now()}_${expenseReceipt.name}`, expenseReceipt);
+            }
+            await addDoc(collection(db, "expenses"), {
+                amount: Number(expenseAmount),
+                category: expenseCategory,
+                description: expenseDesc,
+                date: expenseDate || new Date().toISOString().split('T')[0],
+                buildingId: expenseBuilding || "",
+                buildingName: expenseBuilding ? getBuildingName(expenseBuilding) : "General",
+                ...(receiptUrl ? { receiptUrl } : {}),
+                createdBy: user?.email || "",
+                createdAt: new Date().toISOString()
+            });
+            setIsExpenseModalOpen(false);
+            setExpenseAmount(""); setExpenseDesc(""); setExpenseCategory("Maintenance"); setExpenseDate(""); setExpenseBuilding(""); setExpenseReceipt(null);
+            alert("Expense logged!");
+        } catch (error) { console.error(error); alert("Failed to log expense."); } finally { setIsSubmittingExpense(false); }
+    };
+
+    // --- Inventory Handlers ---
+    const handleAddInventory = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!invItemName || !invItemQty) return;
+        setIsSubmittingInventory(true);
+        try {
+            await addDoc(collection(db, "inventory"), {
+                name: invItemName,
+                quantity: Number(invItemQty),
+                buildingId: invItemBuilding || "",
+                buildingName: invItemBuilding ? getBuildingName(invItemBuilding) : "General",
+                location: invItemLocation,
+                condition: invItemCondition,
+                notes: invItemNotes,
+                createdBy: user?.email || "",
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+            });
+            setIsInventoryModalOpen(false);
+            setInvItemName(""); setInvItemQty(""); setInvItemBuilding(""); setInvItemLocation(""); setInvItemCondition("good"); setInvItemNotes("");
+            alert("Inventory item added!");
+        } catch (error) { console.error(error); alert("Failed to add inventory item."); } finally { setIsSubmittingInventory(false); }
+    };
+
+    const handleUpdateInventoryQty = async (itemId: string, newQty: number) => {
+        try {
+            await updateDoc(doc(db, "inventory", itemId), { quantity: newQty, updatedAt: new Date().toISOString() });
+        } catch (error) { console.error(error); alert("Failed to update quantity."); }
+    };
+
     const getBuildingName = (buildingId: string) => {
         const bldg = buildings.find(b => b.id === buildingId);
         return bldg?.name || "Unknown";
@@ -551,6 +639,18 @@ export default function EmployeeDashboard() {
                         className={`flex-1 min-w-[80px] py-2.5 text-xs font-bold rounded-md transition ${activeTab === "checklist" ? "bg-white text-pink-600 shadow-sm" : "text-gray-500"}`}
                     >
                         📋 Checklist
+                    </button>
+                    <button
+                        onClick={() => setActiveTab("expenses")}
+                        className={`flex-1 min-w-[80px] py-2.5 text-xs font-bold rounded-md transition ${activeTab === "expenses" ? "bg-white text-amber-600 shadow-sm" : "text-gray-500"}`}
+                    >
+                        💰 Expenses
+                    </button>
+                    <button
+                        onClick={() => setActiveTab("inventory")}
+                        className={`flex-1 min-w-[80px] py-2.5 text-xs font-bold rounded-md transition ${activeTab === "inventory" ? "bg-white text-cyan-600 shadow-sm" : "text-gray-500"}`}
+                    >
+                        📦 Inventory
                     </button>
                 </div>
 
@@ -1055,8 +1155,114 @@ export default function EmployeeDashboard() {
                     </div>
                 )}
 
+                {/* EXPENSES TAB */}
+                {activeTab === "expenses" && (
+                    <div className="space-y-4">
+                        <div className="bg-white rounded-xl shadow-sm border border-amber-200 overflow-hidden">
+                            <div className="bg-amber-50 px-5 py-4 border-b border-amber-200 flex justify-between items-center">
+                                <div>
+                                    <h2 className="text-lg font-bold text-amber-800">💰 Expense Tracker</h2>
+                                    <p className="text-xs text-amber-600 mt-1">Log maintenance, supplies & other expenses</p>
+                                </div>
+                                <button onClick={() => { setIsExpenseModalOpen(true); setExpenseDate(new Date().toISOString().split('T')[0]); }} className="text-sm bg-amber-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-amber-700 transition">+ Add</button>
+                            </div>
+                            <div className="p-4 space-y-4">
+                                {/* Summary */}
+                                {(() => {
+                                    const thisMonth = new Date().toISOString().slice(0, 7);
+                                    const monthExpenses = allExpenses.filter(e => (e.date || e.createdAt || "").startsWith(thisMonth));
+                                    const monthTotal = monthExpenses.reduce((s, e) => s + Number(e.amount || 0), 0);
+                                    const allTotal = allExpenses.reduce((s, e) => s + Number(e.amount || 0), 0);
+                                    return (
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-center">
+                                                <p className="text-[10px] font-bold text-amber-600 uppercase">This Month</p>
+                                                <p className="text-xl font-bold text-amber-800">₹{monthTotal.toLocaleString()}</p>
+                                                <p className="text-[10px] text-amber-500">{monthExpenses.length} entries</p>
+                                            </div>
+                                            <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 text-center">
+                                                <p className="text-[10px] font-bold text-gray-600 uppercase">All Time</p>
+                                                <p className="text-xl font-bold text-gray-800">₹{allTotal.toLocaleString()}</p>
+                                                <p className="text-[10px] text-gray-500">{allExpenses.length} entries</p>
+                                            </div>
+                                        </div>
+                                    );
+                                })()}
+
+                                {/* Expense List */}
+                                <div className="divide-y divide-gray-100 max-h-96 overflow-y-auto">
+                                    {allExpenses.length === 0 ? (
+                                        <p className="text-sm text-gray-500 text-center py-6">No expenses logged yet.</p>
+                                    ) : allExpenses.map(exp => (
+                                        <div key={exp.id} className="py-3 flex justify-between items-start">
+                                            <div>
+                                                <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">{exp.category}</span>
+                                                <p className="font-medium text-gray-900 text-sm mt-1">{exp.description}</p>
+                                                <p className="text-[10px] text-gray-500">{exp.buildingName || "General"} · {exp.date || new Date(exp.createdAt).toLocaleDateString()}</p>
+                                                {exp.createdBy && <p className="text-[10px] text-gray-400">by {exp.createdBy}</p>}
+                                            </div>
+                                            <div className="text-right shrink-0">
+                                                <p className="font-bold text-red-700">₹{Number(exp.amount).toLocaleString()}</p>
+                                                {exp.receiptUrl && <a href={exp.receiptUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] text-blue-600 hover:underline">📎 Receipt</a>}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* INVENTORY TAB */}
+                {activeTab === "inventory" && (
+                    <div className="space-y-4">
+                        <div className="bg-white rounded-xl shadow-sm border border-cyan-200 overflow-hidden">
+                            <div className="bg-cyan-50 px-5 py-4 border-b border-cyan-200 flex justify-between items-center">
+                                <div>
+                                    <h2 className="text-lg font-bold text-cyan-800">📦 Building Inventory</h2>
+                                    <p className="text-xs text-cyan-600 mt-1">Track items, supplies & equipment</p>
+                                </div>
+                                <button onClick={() => setIsInventoryModalOpen(true)} className="text-sm bg-cyan-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-cyan-700 transition">+ Add Item</button>
+                            </div>
+                            <div className="p-4 space-y-4">
+                                {/* Filter */}
+                                <select value={inventoryFilter} onChange={(e) => setInventoryFilter(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm">
+                                    <option value="">All Buildings</option>
+                                    {buildings.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                                </select>
+
+                                {/* Inventory List */}
+                                <div className="space-y-2">
+                                    {(() => {
+                                        const filtered = inventoryFilter ? allInventory.filter(i => i.buildingId === inventoryFilter) : allInventory;
+                                        if (filtered.length === 0) return <p className="text-sm text-gray-500 text-center py-6">No inventory items yet.</p>;
+                                        return filtered.map(item => (
+                                            <div key={item.id} className="border border-gray-200 rounded-lg p-3 bg-gray-50">
+                                                <div className="flex justify-between items-start">
+                                                    <div>
+                                                        <h4 className="font-bold text-gray-900 text-sm">{item.name}</h4>
+                                                        <p className="text-[10px] text-gray-500">{item.buildingName || "General"}{item.location ? ` · ${item.location}` : ""}</p>
+                                                        <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded mt-1 inline-block ${item.condition === "good" ? "bg-green-100 text-green-700" : item.condition === "fair" ? "bg-yellow-100 text-yellow-700" : "bg-red-100 text-red-700"}`}>{item.condition}</span>
+                                                        {item.notes && <p className="text-[10px] text-gray-500 mt-1">{item.notes}</p>}
+                                                    </div>
+                                                    <div className="flex items-center gap-2 shrink-0">
+                                                        <button onClick={() => handleUpdateInventoryQty(item.id, Math.max(0, Number(item.quantity) - 1))} className="w-7 h-7 bg-gray-200 rounded-md font-bold text-gray-700 hover:bg-gray-300">−</button>
+                                                        <span className="text-lg font-bold text-gray-900 min-w-[30px] text-center">{item.quantity}</span>
+                                                        <button onClick={() => handleUpdateInventoryQty(item.id, Number(item.quantity) + 1)} className="w-7 h-7 bg-cyan-100 rounded-md font-bold text-cyan-700 hover:bg-cyan-200">+</button>
+                                                    </div>
+                                                </div>
+                                                <p className="text-[10px] text-gray-400 mt-1">Updated: {new Date(item.updatedAt || item.createdAt).toLocaleDateString()}</p>
+                                            </div>
+                                        ));
+                                    })()}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 {/* TICKET LIST */}
-                {activeTab !== "meter" && activeTab !== "collections" && activeTab !== "ledger" && activeTab !== "units" && activeTab !== "occupancy" && activeTab !== "checklist" && (
+                {activeTab !== "meter" && activeTab !== "collections" && activeTab !== "ledger" && activeTab !== "units" && activeTab !== "occupancy" && activeTab !== "checklist" && activeTab !== "expenses" && activeTab !== "inventory" && (
                 <div className="space-y-4">
                     {(activeTab === "active" ? activeTickets : resolvedTickets).length === 0 ? (
                         <div className="bg-white p-8 rounded-xl shadow-sm text-center border border-gray-200 mt-8">
@@ -1344,6 +1550,106 @@ export default function EmployeeDashboard() {
                             <div className="flex gap-2">
                                 <button type="button" onClick={() => setIsAddCoTenantOpen(false)} className="flex-1 py-2 border border-gray-300 rounded-md text-sm text-gray-600">Cancel</button>
                                 <button type="submit" className="flex-1 py-2 bg-indigo-600 text-white rounded-md text-sm font-medium hover:bg-indigo-700">Add Co-Tenant</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* ADD EXPENSE MODAL */}
+            {isExpenseModalOpen && (
+                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setIsExpenseModalOpen(false)}>
+                    <div className="bg-white p-6 rounded-xl shadow-xl max-w-md w-full space-y-4" onClick={(e) => e.stopPropagation()}>
+                        <h3 className="text-lg font-bold text-gray-800">💰 Log Expense</h3>
+                        <form onSubmit={handleAddExpense} className="space-y-3">
+                            <div>
+                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Amount (₹) *</label>
+                                <input type="number" required min="1" value={expenseAmount} onChange={(e) => setExpenseAmount(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" placeholder="e.g. 500" />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Category</label>
+                                <select value={expenseCategory} onChange={(e) => setExpenseCategory(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm">
+                                    <option>Maintenance</option>
+                                    <option>Plumbing</option>
+                                    <option>Electrical</option>
+                                    <option>Cleaning</option>
+                                    <option>Supplies</option>
+                                    <option>Painting</option>
+                                    <option>Security</option>
+                                    <option>Water</option>
+                                    <option>Common Area</option>
+                                    <option>Other</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Building</label>
+                                <select value={expenseBuilding} onChange={(e) => setExpenseBuilding(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm">
+                                    <option value="">General (All Buildings)</option>
+                                    {buildings.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Description *</label>
+                                <textarea required value={expenseDesc} onChange={(e) => setExpenseDesc(e.target.value)} rows={2} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" placeholder="What was the expense for?" />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Date</label>
+                                <input type="date" value={expenseDate} onChange={(e) => setExpenseDate(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Receipt Photo (Optional)</label>
+                                <input type="file" accept="image/*,.pdf" onChange={(e) => setExpenseReceipt(e.target.files?.[0] || null)} className="w-full text-sm text-gray-500" />
+                            </div>
+                            {isUploading && <UploadProgressBar progress={uploadProgress} />}
+                            <div className="flex gap-2 pt-2">
+                                <button type="button" onClick={() => setIsExpenseModalOpen(false)} className="flex-1 py-2 border border-gray-300 rounded-md text-sm text-gray-600">Cancel</button>
+                                <button type="submit" disabled={isSubmittingExpense || isUploading} className="flex-1 py-2 bg-amber-600 text-white rounded-md text-sm font-medium hover:bg-amber-700 disabled:bg-amber-400">{isSubmittingExpense ? "Saving..." : "Log Expense"}</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* ADD INVENTORY MODAL */}
+            {isInventoryModalOpen && (
+                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setIsInventoryModalOpen(false)}>
+                    <div className="bg-white p-6 rounded-xl shadow-xl max-w-md w-full space-y-4" onClick={(e) => e.stopPropagation()}>
+                        <h3 className="text-lg font-bold text-gray-800">📦 Add Inventory Item</h3>
+                        <form onSubmit={handleAddInventory} className="space-y-3">
+                            <div>
+                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Item Name *</label>
+                                <input type="text" required value={invItemName} onChange={(e) => setInvItemName(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" placeholder="e.g. Water Pump, Fire Extinguisher" />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Quantity *</label>
+                                <input type="number" required min="0" value={invItemQty} onChange={(e) => setInvItemQty(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" placeholder="e.g. 5" />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Building</label>
+                                <select value={invItemBuilding} onChange={(e) => setInvItemBuilding(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm">
+                                    <option value="">General (Shared)</option>
+                                    {buildings.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Location / Area</label>
+                                <input type="text" value={invItemLocation} onChange={(e) => setInvItemLocation(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" placeholder="e.g. Store room, Terrace" />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Condition</label>
+                                <select value={invItemCondition} onChange={(e) => setInvItemCondition(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm">
+                                    <option value="good">✅ Good</option>
+                                    <option value="fair">⚠️ Fair</option>
+                                    <option value="poor">❌ Poor / Needs Replacement</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Notes</label>
+                                <textarea value={invItemNotes} onChange={(e) => setInvItemNotes(e.target.value)} rows={2} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" placeholder="Any details..." />
+                            </div>
+                            <div className="flex gap-2 pt-2">
+                                <button type="button" onClick={() => setIsInventoryModalOpen(false)} className="flex-1 py-2 border border-gray-300 rounded-md text-sm text-gray-600">Cancel</button>
+                                <button type="submit" disabled={isSubmittingInventory} className="flex-1 py-2 bg-cyan-600 text-white rounded-md text-sm font-medium hover:bg-cyan-700 disabled:bg-cyan-400">{isSubmittingInventory ? "Saving..." : "Add Item"}</button>
                             </div>
                         </form>
                     </div>
