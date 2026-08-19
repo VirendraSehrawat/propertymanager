@@ -78,6 +78,7 @@ export default function EmployeeDashboard() {
     const [unitDocName, setUnitDocName] = useState("");
     const [unitDocFile, setUnitDocFile] = useState<File | null>(null);
     const [isUnitDocModalOpen, setIsUnitDocModalOpen] = useState(false);
+    const [expandedBuildings, setExpandedBuildings] = useState<string[]>([]);
 
     useEffect(() => {
         if (!loading && (!user || role !== "employee")) {
@@ -675,87 +676,87 @@ export default function EmployeeDashboard() {
 
                 {/* UNITS TAB */}
                 {activeTab === "units" && (
-                    <div className="space-y-4">
-                        {/* VACANT UNITS - Grouped by Building */}
-                        <div className="bg-white rounded-xl shadow-sm border border-green-200 overflow-hidden">
-                            <div className="bg-green-50 px-5 py-4 border-b border-green-200">
-                                <h2 className="text-lg font-bold text-green-800">🟢 Vacant Apartments ({vacantUnits.length})</h2>
-                                <p className="text-xs text-green-600 mt-1">Ready to assign tenants</p>
-                            </div>
-                            <div className="p-4 space-y-4 max-h-[50vh] overflow-y-auto">
-                                {vacantUnits.length === 0 ? (
-                                    <p className="text-sm text-gray-500 text-center py-4">All units are occupied! 🎉</p>
-                                ) : (
-                                    (() => {
-                                        const grouped: Record<string, any[]> = {};
-                                        vacantUnits.forEach(u => {
-                                            const bName = getBuildingName(u.buildingId);
-                                            if (!grouped[bName]) grouped[bName] = [];
-                                            grouped[bName].push(u);
-                                        });
-                                        return Object.entries(grouped).map(([bName, units]) => (
-                                            <div key={bName}>
-                                                <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 px-1">🏢 {bName} ({units.length})</h3>
-                                                <div className="space-y-2">
-                                                    {units.map(unit => (
-                                                        <div key={unit.id} className="border border-green-200 bg-green-50 rounded-lg p-3 flex justify-between items-center">
-                                                            <div>
-                                                                <h4 className="font-bold text-gray-900 text-sm">{unit.unitNumber}</h4>
-                                                                <p className="text-xs text-gray-500">Rent: ₹{unit.baseRent || 8000}/mo</p>
-                                                            </div>
-                                                            <div className="flex gap-2">
-                                                                <button onClick={() => { setEditUnit(unit); setEditUnitNumber(unit.unitNumber); setEditBaseRent(String(unit.baseRent || 8000)); setIsEditUnitModalOpen(true); }} className="text-xs text-blue-600 hover:underline">✏️</button>
-                                                                <button onClick={() => { setAssignUnit(unit); setAssignMode("new"); setAssignEmail(""); setAssignName(""); setAssignPhone(""); setAssignExistingUnit(""); setIsAssignModalOpen(true); }} className="text-xs bg-green-600 text-white px-2.5 py-1 rounded-md font-medium hover:bg-green-700">+ Assign</button>
-                                                            </div>
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        ));
-                                    })()
-                                )}
-                            </div>
-                        </div>
-
-                        {/* OCCUPIED UNITS */}
+                    <div className="space-y-3">
                         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                            <div className="bg-orange-50 px-5 py-4 border-b border-orange-200">
-                                <h2 className="text-lg font-bold text-orange-800">🟠 Occupied Apartments ({occupiedForAssign.length})</h2>
+                            <div className="bg-blue-50 px-5 py-4 border-b border-blue-200">
+                                <h2 className="text-lg font-bold text-blue-800">🏠 Buildings & Units</h2>
+                                <p className="text-xs text-blue-600 mt-1">{vacantUnits.length} vacant · {occupiedForAssign.length} occupied · {buildings.length} buildings</p>
                             </div>
-                            <div className="p-4 space-y-3 max-h-[50vh] overflow-y-auto">
-                                {occupiedForAssign.length === 0 ? (
-                                    <p className="text-sm text-gray-500 text-center py-4">No occupied units.</p>
+                            <div className="p-4 space-y-2">
+                                {buildings.length === 0 ? (
+                                    <p className="text-sm text-gray-500 text-center py-8">No buildings found.</p>
                                 ) : (
-                                    occupiedForAssign.map(unit => (
-                                        <div key={unit.id} className="border border-gray-200 bg-white rounded-lg p-4">
-                                            <div className="flex justify-between items-start">
-                                                <div>
+                                    buildings.map(bldg => {
+                                        const bldgUnits = allUnits.filter(u => u.buildingId === bldg.id);
+                                        const bldgVacant = bldgUnits.filter(u => u.status === "vacant");
+                                        const isExpanded = expandedBuildings.includes(bldg.id);
+                                        const toggleBuilding = () => {
+                                            setExpandedBuildings(prev => isExpanded ? prev.filter(id => id !== bldg.id) : [...prev, bldg.id]);
+                                        };
+                                        return (
+                                            <div key={bldg.id} className="border border-gray-200 rounded-lg overflow-hidden">
+                                                <button onClick={toggleBuilding} className="w-full flex justify-between items-center px-4 py-3 bg-gray-50 hover:bg-gray-100 transition">
                                                     <div className="flex items-center gap-2">
-                                                        <h3 className="font-bold text-gray-900">{unit.unitNumber}</h3>
-                                                        <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-orange-100 text-orange-700">occupied</span>
+                                                        <span className="text-lg">{isExpanded ? "▼" : "▶"}</span>
+                                                        <div className="text-left">
+                                                            <h3 className="font-bold text-gray-900 text-sm">{bldg.name}</h3>
+                                                            <p className="text-[10px] text-gray-500">{bldg.address}</p>
+                                                        </div>
                                                     </div>
-                                                    <p className="text-xs text-gray-500 mt-1">{getBuildingName(unit.buildingId)} · Rent: ₹{unit.baseRent || 8000}</p>
-                                                    <div className="mt-2 text-xs text-gray-600">
-                                                        <p>👤 {unit.tenantName || "—"} · {unit.tenantEmail}</p>
-                                                        {unit.tenantPhone && <p>📞 {unit.tenantPhone}</p>}
+                                                    <div className="flex gap-2">
+                                                        <span className="text-[10px] font-bold bg-green-100 text-green-700 px-2 py-0.5 rounded-full">{bldgVacant.length} vacant</span>
+                                                        <span className="text-[10px] font-bold bg-gray-200 text-gray-600 px-2 py-0.5 rounded-full">{bldgUnits.length} total</span>
                                                     </div>
-                                                </div>
-                                                <div className="flex flex-col gap-1.5 shrink-0">
-                                                    <button onClick={() => { setEditUnit(unit); setEditUnitNumber(unit.unitNumber); setEditBaseRent(String(unit.baseRent || 8000)); setIsEditUnitModalOpen(true); }} className="text-xs text-blue-600 hover:underline">✏️ Edit</button>
-                                                    <button onClick={() => handleRemoveTenant(unit.id)} className="text-xs text-red-500 hover:underline">Remove</button>
-                                                    <button onClick={() => { setUnitDocUnit(unit); setUnitDocName(""); setUnitDocFile(null); setIsUnitDocModalOpen(true); }} className="text-xs text-purple-600 hover:underline">📄 Doc</button>
-                                                </div>
+                                                </button>
+                                                {isExpanded && (
+                                                    <div className="p-3 space-y-2 border-t border-gray-100 bg-white">
+                                                        {bldgUnits.length === 0 ? (
+                                                            <p className="text-xs text-gray-400 text-center py-2">No units in this building.</p>
+                                                        ) : (
+                                                            bldgUnits.map(unit => (
+                                                                <div key={unit.id} className={`border rounded-lg p-3 ${unit.status === "vacant" ? "border-green-200 bg-green-50" : "border-gray-100 bg-white"}`}>
+                                                                    <div className="flex justify-between items-start">
+                                                                        <div>
+                                                                            <div className="flex items-center gap-2">
+                                                                                <h4 className="font-bold text-gray-900 text-sm">{unit.unitNumber}</h4>
+                                                                                <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${unit.status === "vacant" ? "bg-green-200 text-green-800" : "bg-orange-100 text-orange-700"}`}>{unit.status}</span>
+                                                                            </div>
+                                                                            <p className="text-xs text-gray-500 mt-0.5">Rent: ₹{unit.baseRent || 8000}/mo</p>
+                                                                            {unit.tenantEmail && (
+                                                                                <div className="mt-1.5 text-xs text-gray-600">
+                                                                                    <p>👤 {unit.tenantName || "—"} · {unit.tenantEmail}</p>
+                                                                                    {unit.tenantPhone && <p>📞 {unit.tenantPhone}</p>}
+                                                                                </div>
+                                                                            )}
+                                                                        </div>
+                                                                        <div className="flex flex-col gap-1.5 shrink-0">
+                                                                            <button onClick={() => { setEditUnit(unit); setEditUnitNumber(unit.unitNumber); setEditBaseRent(String(unit.baseRent || 8000)); setIsEditUnitModalOpen(true); }} className="text-xs text-blue-600 hover:underline">✏️ Edit</button>
+                                                                            {unit.status === "vacant" ? (
+                                                                                <button onClick={() => { setAssignUnit(unit); setAssignMode("new"); setAssignEmail(""); setAssignName(""); setAssignPhone(""); setAssignExistingUnit(""); setIsAssignModalOpen(true); }} className="text-xs bg-green-600 text-white px-2 py-1 rounded-md font-medium hover:bg-green-700">+ Assign</button>
+                                                                            ) : (
+                                                                                <>
+                                                                                    <button onClick={() => handleRemoveTenant(unit.id)} className="text-xs text-red-500 hover:underline">Remove</button>
+                                                                                    <button onClick={() => { setUnitDocUnit(unit); setUnitDocName(""); setUnitDocFile(null); setIsUnitDocModalOpen(true); }} className="text-xs text-purple-600 hover:underline">📄 Doc</button>
+                                                                                </>
+                                                                            )}
+                                                                        </div>
+                                                                    </div>
+                                                                    {unit.documents && unit.documents.length > 0 && (
+                                                                        <div className="mt-2 pt-2 border-t border-gray-100">
+                                                                            <p className="text-[10px] font-bold text-gray-500 uppercase mb-1">Documents</p>
+                                                                            {unit.documents.map((d: any, i: number) => (
+                                                                                <a key={i} href={d.url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline block">📎 {d.name}</a>
+                                                                            ))}
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            ))
+                                                        )}
+                                                    </div>
+                                                )}
                                             </div>
-                                            {unit.documents && unit.documents.length > 0 && (
-                                                <div className="mt-2 pt-2 border-t border-gray-100">
-                                                    <p className="text-[10px] font-bold text-gray-500 uppercase mb-1">Documents</p>
-                                                    {unit.documents.map((d: any, i: number) => (
-                                                        <a key={i} href={d.url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline block">📎 {d.name}</a>
-                                                    ))}
-                                                </div>
-                                            )}
-                                        </div>
-                                    ))
+                                        );
+                                    })
                                 )}
                             </div>
                         </div>
