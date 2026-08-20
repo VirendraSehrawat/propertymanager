@@ -29,8 +29,10 @@ export default function EmployeeDashboard() {
     const [occupiedUnits, setOccupiedUnits] = useState<any[]>([]);
     const [selectedMeterUnit, setSelectedMeterUnit] = useState("");
     const [currentReading, setCurrentReading] = useState("");
+    const [previousReadingOverride, setPreviousReadingOverride] = useState("");
     const [meterChanged, setMeterChanged] = useState(false);
     const [manualUnitsConsumed, setManualUnitsConsumed] = useState("");
+    const [manualUnitsReason, setManualUnitsReason] = useState("");
     const [newMeterReading, setNewMeterReading] = useState("");
     const [billingMonth, setBillingMonth] = useState(() => {
         const now = new Date();
@@ -255,30 +257,36 @@ export default function EmployeeDashboard() {
             let reading: number;
             let previousReading: number;
             let unitsConsumed: number;
+            let manualOverrideNote = "";
 
             if (meterChanged) {
                 // Meter was replaced — user enters units consumed directly + new meter reading
                 unitsConsumed = Number(manualUnitsConsumed);
-                previousReading = Number(unit.lastMeterReading) || 0;
+                previousReading = previousReadingOverride ? Number(previousReadingOverride) : (Number(unit.lastMeterReading) || 0);
                 reading = newMeterReading ? Number(newMeterReading) : 0;
             } else {
                 reading = Number(currentReading);
-                previousReading = Number(unit.lastMeterReading) || 0;
-                unitsConsumed = Math.max(0, reading - previousReading);
+                previousReading = previousReadingOverride ? Number(previousReadingOverride) : (Number(unit.lastMeterReading) || 0);
+
+                // If manual units consumed is provided, use that instead of calculated
+                if (manualUnitsConsumed && Number(manualUnitsConsumed) > 0) {
+                    unitsConsumed = Number(manualUnitsConsumed);
+                    manualOverrideNote = manualUnitsReason || "Manual units entered";
+                } else {
+                    unitsConsumed = Math.max(0, reading - previousReading);
+                }
             }
             const electricityCharge = unitsConsumed * electricityRate;
 
             // Fetch tenant ledger balance (carry-forward)
             const ledgerSnap = await getDocs(query(collection(db, "ledger"), where("tenantEmail", "==", unit.tenantEmail)));
             const runningBalance = ledgerSnap.docs.reduce((sum, d) => sum + Number(d.data().balance || 0), 0);
-            // Negative balance = tenant owes more, positive = tenant has credit
-            const carryForward = -runningBalance; // amount to add (positive if due, negative if credit)
+            const carryForward = -runningBalance;
             const baseTotal = Number(unit.baseRent || 0) + electricityCharge;
             const totalAmount = Math.max(0, baseTotal + carryForward);
 
             const batch = writeBatch(db);
 
-            // Create / update the invoice
             batch.set(doc(db, "invoices", invoiceId), {
                 unitId: unit.id,
                 unitNumber: unit.unitNumber,
@@ -290,6 +298,7 @@ export default function EmployeeDashboard() {
                 electricityRate,
                 electricityCharge,
                 ...(meterChanged ? { meterChanged: true } : { meterChanged: deleteField() }),
+                ...(manualOverrideNote ? { manualUnitsReason: manualOverrideNote } : { manualUnitsReason: deleteField() }),
                 ...(carryForward !== 0 ? { carryForward } : { carryForward: deleteField() }),
                 totalAmount,
                 billingPeriod: monthName,
@@ -298,17 +307,19 @@ export default function EmployeeDashboard() {
                 createdAt: new Date().toISOString()
             }, { merge: true });
 
-            // Update last meter reading on the unit
             batch.update(doc(db, "units", unit.id), { lastMeterReading: reading });
 
             await batch.commit();
             const cfMsg = carryForward !== 0 ? `\nCarry Forward: ${carryForward > 0 ? '+' : ''}₹${carryForward}` : '';
             const meterNote = meterChanged ? '\n⚠️ Meter was changed — units entered manually' : '';
-            alert(`Invoice generated for ${unit.unitNumber}!${meterNote}\n\nRent: ₹${unit.baseRent || 0}\nElectricity: ${unitsConsumed} units × ₹${electricityRate} = ₹${electricityCharge}${cfMsg}\nTotal: ₹${totalAmount}`);
+            const manualNote = manualOverrideNote ? `\n📝 Manual units: ${manualOverrideNote}` : '';
+            alert(`Invoice generated for ${unit.unitNumber}!${meterNote}${manualNote}\n\nRent: ₹${unit.baseRent || 0}\nElectricity: ${unitsConsumed} units × ₹${electricityRate} = ₹${electricityCharge}${cfMsg}\nTotal: ₹${totalAmount}`);
             setSelectedMeterUnit("");
             setCurrentReading("");
+            setPreviousReadingOverride("");
             setMeterChanged(false);
             setManualUnitsConsumed("");
+            setManualUnitsReason("");
             setNewMeterReading("");
         } catch (error) {
             console.error(error);
@@ -734,15 +745,15 @@ export default function EmployeeDashboard() {
                     <div className="bg-white rounded-xl shadow-sm border border-purple-200 overflow-hidden">
                         <div className="bg-purple-50 px-5 py-4 border-b border-purple-100">
                             <h2 className="text-lg font-bold text-purple-800">⚡ Record Meter Reading & Generate Invoice</h2>
-                            <p className="text-xs text-purple-600 mt-1">Enter the current meter reading to calculate the electricity bill (₹{electricityRate}/unit)</p>
+                            <p className="text-xs text-purple-600 mt-1">Enter readings to calculate electricity bill (₹{electricityRate}/unit)</p>
                         </div>
                         <form onSubmit={handleGenerateMeterInvoice} className="p-5 space-y-4">
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Select Unit</label>
-                                <select required value={selectedMeterUnit} onChange={(e) => setSelectedMeterUnit(e.target.value)} className="w-full px-3 py-2.5 border border-gray-300 rounded-lg">
+                                <select required value={selectedMeterUnit} onChange={(e) => { setSelectedMeterUnit(e.target.value); setPreviousReadingOverride(""); }} className="w-full px-3 py-2.5 border border-gray-300 rounded-lg">
                                     <option value="" disabled>Choose an occupied unit...</option>
                                     {occupiedUnits.map(u => (
-                                        <option key={u.id} value={u.id}>{u.unitNumber} — {u.tenantEmail} (Last: {u.lastMeterReading || 0})</option>
+                                        <option key={u.id} value={u.id}>{u.unitNumber} — {u.tenantEmail || u.tenantName || "Tenant"} (Last: {u.lastMeterReading || 0})</option>
                                     ))}
                                 </select>
                             </div>
@@ -751,8 +762,8 @@ export default function EmployeeDashboard() {
                                 if (!u) return null;
                                 return (
                                     <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-800 space-y-1">
-                                        <p><strong>Unit:</strong> {u.unitNumber} | <strong>Tenant:</strong> {u.tenantEmail}</p>
-                                        <p><strong>Last Meter Reading:</strong> {u.lastMeterReading || 0} | <strong>Base Rent:</strong> ₹{u.baseRent || 0}</p>
+                                        <p><strong>Unit:</strong> {u.unitNumber} | <strong>Tenant:</strong> {u.tenantEmail || u.tenantName || "—"}</p>
+                                        <p><strong>Last Meter Reading (from system):</strong> {u.lastMeterReading || 0} | <strong>Base Rent:</strong> ₹{u.baseRent || 0}</p>
                                     </div>
                                 );
                             })()}
@@ -767,16 +778,42 @@ export default function EmployeeDashboard() {
                                 <label htmlFor="meterChanged" className="text-sm text-yellow-800 font-medium cursor-pointer">⚠️ Meter was changed / replaced</label>
                             </div>
 
-                            {!meterChanged ? (
+                            {/* Previous Month Reading (editable) */}
+                            {selectedMeterUnit && (
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">Current Meter Reading</label>
-                                    <input type="number" required min="0" value={currentReading} onChange={(e) => setCurrentReading(e.target.value)} className="w-full px-3 py-2.5 border border-gray-300 rounded-lg" placeholder="e.g. 1250" />
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Previous Month Reading</label>
+                                    <input type="number" min="0" value={previousReadingOverride || (occupiedUnits.find(u => u.id === selectedMeterUnit)?.lastMeterReading ?? "")} onChange={(e) => setPreviousReadingOverride(e.target.value)} className="w-full px-3 py-2.5 border border-gray-300 rounded-lg" placeholder="Auto-filled from system" />
+                                    <p className="text-[10px] text-gray-500 mt-1">Auto-filled from last saved reading. Edit if incorrect.</p>
                                 </div>
+                            )}
+
+                            {!meterChanged ? (
+                                <>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Current Month Reading *</label>
+                                        <input type="number" required min="0" value={currentReading} onChange={(e) => setCurrentReading(e.target.value)} className="w-full px-3 py-2.5 border border-gray-300 rounded-lg" placeholder="e.g. 1250" />
+                                    </div>
+
+                                    {/* Manual Units Override */}
+                                    <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 space-y-3">
+                                        <p className="text-xs text-orange-700 font-medium">📝 Optional: Override units consumed manually</p>
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-1">Manual Units Consumed</label>
+                                            <input type="number" min="0" value={manualUnitsConsumed} onChange={(e) => setManualUnitsConsumed(e.target.value)} className="w-full px-3 py-2.5 border border-orange-300 rounded-lg" placeholder="Leave empty to auto-calculate from readings" />
+                                        </div>
+                                        {manualUnitsConsumed && Number(manualUnitsConsumed) > 0 && (
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">Reason for manual entry *</label>
+                                                <input type="text" required value={manualUnitsReason} onChange={(e) => setManualUnitsReason(e.target.value)} className="w-full px-3 py-2.5 border border-orange-300 rounded-lg" placeholder="e.g. Shared meter, faulty reading, estimated" />
+                                            </div>
+                                        )}
+                                    </div>
+                                </>
                             ) : (
                                 <div className="space-y-3 bg-yellow-50 border border-yellow-200 rounded-lg p-4">
                                     <p className="text-xs text-yellow-700 font-medium">Enter units consumed manually (from old + new meter final readings)</p>
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Units Consumed</label>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Units Consumed *</label>
                                         <input type="number" required min="0" value={manualUnitsConsumed} onChange={(e) => setManualUnitsConsumed(e.target.value)} className="w-full px-3 py-2.5 border border-gray-300 rounded-lg" placeholder="e.g. 120" />
                                     </div>
                                     <div>
@@ -791,8 +828,13 @@ export default function EmployeeDashboard() {
                             {selectedMeterUnit && (meterChanged ? manualUnitsConsumed : currentReading) && (() => {
                                 const unit = occupiedUnits.find(u => u.id === selectedMeterUnit);
                                 if (!unit) return null;
-                                const prev = Number(unit.lastMeterReading) || 0;
-                                const consumed = meterChanged ? Number(manualUnitsConsumed) : Math.max(0, Number(currentReading) - prev);
+                                const prev = previousReadingOverride ? Number(previousReadingOverride) : (Number(unit.lastMeterReading) || 0);
+                                const hasManualOverride = !meterChanged && manualUnitsConsumed && Number(manualUnitsConsumed) > 0;
+                                const consumed = meterChanged
+                                    ? Number(manualUnitsConsumed)
+                                    : hasManualOverride
+                                        ? Number(manualUnitsConsumed)
+                                        : Math.max(0, Number(currentReading) - prev);
                                 const elecCharge = consumed * electricityRate;
                                 const total = Number(unit.baseRent || 0) + elecCharge;
                                 return (
@@ -804,7 +846,11 @@ export default function EmployeeDashboard() {
                                             <>
                                                 <div className="flex justify-between"><span className="text-gray-600">Previous Reading:</span><span className="font-mono">{prev}</span></div>
                                                 <div className="flex justify-between"><span className="text-gray-600">Current Reading:</span><span className="font-mono">{Number(currentReading)}</span></div>
+                                                <div className="flex justify-between"><span className="text-gray-600">Calculated Units:</span><span className="font-mono">{Math.max(0, Number(currentReading) - prev)}</span></div>
                                             </>
+                                        )}
+                                        {hasManualOverride && (
+                                            <div className="bg-orange-50 border border-orange-200 rounded p-2 text-xs text-orange-800">📝 Manual override: {manualUnitsConsumed} units — {manualUnitsReason || "No reason"}</div>
                                         )}
                                         <div className="flex justify-between"><span className="text-gray-600">Units Consumed:</span><span className="font-mono font-bold">{consumed}</span></div>
                                         <div className="flex justify-between"><span className="text-gray-600">Electricity (×₹{electricityRate}):</span><span className="font-mono">₹{elecCharge}</span></div>
