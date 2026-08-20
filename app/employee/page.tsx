@@ -121,6 +121,19 @@ export default function EmployeeDashboard() {
     const [isSubmittingInventory, setIsSubmittingInventory] = useState(false);
     const [inventoryFilter, setInventoryFilter] = useState("");
 
+    // Report Issue States
+    const [isReportIssueOpen, setIsReportIssueOpen] = useState(false);
+    const [reportUnit, setReportUnit] = useState("");
+    const [reportCategory, setReportCategory] = useState("Maintenance");
+    const [reportDesc, setReportDesc] = useState("");
+    const [reportFile, setReportFile] = useState<File | null>(null);
+    const [isSubmittingReport, setIsSubmittingReport] = useState(false);
+
+    // Comment on ticket States
+    const [commentTicketId, setCommentTicketId] = useState("");
+    const [commentText, setCommentText] = useState("");
+    const [isAddingComment, setIsAddingComment] = useState(false);
+
     useEffect(() => {
         if (!loading && (!user || role !== "employee")) {
             router.push("/");
@@ -573,6 +586,67 @@ export default function EmployeeDashboard() {
         try {
             await updateDoc(doc(db, "inventory", itemId), { quantity: newQty, updatedAt: new Date().toISOString() });
         } catch (error) { console.error(error); alert("Failed to update quantity."); }
+    };
+
+    // --- Report Issue Handler ---
+    const handleReportIssue = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!reportDesc) return;
+        setIsSubmittingReport(true);
+        try {
+            let photoUrl = "";
+            if (reportFile) {
+                photoUrl = await uploadFile(`maintenance/staff_${Date.now()}_${reportFile.name}`, reportFile);
+            }
+            const unit = allUnits.find(u => u.id === reportUnit);
+            await addDoc(collection(db, "maintenance"), {
+                tenantEmail: "",
+                reportedBy: user?.email || "Staff",
+                unitId: reportUnit || "",
+                unitNumber: unit?.unitNumber || "Common Area",
+                buildingName: unit ? getBuildingName(unit.buildingId) : "General",
+                category: reportCategory,
+                description: reportDesc,
+                photoUrl,
+                status: "pending",
+                comments: [],
+                createdAt: new Date().toISOString()
+            });
+            setIsReportIssueOpen(false);
+            setReportUnit(""); setReportCategory("Maintenance"); setReportDesc(""); setReportFile(null);
+            alert("Issue reported successfully!");
+        } catch (error) { console.error(error); alert("Failed to report issue."); } finally { setIsSubmittingReport(false); }
+    };
+
+    // --- Add Comment to Ticket ---
+    const handleAddComment = async (ticketId: string) => {
+        if (!commentText.trim()) return;
+        setIsAddingComment(true);
+        try {
+            await updateDoc(doc(db, "maintenance", ticketId), {
+                comments: arrayUnion({
+                    author: user?.email || "Staff",
+                    text: commentText.trim(),
+                    timestamp: new Date().toISOString()
+                })
+            });
+            setCommentText("");
+            setCommentTicketId("");
+        } catch (error) { console.error(error); alert("Failed to add comment."); } finally { setIsAddingComment(false); }
+    };
+
+    // --- Change Ticket Status ---
+    const handleChangeTicketStatus = async (ticketId: string, newStatus: string) => {
+        try {
+            await updateDoc(doc(db, "maintenance", ticketId), {
+                status: newStatus,
+                comments: arrayUnion({
+                    author: user?.email || "Staff",
+                    text: `Status changed to ${newStatus.toUpperCase()}`,
+                    timestamp: new Date().toISOString()
+                })
+            });
+        } catch (error) { console.error(error); alert("Failed to update status."); }
     };
 
     const getBuildingName = (buildingId: string) => {
@@ -1310,6 +1384,13 @@ export default function EmployeeDashboard() {
                 {/* TICKET LIST */}
                 {activeTab !== "meter" && activeTab !== "collections" && activeTab !== "ledger" && activeTab !== "units" && activeTab !== "occupancy" && activeTab !== "checklist" && activeTab !== "expenses" && activeTab !== "inventory" && (
                 <div className="space-y-4">
+                    {/* Report Issue Button */}
+                    {activeTab === "active" && (
+                        <button onClick={() => setIsReportIssueOpen(true)} className="w-full py-3 bg-red-600 text-white rounded-xl font-bold hover:bg-red-700 transition shadow-sm text-sm flex items-center justify-center gap-2">
+                            🚨 Report New Issue
+                        </button>
+                    )}
+
                     {(activeTab === "active" ? activeTickets : resolvedTickets).length === 0 ? (
                         <div className="bg-white p-8 rounded-xl shadow-sm text-center border border-gray-200 mt-8">
                             <span className="text-4xl mb-3 block">🎉</span>
@@ -1323,14 +1404,19 @@ export default function EmployeeDashboard() {
                                 <div className={`px-4 py-3 border-b flex justify-between items-center ${ticket.status === 'resolved' ? 'bg-green-50 border-green-100' : 'bg-orange-50 border-orange-100'}`}>
                                     <div>
                                         <span className="text-xs font-bold uppercase tracking-wider text-gray-500">{ticket.category}</span>
-                                        <h3 className="font-bold text-gray-900 text-lg">Unit {ticket.unitNumber}</h3>
+                                        <h3 className="font-bold text-gray-900 text-lg">{ticket.unitNumber === "Common Area" ? "Common Area" : `Unit ${ticket.unitNumber}`}</h3>
+                                        {ticket.reportedBy && <p className="text-[10px] text-gray-500">Reported by: {ticket.reportedBy}</p>}
                                     </div>
-                                    <span className={`px-3 py-1 rounded-full text-xs font-bold ${ticket.status === 'pending' ? 'bg-red-100 text-red-800' :
-                                            ticket.status === 'in-progress' ? 'bg-blue-100 text-blue-800' :
-                                                'bg-green-100 text-green-800'
-                                        }`}>
-                                        {ticket.status.toUpperCase()}
-                                    </span>
+                                    {/* Status dropdown for active tickets */}
+                                    {ticket.status !== 'resolved' ? (
+                                        <select value={ticket.status} onChange={(e) => handleChangeTicketStatus(ticket.id, e.target.value)} className={`px-2 py-1 rounded-full text-xs font-bold border-0 cursor-pointer ${ticket.status === 'pending' ? 'bg-red-100 text-red-800' : 'bg-blue-100 text-blue-800'}`}>
+                                            <option value="pending">PENDING</option>
+                                            <option value="in-progress">IN-PROGRESS</option>
+                                            <option value="resolved">RESOLVED</option>
+                                        </select>
+                                    ) : (
+                                        <span className="px-3 py-1 rounded-full text-xs font-bold bg-green-100 text-green-800">RESOLVED</span>
+                                    )}
                                 </div>
 
                                 {/* Body */}
@@ -1342,7 +1428,7 @@ export default function EmployeeDashboard() {
 
                                     {ticket.photoUrl && (
                                         <a href={ticket.photoUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 text-sm text-blue-600 bg-blue-50 px-3 py-2 rounded-md hover:bg-blue-100 font-medium w-full justify-center border border-blue-200 transition">
-                                            📷 View Tenant Photo
+                                            📷 View Photo
                                         </a>
                                     )}
 
@@ -1374,6 +1460,39 @@ export default function EmployeeDashboard() {
                                             <img src={ticket.resolutionPhotoUrl} alt="Fixed" className="w-full h-48 object-cover rounded-lg border border-gray-200" />
                                         </div>
                                     )}
+
+                                    {/* Comments Section */}
+                                    <div className="border-t border-gray-100 pt-3 mt-2">
+                                        <p className="text-xs font-bold text-gray-500 uppercase mb-2">💬 Comments ({ticket.comments?.length || 0})</p>
+                                        {ticket.comments && ticket.comments.length > 0 && (
+                                            <div className="space-y-2 max-h-40 overflow-y-auto mb-3">
+                                                {ticket.comments.map((c: any, i: number) => (
+                                                    <div key={i} className="bg-gray-50 border border-gray-100 rounded p-2 text-xs">
+                                                        <p className="text-gray-800">{c.text}</p>
+                                                        <p className="text-gray-400 mt-0.5">{c.author} · {new Date(c.timestamp).toLocaleString()}</p>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                        {/* Add Comment */}
+                                        <div className="flex gap-2">
+                                            <input
+                                                type="text"
+                                                value={commentTicketId === ticket.id ? commentText : ""}
+                                                onFocus={() => setCommentTicketId(ticket.id)}
+                                                onChange={(e) => { setCommentTicketId(ticket.id); setCommentText(e.target.value); }}
+                                                placeholder="Add a comment..."
+                                                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                                            />
+                                            <button
+                                                onClick={() => handleAddComment(ticket.id)}
+                                                disabled={isAddingComment || commentTicketId !== ticket.id || !commentText.trim()}
+                                                className="px-4 py-2 bg-orange-500 text-white rounded-lg text-sm font-bold hover:bg-orange-600 disabled:bg-orange-300 transition"
+                                            >
+                                                {isAddingComment && commentTicketId === ticket.id ? "..." : "Post"}
+                                            </button>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         ))
@@ -1696,6 +1815,53 @@ export default function EmployeeDashboard() {
                             <div className="flex gap-2 pt-2">
                                 <button type="button" onClick={() => setIsInventoryModalOpen(false)} className="flex-1 py-2 border border-gray-300 rounded-md text-sm text-gray-600">Cancel</button>
                                 <button type="submit" disabled={isSubmittingInventory} className="flex-1 py-2 bg-cyan-600 text-white rounded-md text-sm font-medium hover:bg-cyan-700 disabled:bg-cyan-400">{isSubmittingInventory ? "Saving..." : "Add Item"}</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* REPORT ISSUE MODAL */}
+            {isReportIssueOpen && (
+                <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50 p-4" onClick={() => setIsReportIssueOpen(false)}>
+                    <div className="bg-white p-6 rounded-t-2xl sm:rounded-2xl shadow-xl max-w-md w-full space-y-4" onClick={(e) => e.stopPropagation()}>
+                        <h3 className="text-lg font-bold text-gray-800">🚨 Report an Issue</h3>
+                        <p className="text-xs text-gray-500">Report a problem with a unit or common area. This creates a task visible to all staff.</p>
+                        <form onSubmit={handleReportIssue} className="space-y-3">
+                            <div>
+                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Unit / Location</label>
+                                <select value={reportUnit} onChange={(e) => setReportUnit(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm">
+                                    <option value="">Common Area / General</option>
+                                    {allUnits.map(u => <option key={u.id} value={u.id}>{u.unitNumber} — {u.tenantName || u.tenantEmail || "Vacant"}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Category</label>
+                                <select value={reportCategory} onChange={(e) => setReportCategory(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm">
+                                    <option>Maintenance</option>
+                                    <option>Plumbing</option>
+                                    <option>Electrical</option>
+                                    <option>Cleaning</option>
+                                    <option>Security</option>
+                                    <option>Structural</option>
+                                    <option>Pest Control</option>
+                                    <option>Water Supply</option>
+                                    <option>Common Area</option>
+                                    <option>Other</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Description *</label>
+                                <textarea required rows={3} value={reportDesc} onChange={(e) => setReportDesc(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" placeholder="Describe the issue in detail..." />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Photo (Optional)</label>
+                                <input type="file" accept="image/*" onChange={(e) => setReportFile(e.target.files?.[0] || null)} className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:bg-red-50 file:text-red-700" />
+                            </div>
+                            {isUploading && <UploadProgressBar progress={uploadProgress} />}
+                            <div className="flex gap-2 pt-2">
+                                <button type="button" onClick={() => setIsReportIssueOpen(false)} className="flex-1 py-2 border border-gray-300 rounded-md text-sm text-gray-600">Cancel</button>
+                                <button type="submit" disabled={isSubmittingReport || isUploading} className="flex-1 py-2 bg-red-600 text-white rounded-md text-sm font-medium hover:bg-red-700 disabled:bg-red-400">{isSubmittingReport ? "Submitting..." : "Report Issue"}</button>
                             </div>
                         </form>
                     </div>
