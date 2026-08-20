@@ -72,6 +72,8 @@ export default function EmployeeDashboard() {
     const [assignPhone, setAssignPhone] = useState("");
     const [assignMode, setAssignMode] = useState<"new" | "existing">("new");
     const [assignExistingUnit, setAssignExistingUnit] = useState("");
+    const [assignPaymentDay, setAssignPaymentDay] = useState("");
+    const [assignSecurityDeposit, setAssignSecurityDeposit] = useState("");
     const [isEditUnitModalOpen, setIsEditUnitModalOpen] = useState(false);
     const [editUnit, setEditUnit] = useState<any>(null);
     const [editUnitNumber, setEditUnitNumber] = useState("");
@@ -425,8 +427,15 @@ export default function EmployeeDashboard() {
         if (assignMode === "new") {
             if (!assignName && !assignEmail && !assignPhone) { alert("Please enter at least a name, email, or phone."); return; }
             try {
-                await updateDoc(doc(db, "units", assignUnit.id), { status: "occupied", tenantEmail: assignEmail ? assignEmail.toLowerCase() : "", tenantName: assignName, tenantPhone: assignPhone });
-                setIsAssignModalOpen(false); setAssignUnit(null); setAssignEmail(""); setAssignName(""); setAssignPhone("");
+                await updateDoc(doc(db, "units", assignUnit.id), {
+                    status: "occupied",
+                    tenantEmail: assignEmail ? assignEmail.toLowerCase() : "",
+                    tenantName: assignName,
+                    tenantPhone: assignPhone,
+                    ...(assignPaymentDay ? { paymentDay: Number(assignPaymentDay) } : {}),
+                    ...(assignSecurityDeposit ? { securityDeposit: Number(assignSecurityDeposit), securityDepositDate: new Date().toISOString() } : {})
+                });
+                setIsAssignModalOpen(false); setAssignUnit(null); setAssignEmail(""); setAssignName(""); setAssignPhone(""); setAssignPaymentDay(""); setAssignSecurityDeposit("");
             } catch (error) { console.error(error); alert("Failed to assign tenant."); }
         } else {
             if (!assignExistingUnit) return;
@@ -449,9 +458,31 @@ export default function EmployeeDashboard() {
     };
 
     const handleRemoveTenant = async (unitId: string) => {
-        if (!window.confirm("Remove this tenant from the unit?")) return;
+        const unit = allUnits.find(u => u.id === unitId);
+        const deposit = unit?.securityDeposit ? Number(unit.securityDeposit) : 0;
+        const deduction = unit?.lastChecklistDeduction ? Number(unit.lastChecklistDeduction) : 0;
+        const refund = Math.max(0, deposit - deduction);
+
+        let msg = "Remove this tenant from the unit?";
+        if (deposit > 0) {
+            msg = `Remove tenant from ${unit?.unitNumber}?\n\n💰 Security Deposit: ₹${deposit.toLocaleString()}${deduction > 0 ? `\n⚠️ Deduction: ₹${deduction.toLocaleString()}` : ""}\n✅ Refund Due: ₹${refund.toLocaleString()}\n\nMake sure to return the security deposit to the tenant.`;
+        }
+        if (!window.confirm(msg)) return;
         try {
-            await updateDoc(doc(db, "units", unitId), { status: "vacant", tenantEmail: "", tenantName: "", tenantPhone: "" });
+            await updateDoc(doc(db, "units", unitId), {
+                status: "vacant",
+                tenantEmail: "",
+                tenantName: "",
+                tenantPhone: "",
+                paymentDay: "",
+                securityDeposit: "",
+                securityDepositDate: "",
+                lastChecklistDeduction: "",
+                coTenants: []
+            });
+            if (deposit > 0) {
+                alert(`✅ Tenant removed.\n\n💰 Please return ₹${refund.toLocaleString()} security deposit to the tenant.`);
+            }
         } catch (error) { console.error(error); alert("Failed to remove tenant."); }
     };
 
@@ -1038,7 +1069,7 @@ export default function EmployeeDashboard() {
                                                                                 <h4 className="font-bold text-gray-900 text-sm">{unit.unitNumber}</h4>
                                                                                 <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${unit.status === "vacant" ? "bg-green-200 text-green-800" : "bg-orange-100 text-orange-700"}`}>{unit.status}</span>
                                                                             </div>
-                                                                            <p className="text-xs text-gray-500 mt-0.5">Rent: ₹{unit.baseRent || 8000}/mo</p>
+                                                                            <p className="text-xs text-gray-500 mt-0.5">Rent: ₹{unit.baseRent || 8000}/mo{unit.securityDeposit ? ` · Deposit: ₹${Number(unit.securityDeposit).toLocaleString()}` : ""}{unit.paymentDay ? ` · Pays on: ${unit.paymentDay}th` : ""}</p>
                                                                             {unit.tenantEmail && (
                                                                                 <div className="mt-1.5 text-xs text-gray-600">
                                                                                     <p>👤 {unit.tenantName || "—"} · {unit.tenantEmail}</p>
@@ -1576,6 +1607,29 @@ export default function EmployeeDashboard() {
                             <button type="submit" disabled={isSavingProfile} className="w-full py-2.5 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700 disabled:bg-indigo-400">{isSavingProfile ? "Saving..." : "Save Details"}</button>
                         </form>
 
+                        {/* Payment Day & Security Deposit */}
+                        <div className="border-t border-gray-200 pt-4 mb-4">
+                            <h3 className="text-sm font-bold text-gray-800 mb-2">📅 Payment & Security</h3>
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Payment Day</label>
+                                    <div className="flex gap-1">
+                                        <input type="number" min="1" max="31" defaultValue={profileUnit.paymentDay || ""} id="profilePaymentDay" className="flex-1 px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="1-31" />
+                                        <button type="button" onClick={async () => { const val = (document.getElementById('profilePaymentDay') as HTMLInputElement).value; if (val) { await updateDoc(doc(db, "units", profileUnit.id), { paymentDay: Number(val) }); alert("Payment day saved!"); } }} className="px-2 py-1 bg-indigo-100 text-indigo-700 rounded text-xs font-bold hover:bg-indigo-200">✓</button>
+                                    </div>
+                                    {profileUnit.paymentDay && <p className="text-[10px] text-indigo-600 mt-0.5">Current: {profileUnit.paymentDay}th of every month</p>}
+                                </div>
+                                <div>
+                                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Security Deposit</label>
+                                    <div className="flex gap-1">
+                                        <input type="number" min="0" defaultValue={profileUnit.securityDeposit || ""} id="profileSecurityDeposit" className="flex-1 px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="₹" />
+                                        <button type="button" onClick={async () => { const val = (document.getElementById('profileSecurityDeposit') as HTMLInputElement).value; if (val) { await updateDoc(doc(db, "units", profileUnit.id), { securityDeposit: Number(val), securityDepositDate: profileUnit.securityDepositDate || new Date().toISOString() }); alert("Security deposit saved!"); } }} className="px-2 py-1 bg-green-100 text-green-700 rounded text-xs font-bold hover:bg-green-200">✓</button>
+                                    </div>
+                                    {profileUnit.securityDeposit && <p className="text-[10px] text-green-600 mt-0.5">₹{Number(profileUnit.securityDeposit).toLocaleString()} {profileUnit.securityDepositDate ? `(${new Date(profileUnit.securityDepositDate).toLocaleDateString()})` : ""}</p>}
+                                </div>
+                            </div>
+                        </div>
+
                         {/* Documents */}
                         <div className="border-t border-gray-200 pt-4 mb-4">
                             <h3 className="text-sm font-bold text-gray-800 mb-2">📄 Documents</h3>
@@ -1634,6 +1688,16 @@ export default function EmployeeDashboard() {
                                     <input type="text" placeholder="Tenant Email (optional)" value={assignEmail} onChange={(e) => setAssignEmail(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
                                     <input type="text" placeholder="Tenant Name" value={assignName} onChange={(e) => setAssignName(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
                                     <input type="text" placeholder="Phone Number" value={assignPhone} onChange={(e) => setAssignPhone(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <div>
+                                            <label className="block text-[10px] font-bold text-gray-500 uppercase mb-0.5">Payment Day (1-31)</label>
+                                            <input type="number" min="1" max="31" placeholder="e.g. 5" value={assignPaymentDay} onChange={(e) => setAssignPaymentDay(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
+                                        </div>
+                                        <div>
+                                            <label className="block text-[10px] font-bold text-gray-500 uppercase mb-0.5">Security Deposit (₹)</label>
+                                            <input type="number" min="0" placeholder="e.g. 10000" value={assignSecurityDeposit} onChange={(e) => setAssignSecurityDeposit(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
+                                        </div>
+                                    </div>
                                 </>
                             ) : (
                                 <select required value={assignExistingUnit} onChange={(e) => setAssignExistingUnit(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm">
