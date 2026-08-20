@@ -399,9 +399,9 @@ export default function EmployeeDashboard() {
         e.preventDefault();
         if (!assignUnit) return;
         if (assignMode === "new") {
-            if (!assignEmail) return;
+            if (!assignName && !assignEmail && !assignPhone) { alert("Please enter at least a name, email, or phone."); return; }
             try {
-                await updateDoc(doc(db, "units", assignUnit.id), { status: "occupied", tenantEmail: assignEmail.toLowerCase(), tenantName: assignName, tenantPhone: assignPhone });
+                await updateDoc(doc(db, "units", assignUnit.id), { status: "occupied", tenantEmail: assignEmail ? assignEmail.toLowerCase() : "", tenantName: assignName, tenantPhone: assignPhone });
                 setIsAssignModalOpen(false); setAssignUnit(null); setAssignEmail(""); setAssignName(""); setAssignPhone("");
             } catch (error) { console.error(error); alert("Failed to assign tenant."); }
         } else {
@@ -1466,7 +1466,7 @@ export default function EmployeeDashboard() {
                         <form onSubmit={handleAssignTenant} className="space-y-3">
                             {assignMode === "new" ? (
                                 <>
-                                    <input type="email" required placeholder="Tenant Email *" value={assignEmail} onChange={(e) => setAssignEmail(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
+                                    <input type="text" placeholder="Tenant Email (optional)" value={assignEmail} onChange={(e) => setAssignEmail(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
                                     <input type="text" placeholder="Tenant Name" value={assignName} onChange={(e) => setAssignName(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
                                     <input type="text" placeholder="Phone Number" value={assignPhone} onChange={(e) => setAssignPhone(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
                                 </>
