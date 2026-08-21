@@ -49,6 +49,16 @@ export default function EmployeeDashboard() {
     const [collectionFilter, setCollectionFilter] = useState("all");
     const [isSettling, setIsSettling] = useState("");
 
+    // Edit Invoice States
+    const [isEditInvoiceOpen, setIsEditInvoiceOpen] = useState(false);
+    const [editInvoice, setEditInvoice] = useState<any>(null);
+    const [editInvBaseRent, setEditInvBaseRent] = useState("");
+    const [editInvElecRate, setEditInvElecRate] = useState("");
+    const [editInvUnitsConsumed, setEditInvUnitsConsumed] = useState("");
+    const [editInvPrevReading, setEditInvPrevReading] = useState("");
+    const [editInvCurrReading, setEditInvCurrReading] = useState("");
+    const [isSavingInvoice, setIsSavingInvoice] = useState(false);
+
     // Tenant Profile States
     const [isTenantProfileOpen, setIsTenantProfileOpen] = useState(false);
     const [profileUnit, setProfileUnit] = useState<any>(null);
@@ -376,6 +386,61 @@ export default function EmployeeDashboard() {
             alert("Failed to settle invoice.");
         } finally {
             setIsSettling("");
+        }
+    };
+
+    const openEditInvoice = (inv: any) => {
+        setEditInvoice(inv);
+        setEditInvBaseRent(String(inv.baseRent || 0));
+        setEditInvElecRate(String(inv.electricityRate || electricityRate));
+        setEditInvUnitsConsumed(String(inv.electricityConsumed || 0));
+        setEditInvPrevReading(String(inv.previousReading || 0));
+        setEditInvCurrReading(String(inv.currentReading || 0));
+        setIsEditInvoiceOpen(true);
+    };
+
+    const handleSaveInvoice = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!editInvoice) return;
+        setIsSavingInvoice(true);
+        try {
+            const baseRent = Number(editInvBaseRent);
+            const rate = Number(editInvElecRate);
+            const units = Number(editInvUnitsConsumed);
+            const prevReading = Number(editInvPrevReading);
+            const currReading = Number(editInvCurrReading);
+            const electricityCharge = units * rate;
+
+            // Recalculate carry-forward from ledger
+            const ledgerSnap = await getDocs(query(collection(db, "ledger"), where("tenantEmail", "==", editInvoice.tenantEmail)));
+            const runningBalance = ledgerSnap.docs.reduce((sum, d) => sum + Number(d.data().balance || 0), 0);
+            const carryForward = -runningBalance;
+            const totalAmount = Math.max(0, baseRent + electricityCharge + carryForward);
+
+            await updateDoc(doc(db, "invoices", editInvoice.id), {
+                baseRent,
+                electricityRate: rate,
+                electricityConsumed: units,
+                previousReading: prevReading,
+                currentReading: currReading,
+                electricityCharge,
+                ...(carryForward !== 0 ? { carryForward } : { carryForward: deleteField() }),
+                totalAmount,
+            });
+
+            // Also update the unit's lastMeterReading if current reading changed
+            if (editInvoice.unitId && currReading !== Number(editInvoice.currentReading || 0)) {
+                await updateDoc(doc(db, "units", editInvoice.unitId), { lastMeterReading: currReading });
+            }
+
+            alert(`Invoice updated!\n\nRent: ₹${baseRent}\nElectricity: ${units} × ₹${rate} = ₹${electricityCharge}\nTotal: ₹${totalAmount}`);
+            setIsEditInvoiceOpen(false);
+            setEditInvoice(null);
+        } catch (error) {
+            console.error(error);
+            alert("Failed to update invoice.");
+        } finally {
+            setIsSavingInvoice(false);
         }
     };
 
@@ -795,13 +860,21 @@ export default function EmployeeDashboard() {
                                                         <p className="font-bold text-gray-900">₹{Number(inv.totalAmount || 0).toLocaleString()}</p>
                                                         <p className="text-[10px] text-gray-400">Rent: ₹{inv.baseRent || 0} | Elec: ₹{inv.electricityCharge || 0}</p>
                                                     </div>
-                                                    <button
-                                                        onClick={() => handleSettleInvoice(inv.id)}
-                                                        disabled={isSettling === inv.id}
-                                                        className="text-xs px-3 py-1.5 bg-green-600 text-white rounded-md font-bold hover:bg-green-700 disabled:bg-green-400 transition"
-                                                    >
-                                                        {isSettling === inv.id ? "..." : "✓ Settle"}
-                                                    </button>
+                                                    <div className="flex gap-1.5">
+                                                        <button
+                                                            onClick={() => openEditInvoice(inv)}
+                                                            className="text-xs px-3 py-1.5 bg-blue-600 text-white rounded-md font-bold hover:bg-blue-700 transition"
+                                                        >
+                                                            ✏️ Edit
+                                                        </button>
+                                                        <button
+                                                            onClick={() => handleSettleInvoice(inv.id)}
+                                                            disabled={isSettling === inv.id}
+                                                            className="text-xs px-3 py-1.5 bg-green-600 text-white rounded-md font-bold hover:bg-green-700 disabled:bg-green-400 transition"
+                                                        >
+                                                            {isSettling === inv.id ? "..." : "✓ Settle"}
+                                                        </button>
+                                                    </div>
                                                 </div>
                                             </div>
                                         ))
@@ -1789,6 +1862,52 @@ export default function EmployeeDashboard() {
                             <div className="flex gap-2 pt-2">
                                 <button type="button" onClick={() => setIsInventoryModalOpen(false)} className="flex-1 py-2 border border-gray-300 rounded-md text-sm text-gray-600">Cancel</button>
                                 <button type="submit" disabled={isSubmittingInventory} className="flex-1 py-2 bg-cyan-600 text-white rounded-md text-sm font-medium hover:bg-cyan-700 disabled:bg-cyan-400">{isSubmittingInventory ? "Saving..." : "Add Item"}</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* REPORT ISSUE MODAL */}
+
+            {/* EDIT INVOICE MODAL */}
+            {isEditInvoiceOpen && editInvoice && (
+                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setIsEditInvoiceOpen(false)}>
+                    <div className="bg-white p-6 rounded-xl shadow-xl max-w-md w-full space-y-4" onClick={(e) => e.stopPropagation()}>
+                        <h3 className="text-lg font-bold text-gray-800">✏️ Edit Invoice</h3>
+                        <p className="text-xs text-gray-500">{editInvoice.unitNumber} — {editInvoice.billingPeriod}</p>
+                        <form onSubmit={handleSaveInvoice} className="space-y-3">
+                            <div>
+                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Base Rent (₹)</label>
+                                <input type="number" required min="0" value={editInvBaseRent} onChange={(e) => setEditInvBaseRent(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
+                            </div>
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Prev Reading</label>
+                                    <input type="number" min="0" value={editInvPrevReading} onChange={(e) => setEditInvPrevReading(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Curr Reading</label>
+                                    <input type="number" min="0" value={editInvCurrReading} onChange={(e) => setEditInvCurrReading(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Units Consumed</label>
+                                    <input type="number" required min="0" value={editInvUnitsConsumed} onChange={(e) => setEditInvUnitsConsumed(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Rate (₹/unit)</label>
+                                    <input type="number" required min="0" value={editInvElecRate} onChange={(e) => setEditInvElecRate(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
+                                </div>
+                            </div>
+                            <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs text-gray-700 space-y-1">
+                                <p><strong>Electricity:</strong> {Number(editInvUnitsConsumed) || 0} × ₹{Number(editInvElecRate) || 0} = ₹{((Number(editInvUnitsConsumed) || 0) * (Number(editInvElecRate) || 0)).toLocaleString()}</p>
+                                <p><strong>Estimated Total:</strong> ₹{((Number(editInvBaseRent) || 0) + (Number(editInvUnitsConsumed) || 0) * (Number(editInvElecRate) || 0)).toLocaleString()} <span className="text-gray-400">(+ carry-forward)</span></p>
+                            </div>
+                            <div className="flex gap-2 pt-2">
+                                <button type="button" onClick={() => setIsEditInvoiceOpen(false)} className="flex-1 py-2 border border-gray-300 rounded-md text-sm text-gray-600">Cancel</button>
+                                <button type="submit" disabled={isSavingInvoice} className="flex-1 py-2 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 disabled:bg-blue-400">{isSavingInvoice ? "Saving..." : "Save Changes"}</button>
                             </div>
                         </form>
                     </div>
