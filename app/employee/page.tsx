@@ -1037,9 +1037,9 @@ export default function EmployeeDashboard() {
                                                                                 <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${unit.status === "vacant" ? "bg-green-200 text-green-800" : "bg-orange-100 text-orange-700"}`}>{unit.status}</span>
                                                                             </div>
                                                                             <p className="text-xs text-gray-500 mt-0.5">Rent: ₹{unit.baseRent || 8000}/mo{unit.securityDeposit ? ` · Deposit: ₹${Number(unit.securityDeposit).toLocaleString()}` : ""}{unit.paymentDay ? ` · Pays on: ${unit.paymentDay}th` : ""}</p>
-                                                                            {unit.tenantEmail && (
+                                                                            {unit.status === "occupied" && (
                                                                                 <div className="mt-1.5 text-xs text-gray-600">
-                                                                                    <p>👤 {unit.tenantName || "—"} · {unit.tenantEmail}</p>
+                                                                                    <p>👤 {unit.tenantName || "—"}{unit.tenantEmail ? ` · ${unit.tenantEmail}` : ""}</p>
                                                                                     {unit.tenantPhone && <p>📞 {unit.tenantPhone}</p>}
                                                                                     {/* Co-tenants display */}
                                                                                     {unit.coTenants && unit.coTenants.length > 0 && (
