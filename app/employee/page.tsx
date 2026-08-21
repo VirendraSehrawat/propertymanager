@@ -545,19 +545,19 @@ export default function EmployeeDashboard() {
     // --- Multiple Tenants (Co-Tenants) ---
     const handleAddCoTenant = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!coTenantUnit || !coTenantEmail) return;
+        if (!coTenantUnit || (!coTenantEmail && !coTenantName && !coTenantPhone)) { alert("Please enter at least a name, email, or phone."); return; }
         try {
-            const newCoTenant = { name: coTenantName, phone: coTenantPhone, email: coTenantEmail.toLowerCase(), addedAt: new Date().toISOString() };
+            const newCoTenant = { name: coTenantName, phone: coTenantPhone, email: coTenantEmail ? coTenantEmail.toLowerCase() : "", addedAt: new Date().toISOString() };
             await updateDoc(doc(db, "units", coTenantUnit.id), { coTenants: arrayUnion(newCoTenant) });
             setIsAddCoTenantOpen(false); setCoTenantUnit(null); setCoTenantName(""); setCoTenantPhone(""); setCoTenantEmail("");
         } catch (error) { console.error(error); alert("Failed to add co-tenant."); }
     };
 
     const handleRemoveCoTenant = async (unitId: string, coTenant: any) => {
-        if (!window.confirm(`Remove co-tenant ${coTenant.name || coTenant.email}?`)) return;
+        if (!window.confirm(`Remove co-tenant ${coTenant.name || coTenant.email || coTenant.phone}?`)) return;
         try {
             const unitDoc = allUnits.find(u => u.id === unitId);
-            const updatedCoTenants = (unitDoc?.coTenants || []).filter((ct: any) => ct.email !== coTenant.email);
+            const updatedCoTenants = (unitDoc?.coTenants || []).filter((ct: any) => ct.addedAt !== coTenant.addedAt);
             await updateDoc(doc(db, "units", unitId), { coTenants: updatedCoTenants });
         } catch (error) { console.error(error); alert("Failed to remove co-tenant."); }
     };
@@ -1080,7 +1080,7 @@ export default function EmployeeDashboard() {
                                                                                             <p className="text-[10px] font-bold text-indigo-600 uppercase">Co-tenants ({unit.coTenants.length})</p>
                                                                                             {unit.coTenants.map((ct: any, i: number) => (
                                                                                                 <div key={i} className="flex items-center gap-1 mt-0.5">
-                                                                                                    <span className="text-[10px] text-gray-600">👤 {ct.name || ct.email}</span>
+                                                                                                    <span className="text-[10px] text-gray-600">👤 {ct.name || ct.email || "—"}{ct.phone && !ct.email ? ` · 📞 ${ct.phone}` : ""}{ct.email ? ` · ${ct.email}` : ""}</span>
                                                                                                     <button onClick={() => handleRemoveCoTenant(unit.id, ct)} className="text-[10px] text-red-400 hover:text-red-600">✕</button>
                                                                                                 </div>
                                                                                             ))}
@@ -1773,7 +1773,7 @@ export default function EmployeeDashboard() {
                             </div>
                         )}
                         <form onSubmit={handleAddCoTenant} className="space-y-3">
-                            <input type="email" required placeholder="Co-tenant Email *" value={coTenantEmail} onChange={(e) => setCoTenantEmail(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
+                            <input type="text" placeholder="Co-tenant Email (optional)" value={coTenantEmail} onChange={(e) => setCoTenantEmail(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
                             <input type="text" placeholder="Co-tenant Name" value={coTenantName} onChange={(e) => setCoTenantName(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
                             <input type="text" placeholder="Phone Number" value={coTenantPhone} onChange={(e) => setCoTenantPhone(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
                             <div className="flex gap-2">

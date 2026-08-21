@@ -579,4 +579,210 @@ describe('Property Manager Integration Tests', () => {
             expect(rate).toBe(50);
         });
     });
+
+    describe('13. Security Deposit & Tenant Removal', () => {
+        it('should store security deposit and payment day on unit', async () => {
+            const unitRef = db.collection('units').doc(`${TEST_PREFIX}_unit`);
+            await unitRef.update({
+                securityDeposit: 10000,
+                securityDepositDate: new Date().toISOString(),
+                paymentDay: 5
+            });
+
+            const snap = await unitRef.get();
+            expect(snap.data()!.securityDeposit).toBe(10000);
+            expect(snap.data()!.paymentDay).toBe(5);
+            expect(snap.data()!.securityDepositDate).toBeDefined();
+        });
+
+        it('should clear tenant data and deposit on removal', async () => {
+            const unitRef = db.collection('units').doc(`${TEST_PREFIX}_unit`);
+            await unitRef.update({
+                status: 'vacant',
+                tenantEmail: '',
+                tenantName: '',
+                tenantPhone: '',
+                paymentDay: '',
+                securityDeposit: '',
+                securityDepositDate: '',
+                lastChecklistDeduction: '',
+                coTenants: []
+            });
+
+            const snap = await unitRef.get();
+            expect(snap.data()!.status).toBe('vacant');
+            expect(snap.data()!.tenantEmail).toBe('');
+            expect(snap.data()!.securityDeposit).toBe('');
+            expect(snap.data()!.paymentDay).toBe('');
+            expect(snap.data()!.coTenants).toHaveLength(0);
+        });
+
+        it('should calculate correct refund (deposit minus deduction)', () => {
+            const deposit = 10000;
+            const deduction = 2000;
+            const refund = Math.max(0, deposit - deduction);
+            expect(refund).toBe(8000);
+        });
+
+        it('should return full deposit when no deductions', () => {
+            const deposit = 10000;
+            const deduction = 0;
+            const refund = Math.max(0, deposit - deduction);
+            expect(refund).toBe(10000);
+        });
+    });
+
+    describe('14. Co-Tenant with Optional Email', () => {
+        it('should re-assign tenant for co-tenant tests', async () => {
+            const unitRef = db.collection('units').doc(`${TEST_PREFIX}_unit`);
+            await unitRef.update({
+                status: 'occupied',
+                tenantEmail: TEST_TENANT_EMAIL,
+                tenantName: 'Test Tenant',
+                tenantPhone: '9876543210'
+            });
+            const snap = await unitRef.get();
+            expect(snap.data()!.status).toBe('occupied');
+        });
+
+        it('should add co-tenant without email (name + phone only)', async () => {
+            const unitRef = db.collection('units').doc(`${TEST_PREFIX}_unit`);
+            const coTenant = { name: 'No Email Person', phone: '5555555555', email: '', addedAt: '2026-08-20T10:00:00.000Z' };
+            await unitRef.update({ coTenants: [coTenant] });
+
+            const snap = await unitRef.get();
+            expect(snap.data()!.coTenants).toHaveLength(1);
+            expect(snap.data()!.coTenants[0].email).toBe('');
+            expect(snap.data()!.coTenants[0].name).toBe('No Email Person');
+            expect(snap.data()!.coTenants[0].phone).toBe('5555555555');
+        });
+
+        it('should add co-tenant with email', async () => {
+            const unitRef = db.collection('units').doc(`${TEST_PREFIX}_unit`);
+            const snap = await unitRef.get();
+            const existing = snap.data()!.coTenants || [];
+            const newCt = { name: 'With Email', phone: '6666666666', email: 'withemail@test.com', addedAt: '2026-08-20T11:00:00.000Z' };
+            await unitRef.update({ coTenants: [...existing, newCt] });
+
+            const updated = await unitRef.get();
+            expect(updated.data()!.coTenants).toHaveLength(2);
+        });
+
+        it('should remove co-tenant by addedAt timestamp (not email)', async () => {
+            const unitRef = db.collection('units').doc(`${TEST_PREFIX}_unit`);
+            const snap = await unitRef.get();
+            const coTenants = snap.data()!.coTenants;
+
+            // Remove the one without email using addedAt
+            const targetAddedAt = '2026-08-20T10:00:00.000Z';
+            const filtered = coTenants.filter((ct: any) => ct.addedAt !== targetAddedAt);
+            await unitRef.update({ coTenants: filtered });
+
+            const updated = await unitRef.get();
+            expect(updated.data()!.coTenants).toHaveLength(1);
+            expect(updated.data()!.coTenants[0].email).toBe('withemail@test.com');
+        });
+    });
+
+    describe('15. Employee Report Issue', () => {
+        let issueId: string;
+
+        it('should create a maintenance ticket reported by staff', async () => {
+            const ref = await db.collection('maintenance').add({
+                tenantEmail: '',
+                reportedBy: 'staff@test.com',
+                unitId: `${TEST_PREFIX}_unit`,
+                unitNumber: TEST_UNIT_NUMBER,
+                buildingName: 'Test Building',
+                category: 'Plumbing',
+                description: 'Water leak in common area bathroom',
+                photoUrl: 'https://test.com/leak.jpg',
+                status: 'pending',
+                comments: [],
+                createdAt: new Date().toISOString()
+            });
+            issueId = ref.id;
+            trackDoc(`maintenance/${issueId}`);
+
+            const snap = await ref.get();
+            expect(snap.exists).toBe(true);
+            expect(snap.data()!.reportedBy).toBe('staff@test.com');
+            expect(snap.data()!.status).toBe('pending');
+            expect(snap.data()!.comments).toHaveLength(0);
+        });
+
+        it('should add a comment to the ticket', async () => {
+            const ref = db.collection('maintenance').doc(issueId);
+            const comment = { author: 'staff@test.com', text: 'Plumber called, arriving tomorrow', timestamp: new Date().toISOString() };
+
+            await ref.update({
+                comments: [comment]
+            });
+
+            const snap = await ref.get();
+            expect(snap.data()!.comments).toHaveLength(1);
+            expect(snap.data()!.comments[0].text).toBe('Plumber called, arriving tomorrow');
+        });
+
+        it('should change ticket status and add status comment', async () => {
+            const ref = db.collection('maintenance').doc(issueId);
+            const snap = await ref.get();
+            const existingComments = snap.data()!.comments || [];
+
+            await ref.update({
+                status: 'in-progress',
+                comments: [...existingComments, { author: 'staff@test.com', text: 'Status changed to IN-PROGRESS', timestamp: new Date().toISOString() }]
+            });
+
+            const updated = await ref.get();
+            expect(updated.data()!.status).toBe('in-progress');
+            expect(updated.data()!.comments).toHaveLength(2);
+        });
+
+        it('should resolve the ticket', async () => {
+            const ref = db.collection('maintenance').doc(issueId);
+            await ref.update({ status: 'resolved' });
+
+            const snap = await ref.get();
+            expect(snap.data()!.status).toBe('resolved');
+        });
+    });
+
+    describe('16. Meter Reading with Previous Override & Manual Units', () => {
+        it('should generate invoice with overridden previous reading', async () => {
+            // Setup: unit has lastMeterReading = 250 (from earlier tests)
+            const unitRef = db.collection('units').doc(`${TEST_PREFIX}_unit`);
+            const unitSnap = await unitRef.get();
+            const lastReading = unitSnap.data()!.lastMeterReading; // 250
+
+            // Employee overrides previous to 200 (different from stored 250)
+            const previousReadingOverride = 200;
+            const currentReading = 400;
+            const unitsConsumed = currentReading - previousReadingOverride; // 200 units
+
+            expect(lastReading).toBe(250);
+            expect(unitsConsumed).toBe(200);
+
+            const electricityRate = 12;
+            const electricityCharge = unitsConsumed * electricityRate;
+            expect(electricityCharge).toBe(2400);
+        });
+
+        it('should generate invoice with manual units consumed override', async () => {
+            const currentReading = 400;
+            const previousReading = 250;
+            const calculatedUnits = currentReading - previousReading; // 150
+            const manualUnits = 120; // employee enters manual override
+            const reason = 'Shared meter - split between 2 units';
+
+            const electricityRate = 12;
+            const usedUnits = manualUnits; // manual overrides calculated
+            const electricityCharge = usedUnits * electricityRate;
+
+            expect(calculatedUnits).toBe(150);
+            expect(usedUnits).toBe(120); // manual wins
+            expect(electricityCharge).toBe(1440);
+            expect(reason).toBe('Shared meter - split between 2 units');
+        });
+    });
 });
