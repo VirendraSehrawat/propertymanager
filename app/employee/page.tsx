@@ -432,6 +432,7 @@ export default function EmployeeDashboard() {
                     tenantEmail: assignEmail ? assignEmail.toLowerCase() : "",
                     tenantName: assignName,
                     tenantPhone: assignPhone,
+                    moveInDate: new Date().toISOString(),
                     ...(assignPaymentDay ? { paymentDay: Number(assignPaymentDay) } : {}),
                     ...(assignSecurityDeposit ? { securityDeposit: Number(assignSecurityDeposit), securityDepositDate: new Date().toISOString() } : {})
                 });
@@ -442,7 +443,7 @@ export default function EmployeeDashboard() {
             const source = occupiedForAssign.find(u => u.id === assignExistingUnit);
             if (!source) return;
             try {
-                await updateDoc(doc(db, "units", assignUnit.id), { status: "occupied", tenantEmail: source.tenantEmail, tenantName: source.tenantName || "", tenantPhone: source.tenantPhone || "" });
+                await updateDoc(doc(db, "units", assignUnit.id), { status: "occupied", tenantEmail: source.tenantEmail, tenantName: source.tenantName || "", tenantPhone: source.tenantPhone || "", moveInDate: new Date().toISOString() });
                 setIsAssignModalOpen(false); setAssignUnit(null); setAssignExistingUnit("");
             } catch (error) { console.error(error); alert("Failed to assign tenant."); }
         }
@@ -469,11 +470,24 @@ export default function EmployeeDashboard() {
         }
         if (!window.confirm(msg)) return;
         try {
+            // Save tenant history before clearing
+            const historyEntry = {
+                tenantName: unit?.tenantName || "",
+                tenantEmail: unit?.tenantEmail || "",
+                tenantPhone: unit?.tenantPhone || "",
+                moveInDate: unit?.moveInDate || "",
+                moveOutDate: new Date().toISOString(),
+                securityDeposit: deposit,
+                securityRefund: refund,
+                coTenants: unit?.coTenants || []
+            };
             await updateDoc(doc(db, "units", unitId), {
+                tenantHistory: arrayUnion(historyEntry),
                 status: "vacant",
                 tenantEmail: "",
                 tenantName: "",
                 tenantPhone: "",
+                moveInDate: "",
                 paymentDay: "",
                 securityDeposit: "",
                 securityDepositDate: "",
@@ -1109,6 +1123,23 @@ export default function EmployeeDashboard() {
                                                                                 <a key={i} href={d.url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline block">📎 {d.name}</a>
                                                                             ))}
                                                                         </div>
+                                                                    )}
+                                                                    {unit.tenantHistory && unit.tenantHistory.length > 0 && (
+                                                                        <details className="mt-2 pt-2 border-t border-gray-100">
+                                                                            <summary className="text-[10px] font-bold text-gray-500 uppercase cursor-pointer hover:text-gray-700">📜 Tenant History ({unit.tenantHistory.length})</summary>
+                                                                            <div className="mt-1 space-y-1.5">
+                                                                                {[...unit.tenantHistory].reverse().map((h: any, i: number) => (
+                                                                                    <div key={i} className="bg-gray-50 rounded p-1.5 text-[10px] text-gray-600">
+                                                                                        <span className="font-semibold text-gray-800">{h.tenantName || h.tenantEmail || "Unknown"}</span>
+                                                                                        {h.tenantPhone && <span> · 📞 {h.tenantPhone}</span>}
+                                                                                        <br />
+                                                                                        <span>📅 {h.moveInDate ? new Date(h.moveInDate).toLocaleDateString() : "?"} → {new Date(h.moveOutDate).toLocaleDateString()}</span>
+                                                                                        {h.securityDeposit && <span> · 💰 ₹{h.securityDeposit}</span>}
+                                                                                        {h.coTenants?.length > 0 && <span> · 👥 {h.coTenants.length} co-tenant(s)</span>}
+                                                                                    </div>
+                                                                                ))}
+                                                                            </div>
+                                                                        </details>
                                                                     )}
                                                                 </div>
                                                             ))

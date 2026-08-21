@@ -15,7 +15,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { initializeApp, getApps, getApp } from 'firebase-admin/app';
-import { getFirestore } from 'firebase-admin/firestore';
+import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 
 // ---------- Setup ----------
 
@@ -783,6 +783,67 @@ describe('Property Manager Integration Tests', () => {
             expect(usedUnits).toBe(120); // manual wins
             expect(electricityCharge).toBe(1440);
             expect(reason).toBe('Shared meter - split between 2 units');
+        });
+    });
+
+    // Suite 17: Tenant History
+    describe('Tenant History', () => {
+        it('should record tenant history on removal', async () => {
+            const unitRef = db.collection('units').doc();
+            const moveInDate = '2024-01-15T10:00:00.000Z';
+            const coTenantAddedAt = '2024-02-01T00:00:00.000Z';
+            await unitRef.set({
+                buildingId: TEST_BUILDING_ID, unitNumber: 'H1', baseRent: 10000,
+                status: 'occupied', tenantEmail: 'old@test.com', tenantName: 'Old Tenant',
+                tenantPhone: '1111111111', moveInDate, securityDeposit: '15000',
+                coTenants: [{ name: 'Co1', phone: '2222222222', addedAt: coTenantAddedAt }]
+            });
+
+            // Simulate removal: push history entry and clear fields
+            const moveOutDate = new Date().toISOString();
+            const historyEntry = {
+                tenantName: 'Old Tenant', tenantEmail: 'old@test.com', tenantPhone: '1111111111',
+                moveInDate, moveOutDate, securityDeposit: '15000', securityRefund: '',
+                coTenants: [{ name: 'Co1', phone: '2222222222', addedAt: coTenantAddedAt }]
+            };
+            await unitRef.update({
+                tenantHistory: FieldValue.arrayUnion(historyEntry),
+                status: 'vacant', tenantEmail: '', tenantName: '', tenantPhone: '',
+                moveInDate: '', coTenants: []
+            });
+
+            const snap = await unitRef.get();
+            const data = snap.data()!;
+            expect(data.status).toBe('vacant');
+            expect(data.tenantHistory).toHaveLength(1);
+            expect(data.tenantHistory[0].tenantName).toBe('Old Tenant');
+            expect(data.tenantHistory[0].moveInDate).toBe(moveInDate);
+            expect(data.tenantHistory[0].moveOutDate).toBeDefined();
+        });
+
+        it('should accumulate multiple history entries', async () => {
+            const unitRef = db.collection('units').doc();
+            await unitRef.set({ buildingId: TEST_BUILDING_ID, unitNumber: 'H2', baseRent: 8000, status: 'vacant', tenantHistory: [] });
+
+            await unitRef.update({ tenantHistory: FieldValue.arrayUnion({ tenantName: 'T1', moveInDate: '2023-01-01', moveOutDate: '2023-06-01' }) });
+            await unitRef.update({ tenantHistory: FieldValue.arrayUnion({ tenantName: 'T2', moveInDate: '2023-07-01', moveOutDate: '2024-01-01' }) });
+
+            const snap = await unitRef.get();
+            expect(snap.data()!.tenantHistory).toHaveLength(2);
+            expect(snap.data()!.tenantHistory[0].tenantName).toBe('T1');
+            expect(snap.data()!.tenantHistory[1].tenantName).toBe('T2');
+        });
+
+        it('should store moveInDate when assigning tenant', async () => {
+            const unitRef = db.collection('units').doc();
+            await unitRef.set({ buildingId: TEST_BUILDING_ID, unitNumber: 'H3', baseRent: 9000, status: 'vacant' });
+
+            const moveInDate = new Date().toISOString();
+            await unitRef.update({ status: 'occupied', tenantName: 'New T', tenantEmail: 'new@test.com', moveInDate });
+
+            const snap = await unitRef.get();
+            expect(snap.data()!.moveInDate).toBe(moveInDate);
+            expect(snap.data()!.status).toBe('occupied');
         });
     });
 });
