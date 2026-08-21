@@ -5,10 +5,13 @@ import { useEffect, useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import Image from "next/image";
 import { signOut } from "firebase/auth";
 import { auth, db } from "@/lib/firebase";
 import { collection, onSnapshot, doc, updateDoc, arrayUnion, query, where, writeBatch, getDocs, addDoc, getDoc, deleteField } from "firebase/firestore";
 import { useUploadWithProgress, UploadProgressBar } from "@/lib/useUpload";
+import { CollectionsTab, OccupancyTab, LedgerTab, ExpensesTab, InventoryTab, TicketsTab } from "@/components/employee";
+import { TabButton } from "@/components/ui";
 
 export default function EmployeeDashboard() {
     const { user, role, loading } = useAuth();
@@ -584,7 +587,7 @@ export default function EmployeeDashboard() {
         try {
             let receiptUrl = "";
             if (expenseReceipt) {
-                receiptUrl = await uploadFile(`expense_receipts/${Date.now()}_${expenseReceipt.name}`, expenseReceipt);
+                receiptUrl = await uploadFile(`expense_receipts/${new Date().getTime()}_${expenseReceipt.name}`, expenseReceipt);
             }
             await addDoc(collection(db, "expenses"), {
                 amount: Number(expenseAmount),
@@ -641,7 +644,7 @@ export default function EmployeeDashboard() {
         try {
             let photoUrl = "";
             if (reportFile) {
-                photoUrl = await uploadFile(`maintenance/staff_${Date.now()}_${reportFile.name}`, reportFile);
+                photoUrl = await uploadFile(`maintenance/staff_${new Date().getTime()}_${reportFile.name}`, reportFile);
             }
             const unit = allUnits.find(u => u.id === reportUnit);
             await addDoc(collection(db, "maintenance"), {
@@ -722,66 +725,16 @@ export default function EmployeeDashboard() {
 
                 {/* TABS */}
                 <div className="flex flex-wrap bg-gray-200 rounded-lg p-1 shadow-inner gap-1">
-                    <button
-                        onClick={() => setActiveTab("collections")}
-                        className={`flex-1 min-w-[80px] py-2.5 text-xs font-bold rounded-md transition ${activeTab === "collections" ? "bg-white text-indigo-600 shadow-sm" : "text-gray-500"}`}
-                    >
-                        Collections
-                    </button>
-                    <button
-                        onClick={() => setActiveTab("active")}
-                        className={`flex-1 min-w-[80px] py-2.5 text-xs font-bold rounded-md transition ${activeTab === "active" ? "bg-white text-orange-600 shadow-sm" : "text-gray-500"}`}
-                    >
-                        Tasks ({activeTickets.length})
-                    </button>
-                    <button
-                        onClick={() => setActiveTab("meter")}
-                        className={`flex-1 min-w-[80px] py-2.5 text-xs font-bold rounded-md transition ${activeTab === "meter" ? "bg-white text-purple-600 shadow-sm" : "text-gray-500"}`}
-                    >
-                        Meter
-                    </button>
-                    <button
-                        onClick={() => setActiveTab("resolved")}
-                        className={`flex-1 min-w-[80px] py-2.5 text-xs font-bold rounded-md transition ${activeTab === "resolved" ? "bg-white text-green-600 shadow-sm" : "text-gray-500"}`}
-                    >
-                        Done
-                    </button>
-                    <button
-                        onClick={() => setActiveTab("ledger")}
-                        className={`flex-1 min-w-[80px] py-2.5 text-xs font-bold rounded-md transition ${activeTab === "ledger" ? "bg-white text-teal-600 shadow-sm" : "text-gray-500"}`}
-                    >
-                        Ledger
-                    </button>
-                    <button
-                        onClick={() => setActiveTab("units")}
-                        className={`flex-1 min-w-[80px] py-2.5 text-xs font-bold rounded-md transition ${activeTab === "units" ? "bg-white text-blue-600 shadow-sm" : "text-gray-500"}`}
-                    >
-                        Units
-                    </button>
-                    <button
-                        onClick={() => setActiveTab("occupancy")}
-                        className={`flex-1 min-w-[80px] py-2.5 text-xs font-bold rounded-md transition ${activeTab === "occupancy" ? "bg-white text-emerald-600 shadow-sm" : "text-gray-500"}`}
-                    >
-                        📊 Occupancy
-                    </button>
-                    <button
-                        onClick={() => setActiveTab("checklist")}
-                        className={`flex-1 min-w-[80px] py-2.5 text-xs font-bold rounded-md transition ${activeTab === "checklist" ? "bg-white text-pink-600 shadow-sm" : "text-gray-500"}`}
-                    >
-                        📋 Checklist
-                    </button>
-                    <button
-                        onClick={() => setActiveTab("expenses")}
-                        className={`flex-1 min-w-[80px] py-2.5 text-xs font-bold rounded-md transition ${activeTab === "expenses" ? "bg-white text-amber-600 shadow-sm" : "text-gray-500"}`}
-                    >
-                        💰 Expenses
-                    </button>
-                    <button
-                        onClick={() => setActiveTab("inventory")}
-                        className={`flex-1 min-w-[80px] py-2.5 text-xs font-bold rounded-md transition ${activeTab === "inventory" ? "bg-white text-cyan-600 shadow-sm" : "text-gray-500"}`}
-                    >
-                        📦 Inventory
-                    </button>
+                    <TabButton label="Collections" isActive={activeTab === "collections"} onClick={() => setActiveTab("collections")} activeColor="text-indigo-600" />
+                    <TabButton label={`Tasks (${activeTickets.length})`} isActive={activeTab === "active"} onClick={() => setActiveTab("active")} activeColor="text-orange-600" />
+                    <TabButton label="Meter" isActive={activeTab === "meter"} onClick={() => setActiveTab("meter")} activeColor="text-purple-600" />
+                    <TabButton label="Done" isActive={activeTab === "resolved"} onClick={() => setActiveTab("resolved")} activeColor="text-green-600" />
+                    <TabButton label="Ledger" isActive={activeTab === "ledger"} onClick={() => setActiveTab("ledger")} activeColor="text-teal-600" />
+                    <TabButton label="Units" isActive={activeTab === "units"} onClick={() => setActiveTab("units")} activeColor="text-blue-600" />
+                    <TabButton label="📊 Occupancy" isActive={activeTab === "occupancy"} onClick={() => setActiveTab("occupancy")} activeColor="text-emerald-600" />
+                    <TabButton label="📋 Checklist" isActive={activeTab === "checklist"} onClick={() => setActiveTab("checklist")} activeColor="text-pink-600" />
+                    <TabButton label="💰 Expenses" isActive={activeTab === "expenses"} onClick={() => setActiveTab("expenses")} activeColor="text-amber-600" />
+                    <TabButton label="📦 Inventory" isActive={activeTab === "inventory"} onClick={() => setActiveTab("inventory")} activeColor="text-cyan-600" />
                 </div>
 
                 {/* COLLECTIONS TAB */}
@@ -1157,81 +1110,7 @@ export default function EmployeeDashboard() {
 
                 {/* OCCUPANCY DASHBOARD TAB */}
                 {activeTab === "occupancy" && (
-                    <div className="space-y-4">
-                        <div className="bg-white rounded-xl shadow-sm border border-emerald-200 overflow-hidden">
-                            <div className="bg-emerald-50 px-5 py-4 border-b border-emerald-200">
-                                <h2 className="text-lg font-bold text-emerald-800">📊 Occupancy Dashboard</h2>
-                                <p className="text-xs text-emerald-600 mt-1">Visual overview of occupancy across all buildings</p>
-                            </div>
-                            <div className="p-5 space-y-5">
-                                {/* Overall Stats */}
-                                {(() => {
-                                    const totalUnits = allUnits.length;
-                                    const occupiedCount = allUnits.filter(u => u.status === "occupied").length;
-                                    const vacantCount = totalUnits - occupiedCount;
-                                    const overallRate = totalUnits > 0 ? Math.round((occupiedCount / totalUnits) * 100) : 0;
-                                    return (
-                                        <div className="grid grid-cols-3 gap-3">
-                                            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-center">
-                                                <p className="text-2xl font-bold text-emerald-700">{overallRate}%</p>
-                                                <p className="text-[10px] font-bold text-emerald-600 uppercase">Occupied</p>
-                                            </div>
-                                            <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-center">
-                                                <p className="text-2xl font-bold text-blue-700">{occupiedCount}</p>
-                                                <p className="text-[10px] font-bold text-blue-600 uppercase">Filled</p>
-                                            </div>
-                                            <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 text-center">
-                                                <p className="text-2xl font-bold text-orange-700">{vacantCount}</p>
-                                                <p className="text-[10px] font-bold text-orange-600 uppercase">Vacant</p>
-                                            </div>
-                                        </div>
-                                    );
-                                })()}
-
-                                {/* Per-building breakdown */}
-                                <div className="space-y-3">
-                                    {buildings.map(bldg => {
-                                        const bldgUnits = allUnits.filter(u => u.buildingId === bldg.id);
-                                        const bldgOccupied = bldgUnits.filter(u => u.status === "occupied").length;
-                                        const bldgTotal = bldgUnits.length;
-                                        const rate = bldgTotal > 0 ? Math.round((bldgOccupied / bldgTotal) * 100) : 0;
-                                        const barColor = rate >= 80 ? "bg-emerald-500" : rate >= 50 ? "bg-yellow-500" : "bg-red-500";
-                                        return (
-                                            <div key={bldg.id} className="border border-gray-200 rounded-lg p-4">
-                                                <div className="flex justify-between items-center mb-2">
-                                                    <div>
-                                                        <h3 className="font-bold text-gray-900 text-sm">{bldg.name}</h3>
-                                                        <p className="text-[10px] text-gray-500">{bldg.address}</p>
-                                                    </div>
-                                                    <span className={`text-lg font-bold ${rate >= 80 ? "text-emerald-700" : rate >= 50 ? "text-yellow-700" : "text-red-700"}`}>{rate}%</span>
-                                                </div>
-                                                {/* Progress Bar */}
-                                                <div className="w-full bg-gray-200 rounded-full h-4 overflow-hidden">
-                                                    <div className={`h-full rounded-full transition-all duration-500 ${barColor}`} style={{ width: `${rate}%` }}></div>
-                                                </div>
-                                                <div className="flex justify-between mt-1.5 text-[10px] text-gray-500">
-                                                    <span>{bldgOccupied} occupied</span>
-                                                    <span>{bldgTotal - bldgOccupied} vacant</span>
-                                                    <span>{bldgTotal} total</span>
-                                                </div>
-                                                {/* Vacant unit list */}
-                                                {bldgUnits.filter(u => u.status === "vacant").length > 0 && (
-                                                    <div className="mt-2 pt-2 border-t border-gray-100">
-                                                        <p className="text-[10px] font-bold text-gray-500 uppercase mb-1">Vacant Units:</p>
-                                                        <div className="flex flex-wrap gap-1">
-                                                            {bldgUnits.filter(u => u.status === "vacant").map(u => (
-                                                                <span key={u.id} className="text-[10px] bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full font-medium">{u.unitNumber}</span>
-                                                            ))}
-                                                        </div>
-                                                    </div>
-                                                )}
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+                    <OccupancyTab allUnits={allUnits} buildings={buildings} />
                 )}
 
                 {/* CHECKLIST TAB */}
@@ -1429,7 +1308,7 @@ export default function EmployeeDashboard() {
                                                     </div>
                                                     <div className="flex items-center gap-2 shrink-0">
                                                         <button onClick={() => handleUpdateInventoryQty(item.id, Math.max(0, Number(item.quantity) - 1))} className="w-7 h-7 bg-gray-200 rounded-md font-bold text-gray-700 hover:bg-gray-300">−</button>
-                                                        <span className="text-lg font-bold text-gray-900 min-w-[30px] text-center">{item.quantity}</span>
+                                                        <span className="text-lg font-bold text-gray-900 min-w-7.5 text-center">{item.quantity}</span>
                                                         <button onClick={() => handleUpdateInventoryQty(item.id, Number(item.quantity) + 1)} className="w-7 h-7 bg-cyan-100 rounded-md font-bold text-cyan-700 hover:bg-cyan-200">+</button>
                                                     </div>
                                                 </div>
@@ -1519,7 +1398,7 @@ export default function EmployeeDashboard() {
                                     {ticket.status === 'resolved' && ticket.resolutionPhotoUrl && (
                                         <div className="pt-2 border-t border-gray-100 mt-4">
                                             <p className="text-xs font-bold text-gray-500 uppercase mb-2">Resolution Proof</p>
-                                            <img src={ticket.resolutionPhotoUrl} alt="Fixed" className="w-full h-48 object-cover rounded-lg border border-gray-200" />
+                                            <Image src={ticket.resolutionPhotoUrl} alt="Fixed" width={400} height={192} className="w-full h-48 object-cover rounded-lg border border-gray-200" unoptimized />
                                         </div>
                                     )}
 

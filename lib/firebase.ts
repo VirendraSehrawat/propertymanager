@@ -1,5 +1,5 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider } from "firebase/auth"; // <-- Added GoogleAuthProvider here
+import { getAuth, GoogleAuthProvider } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 
@@ -12,17 +12,13 @@ const firebaseConfig = {
     appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 
-// Initialize Firebase
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 export const storage = getStorage(app);
 
-// NEW: Export the Google Provider so app/page.tsx can use it
 export const googleProvider = new GoogleAuthProvider();
-
-// Configure Google Provider to always show account selection dialog
 googleProvider.setCustomParameters({
-    prompt: 'select_account'
+    prompt: "select_account",
 });
