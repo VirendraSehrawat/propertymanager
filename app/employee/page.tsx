@@ -46,19 +46,6 @@ export default function EmployeeDashboard() {
 
     // Collections States
     const [allInvoices, setAllInvoices] = useState<any[]>([]);
-    const [collectionFilter, setCollectionFilter] = useState("all");
-    const [isSettling, setIsSettling] = useState("");
-
-    // Edit Invoice States
-    const [isEditInvoiceOpen, setIsEditInvoiceOpen] = useState(false);
-    const [editInvoice, setEditInvoice] = useState<any>(null);
-    const [editInvBaseRent, setEditInvBaseRent] = useState("");
-    const [editInvElecRate, setEditInvElecRate] = useState("");
-    const [editInvUnitsConsumed, setEditInvUnitsConsumed] = useState("");
-    const [editInvPrevReading, setEditInvPrevReading] = useState("");
-    const [editInvCurrReading, setEditInvCurrReading] = useState("");
-    const [editInvBillingMonth, setEditInvBillingMonth] = useState("");
-    const [isSavingInvoice, setIsSavingInvoice] = useState(false);
 
     // Tenant Profile States
     const [isTenantProfileOpen, setIsTenantProfileOpen] = useState(false);
@@ -74,7 +61,6 @@ export default function EmployeeDashboard() {
 
     // Ledger state
     const [allLedgerEntries, setAllLedgerEntries] = useState<any[]>([]);
-    const [ledgerFilter, setLedgerFilter] = useState("");
 
     // Unit Management States
     const [allUnits, setAllUnits] = useState<any[]>([]);
@@ -366,95 +352,6 @@ export default function EmployeeDashboard() {
             alert("Failed to generate invoice.");
         } finally {
             setIsGeneratingInvoice(false);
-        }
-    };
-
-    const handleSettleInvoice = async (invId: string) => {
-        if (!window.confirm("Mark this invoice as paid (cash collected)?")) return;
-        setIsSettling(invId);
-        try {
-            const inv = allInvoices.find((i: any) => i.id === invId);
-            await updateDoc(doc(db, "invoices", invId), { status: "paid", paidAt: new Date().toISOString(), transactionId: "CASH_COLLECTED" });
-            if (inv) {
-                const invoiceAmount = Number(inv.totalAmount || 0);
-                const amountPaid = Number(inv.amountPaid || invoiceAmount);
-                await addDoc(collection(db, "ledger"), {
-                    tenantEmail: inv.tenantEmail,
-                    unitId: inv.unitId,
-                    unitNumber: inv.unitNumber,
-                    invoiceId: invId,
-                    billingPeriod: inv.billingPeriod || "Ad-Hoc",
-                    invoiceAmount,
-                    amountPaid,
-                    balance: amountPaid - invoiceAmount,
-                    transactionId: "CASH_COLLECTED",
-                    type: "payment",
-                    settledBy: "employee",
-                    createdAt: new Date().toISOString()
-                });
-            }
-        } catch (error) {
-            console.error(error);
-            alert("Failed to settle invoice.");
-        } finally {
-            setIsSettling("");
-        }
-    };
-
-    const openEditInvoice = (inv: any) => {
-        setEditInvoice(inv);
-        setEditInvBaseRent(String(inv.baseRent || 0));
-        setEditInvElecRate(String(inv.electricityRate || electricityRate));
-        setEditInvUnitsConsumed(String(inv.electricityConsumed || 0));
-        setEditInvPrevReading(String(inv.previousReading || 0));
-        setEditInvCurrReading(String(inv.currentReading || 0));
-        setEditInvBillingMonth(inv.billingPeriod || "");
-        setIsEditInvoiceOpen(true);
-    };
-
-    const handleSaveInvoice = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!editInvoice) return;
-        setIsSavingInvoice(true);
-        try {
-            const baseRent = Number(editInvBaseRent);
-            const rate = Number(editInvElecRate);
-            const units = Number(editInvUnitsConsumed);
-            const prevReading = Number(editInvPrevReading);
-            const currReading = Number(editInvCurrReading);
-            const electricityCharge = units * rate;
-
-            // Recalculate carry-forward from ledger
-            const ledgerSnap = await getDocs(query(collection(db, "ledger"), where("tenantEmail", "==", editInvoice.tenantEmail)));
-            const runningBalance = ledgerSnap.docs.reduce((sum, d) => sum + Number(d.data().balance || 0), 0);
-            const carryForward = -runningBalance;
-            const totalAmount = Math.max(0, baseRent + electricityCharge + carryForward);
-
-            await updateDoc(doc(db, "invoices", editInvoice.id), {
-                baseRent,
-                electricityRate: rate,
-                electricityConsumed: units,
-                previousReading: prevReading,
-                currentReading: currReading,
-                electricityCharge,
-                billingPeriod: editInvBillingMonth,
-                ...(carryForward !== 0 ? { carryForward } : { carryForward: deleteField() }),
-                totalAmount,
-            });
-
-            // Also update the unit's lastMeterReading if current reading changed
-            if (editInvoice.unitId && currReading !== Number(editInvoice.currentReading || 0)) {
-                await updateDoc(doc(db, "units", editInvoice.unitId), { lastMeterReading: currReading });
-            }
-
-            alert(`Invoice updated!\n\nRent: ₹${baseRent}\nElectricity: ${units} × ₹${rate} = ₹${electricityCharge}\nTotal: ₹${totalAmount}`);
-            setIsEditInvoiceOpen(false);
-            setEditInvoice(null);
-        } catch (error) {
-            console.error(error);
-            alert("Failed to update invoice.");
-        } finally {
-            setIsSavingInvoice(false);
         }
     };
 
@@ -952,87 +849,9 @@ export default function EmployeeDashboard() {
                 </div>
 
                 {/* COLLECTIONS TAB */}
-                {activeTab === "collections" && (() => {
-                    const pendingInvoices = allInvoices.filter(inv => inv.status === "unpaid" || inv.status === "pending");
-                    const periods = [...new Set(pendingInvoices.map(inv => inv.billingPeriod).filter(Boolean))].sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
-
-                    const filteredInvoices = collectionFilter === "all"
-                        ? pendingInvoices
-                        : pendingInvoices.filter(inv => inv.billingPeriod === collectionFilter);
-
-                    const totalPendingRent = filteredInvoices.reduce((sum, inv) => sum + Number(inv.baseRent || 0), 0);
-                    const totalPendingElec = filteredInvoices.reduce((sum, inv) => sum + Number(inv.electricityCharge || 0), 0);
-
-                    return (
-                        <div className="space-y-4">
-                            {/* Filter */}
-                            <div className="bg-white rounded-xl shadow-sm border border-indigo-200 p-4">
-                                <label className="block text-sm font-medium text-gray-700 mb-2">Filter by Billing Period</label>
-                                <select value={collectionFilter} onChange={(e) => setCollectionFilter(e.target.value)} className="w-full px-3 py-2.5 border border-gray-300 rounded-lg font-medium">
-                                    <option value="all">All Pending ({pendingInvoices.length})</option>
-                                    {periods.map(p => <option key={p} value={p}>{p}</option>)}
-                                </select>
-                            </div>
-
-                            {/* Summary */}
-                            <div className="grid grid-cols-2 gap-3">
-                                <div className="bg-red-50 border border-red-200 rounded-xl p-4">
-                                    <p className="text-xs font-bold text-red-600 uppercase">Pending Rent</p>
-                                    <p className="text-xl font-bold text-red-800 mt-1">₹{totalPendingRent.toLocaleString()}</p>
-                                </div>
-                                <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4">
-                                    <p className="text-xs font-bold text-yellow-600 uppercase">Pending Electricity</p>
-                                    <p className="text-xl font-bold text-yellow-800 mt-1">₹{totalPendingElec.toLocaleString()}</p>
-                                </div>
-                            </div>
-
-                            {/* Invoice List */}
-                            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                                <div className="bg-gray-50 px-5 py-3 border-b border-gray-200 flex justify-between items-center">
-                                    <h3 className="text-sm font-bold text-gray-800">Pending Invoices</h3>
-                                    <span className="text-xs font-bold bg-red-100 text-red-700 px-2 py-1 rounded-full">{filteredInvoices.length} pending</span>
-                                </div>
-                                <div className="divide-y divide-gray-100 max-h-96 overflow-y-auto">
-                                    {filteredInvoices.length === 0 ? (
-                                        <p className="p-6 text-sm text-gray-500 text-center">🎉 No pending invoices!</p>
-                                    ) : (
-                                        filteredInvoices.map(inv => (
-                                            <div key={inv.id} className="px-5 py-4 flex justify-between items-center hover:bg-gray-50">
-                                                <div>
-                                                    <p className="font-bold text-gray-900">{inv.unitNumber}</p>
-                                                    <p className="text-xs text-gray-500">{inv.tenantEmail}</p>
-                                                    <p className="text-xs text-indigo-600 font-medium mt-0.5">{inv.billingPeriod}</p>
-                                                    <button onClick={() => { const unit = occupiedUnits.find(u => u.id === inv.unitId); if (unit) openTenantProfile(unit); }} className="text-[10px] text-indigo-600 hover:underline mt-1">View Profile →</button>
-                                                </div>
-                                                <div className="text-right flex flex-col items-end gap-2">
-                                                    <div>
-                                                        <p className="font-bold text-gray-900">₹{Number(inv.totalAmount || 0).toLocaleString()}</p>
-                                                        <p className="text-[10px] text-gray-400">Rent: ₹{inv.baseRent || 0} | Elec: ₹{inv.electricityCharge || 0}</p>
-                                                    </div>
-                                                    <div className="flex gap-1.5">
-                                                        <button
-                                                            onClick={() => openEditInvoice(inv)}
-                                                            className="text-xs px-3 py-1.5 bg-blue-600 text-white rounded-md font-bold hover:bg-blue-700 transition"
-                                                        >
-                                                            ✏️ Edit
-                                                        </button>
-                                                        <button
-                                                            onClick={() => handleSettleInvoice(inv.id)}
-                                                            disabled={isSettling === inv.id}
-                                                            className="text-xs px-3 py-1.5 bg-green-600 text-white rounded-md font-bold hover:bg-green-700 disabled:bg-green-400 transition"
-                                                        >
-                                                            {isSettling === inv.id ? "..." : "✓ Settle"}
-                                                        </button>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        ))
-                                    )}
-                                </div>
-                            </div>
-                        </div>
-                    );
-                })()}
+                {activeTab === "collections" && (
+                    <CollectionsTab allInvoices={allInvoices} occupiedUnits={occupiedUnits} electricityRate={electricityRate} openTenantProfile={openTenantProfile} />
+                )}
 
                 {/* METER READING TAB */}
                 {activeTab === "meter" && (
@@ -1163,52 +982,7 @@ export default function EmployeeDashboard() {
 
                 {/* LEDGER TAB */}
                 {activeTab === "ledger" && (
-                    <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                        <div className="bg-teal-50 px-5 py-4 border-b border-teal-200">
-                            <h2 className="text-lg font-bold text-teal-800">📒 Tenant Payment Ledger</h2>
-                        </div>
-                        <div className="p-5 space-y-4">
-                            <select value={ledgerFilter} onChange={(e) => setLedgerFilter(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm">
-                                <option value="">All Tenants</option>
-                                {[...new Set(allLedgerEntries.map(e => e.tenantEmail))].map(email => {
-                                    const u = occupiedUnits.find(u => u.tenantEmail === email);
-                                    return <option key={email} value={email}>{u ? u.unitNumber + ' - ' : ''}{email}</option>;
-                                })}
-                            </select>
-                            {(() => {
-                                const filtered = ledgerFilter ? allLedgerEntries.filter(e => e.tenantEmail === ledgerFilter) : allLedgerEntries;
-                                if (filtered.length === 0) return <p className="text-sm text-gray-500 text-center py-4">No payment records yet.</p>;
-                                const tenantBalances: Record<string, { email: string; unitNumber: string; balance: number; count: number }> = {};
-                                filtered.forEach(entry => {
-                                    if (!tenantBalances[entry.tenantEmail]) tenantBalances[entry.tenantEmail] = { email: entry.tenantEmail, unitNumber: entry.unitNumber, balance: 0, count: 0 };
-                                    tenantBalances[entry.tenantEmail].balance += Number(entry.balance || 0);
-                                    tenantBalances[entry.tenantEmail].count++;
-                                });
-                                return !ledgerFilter ? (
-                                    <div className="space-y-2">
-                                        {Object.values(tenantBalances).map(t => (
-                                            <div key={t.email} className="flex justify-between items-center border border-gray-100 p-3 rounded-md bg-gray-50 hover:bg-gray-100 cursor-pointer" onClick={() => setLedgerFilter(t.email)}>
-                                                <div><p className="font-medium text-gray-800 text-sm">{t.unitNumber}</p><p className="text-xs text-gray-500">{t.email}</p></div>
-                                                <div className="text-right"><span className={`font-bold text-sm ${t.balance >= 0 ? 'text-green-700' : 'text-red-700'}`}>{t.balance >= 0 ? `₹${t.balance} CR` : `₹${Math.abs(t.balance)} DUE`}</span><p className="text-[10px] text-gray-400">{t.count} payments</p></div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                ) : (
-                                    <div>
-                                        <div className={`mb-3 p-3 rounded-lg border ${tenantBalances[ledgerFilter]?.balance >= 0 ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
-                                            <div className="flex justify-between items-center"><span className="text-sm font-medium">Net Balance</span><span className={`font-bold ${tenantBalances[ledgerFilter]?.balance >= 0 ? 'text-green-700' : 'text-red-700'}`}>{tenantBalances[ledgerFilter]?.balance >= 0 ? `₹${tenantBalances[ledgerFilter]?.balance} Credit` : `₹${Math.abs(tenantBalances[ledgerFilter]?.balance || 0)} Due`}</span></div>
-                                        </div>
-                                        <div className="overflow-x-auto">
-                                            <table className="w-full text-xs">
-                                                <thead><tr className="border-b text-gray-500"><th className="pb-1 text-left">Date</th><th className="pb-1 text-left">Period</th><th className="pb-1 text-right">Invoice</th><th className="pb-1 text-right">Paid</th><th className="pb-1 text-right">Bal</th></tr></thead>
-                                                <tbody>{filtered.map(entry => (<tr key={entry.id} className="border-b border-gray-100"><td className="py-1.5">{new Date(entry.createdAt).toLocaleDateString()}</td><td className="py-1.5">{entry.billingPeriod}</td><td className="py-1.5 text-right">₹{entry.invoiceAmount}</td><td className="py-1.5 text-right text-green-700">₹{entry.amountPaid}</td><td className={`py-1.5 text-right font-bold ${Number(entry.balance) >= 0 ? 'text-green-700' : 'text-red-700'}`}>{Number(entry.balance) >= 0 ? '+' : ''}₹{entry.balance}</td></tr>))}</tbody>
-                                            </table>
-                                        </div>
-                                    </div>
-                                );
-                            })()}
-                        </div>
-                    </div>
+                    <LedgerTab allLedgerEntries={allLedgerEntries} occupiedUnits={occupiedUnits} />
                 )}
 
                 {/* UNITS TAB */}
@@ -2090,56 +1864,6 @@ export default function EmployeeDashboard() {
                             <div className="flex gap-2 pt-2">
                                 <button type="button" onClick={() => setIsInventoryModalOpen(false)} className="flex-1 py-2 border border-gray-300 rounded-md text-sm text-gray-600">Cancel</button>
                                 <button type="submit" disabled={isSubmittingInventory} className="flex-1 py-2 bg-cyan-600 text-white rounded-md text-sm font-medium hover:bg-cyan-700 disabled:bg-cyan-400">{isSubmittingInventory ? "Saving..." : "Add Item"}</button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            )}
-
-            {/* REPORT ISSUE MODAL */}
-
-            {/* EDIT INVOICE MODAL */}
-            {isEditInvoiceOpen && editInvoice && (
-                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setIsEditInvoiceOpen(false)}>
-                    <div className="bg-white p-6 rounded-xl shadow-xl max-w-md w-full space-y-4" onClick={(e) => e.stopPropagation()}>
-                        <h3 className="text-lg font-bold text-gray-800">✏️ Edit Invoice</h3>
-                        <p className="text-xs text-gray-500">{editInvoice.unitNumber} — {editInvBillingMonth}</p>
-                        <form onSubmit={handleSaveInvoice} className="space-y-3">
-                            <div>
-                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Billing Month / Period</label>
-                                <input type="text" required value={editInvBillingMonth} onChange={(e) => setEditInvBillingMonth(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" placeholder="e.g. August 2026" />
-                            </div>
-                            <div>
-                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Base Rent (₹)</label>
-                                <input type="number" required min="0" value={editInvBaseRent} onChange={(e) => setEditInvBaseRent(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
-                            </div>
-                            <div className="grid grid-cols-2 gap-3">
-                                <div>
-                                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Prev Reading</label>
-                                    <input type="number" min="0" value={editInvPrevReading} onChange={(e) => setEditInvPrevReading(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Curr Reading</label>
-                                    <input type="number" min="0" value={editInvCurrReading} onChange={(e) => setEditInvCurrReading(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
-                                </div>
-                            </div>
-                            <div className="grid grid-cols-2 gap-3">
-                                <div>
-                                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Units Consumed</label>
-                                    <input type="number" required min="0" value={editInvUnitsConsumed} onChange={(e) => setEditInvUnitsConsumed(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Rate (₹/unit)</label>
-                                    <input type="number" required min="0" value={editInvElecRate} onChange={(e) => setEditInvElecRate(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
-                                </div>
-                            </div>
-                            <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs text-gray-700 space-y-1">
-                                <p><strong>Electricity:</strong> {Number(editInvUnitsConsumed) || 0} × ₹{Number(editInvElecRate) || 0} = ₹{((Number(editInvUnitsConsumed) || 0) * (Number(editInvElecRate) || 0)).toLocaleString()}</p>
-                                <p><strong>Estimated Total:</strong> ₹{((Number(editInvBaseRent) || 0) + (Number(editInvUnitsConsumed) || 0) * (Number(editInvElecRate) || 0)).toLocaleString()} <span className="text-gray-400">(+ carry-forward)</span></p>
-                            </div>
-                            <div className="flex gap-2 pt-2">
-                                <button type="button" onClick={() => setIsEditInvoiceOpen(false)} className="flex-1 py-2 border border-gray-300 rounded-md text-sm text-gray-600">Cancel</button>
-                                <button type="submit" disabled={isSavingInvoice} className="flex-1 py-2 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 disabled:bg-blue-400">{isSavingInvoice ? "Saving..." : "Save Changes"}</button>
                             </div>
                         </form>
                     </div>
