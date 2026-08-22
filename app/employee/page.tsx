@@ -433,6 +433,15 @@ export default function EmployeeDashboard() {
         if (!editUnit || !editUnitNumber || !editBaseRent) return;
         try {
             await updateDoc(doc(db, "units", editUnit.id), { unitNumber: editUnitNumber, baseRent: Number(editBaseRent) });
+
+            // Update unit name in active invoices if it changed
+            if (editUnitNumber !== editUnit.unitNumber) {
+                const activeInvSnap = await getDocs(query(collection(db, "invoices"), where("unitId", "==", editUnit.id), where("status", "in", ["unpaid", "pending"])));
+                const batch = writeBatch(db);
+                activeInvSnap.docs.forEach(d => batch.update(d.ref, { unitNumber: editUnitNumber }));
+                if (activeInvSnap.docs.length > 0) await batch.commit();
+            }
+
             setIsEditUnitModalOpen(false); setEditUnit(null);
         } catch (error) { console.error(error); alert("Failed to update unit."); }
     };
