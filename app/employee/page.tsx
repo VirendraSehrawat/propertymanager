@@ -57,6 +57,7 @@ export default function EmployeeDashboard() {
     const [editInvUnitsConsumed, setEditInvUnitsConsumed] = useState("");
     const [editInvPrevReading, setEditInvPrevReading] = useState("");
     const [editInvCurrReading, setEditInvCurrReading] = useState("");
+    const [editInvBillingMonth, setEditInvBillingMonth] = useState("");
     const [isSavingInvoice, setIsSavingInvoice] = useState(false);
 
     // Tenant Profile States
@@ -96,6 +97,17 @@ export default function EmployeeDashboard() {
     const [unitDocFile, setUnitDocFile] = useState<File | null>(null);
     const [isUnitDocModalOpen, setIsUnitDocModalOpen] = useState(false);
     const [expandedBuildings, setExpandedBuildings] = useState<string[]>([]);
+
+    // Transfer Tenant States
+    const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
+    const [transferSourceUnit, setTransferSourceUnit] = useState<any>(null);
+    const [transferDestUnit, setTransferDestUnit] = useState("");
+    const [transferDate, setTransferDate] = useState(() => new Date().toISOString().split("T")[0]);
+    const [transferInvoiceMode, setTransferInvoiceMode] = useState<"prorate" | "custom" | "none">("prorate");
+    const [transferCustomAmount, setTransferCustomAmount] = useState("");
+    const [transferCustomNote, setTransferCustomNote] = useState("");
+    const [transferLastReading, setTransferLastReading] = useState("");
+    const [isTransferring, setIsTransferring] = useState(false);
 
     // Move-in/Move-out Checklist States
     const [checklistType, setChecklistType] = useState<"move-in" | "move-out">("move-in");
@@ -396,6 +408,7 @@ export default function EmployeeDashboard() {
         setEditInvUnitsConsumed(String(inv.electricityConsumed || 0));
         setEditInvPrevReading(String(inv.previousReading || 0));
         setEditInvCurrReading(String(inv.currentReading || 0));
+        setEditInvBillingMonth(inv.billingPeriod || "");
         setIsEditInvoiceOpen(true);
     };
 
@@ -424,6 +437,7 @@ export default function EmployeeDashboard() {
                 previousReading: prevReading,
                 currentReading: currReading,
                 electricityCharge,
+                billingPeriod: editInvBillingMonth,
                 ...(carryForward !== 0 ? { carryForward } : { carryForward: deleteField() }),
                 totalAmount,
             });
@@ -577,6 +591,141 @@ export default function EmployeeDashboard() {
             await updateDoc(doc(db, "units", unitDocUnit.id), { documents: arrayUnion({ name: unitDocName, url: fileUrl, uploadedAt: new Date().toISOString() }) });
             setIsUnitDocModalOpen(false); setUnitDocUnit(null); setUnitDocName(""); setUnitDocFile(null);
         } catch (error) { console.error(error); alert("Failed to upload document."); } finally { setIsUploadingDoc(false); }
+    };
+
+    // --- Transfer Tenant Handler ---
+    const openTransferModal = (unit: any) => {
+        setTransferSourceUnit(unit);
+        setTransferDestUnit("");
+        setTransferDate(new Date().toISOString().split("T")[0]);
+        setTransferInvoiceMode("prorate");
+        setTransferCustomAmount("");
+        setTransferCustomNote("");
+        setTransferLastReading(String(unit.lastMeterReading || 0));
+        setIsTransferModalOpen(true);
+    };
+
+    const handleTransferTenant = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!transferSourceUnit || !transferDestUnit) return;
+        const destUnit = allUnits.find(u => u.id === transferDestUnit);
+        if (!destUnit) return;
+        if (destUnit.status === "occupied") { alert("Destination unit is already occupied."); return; }
+
+        setIsTransferring(true);
+        try {
+            const batch = writeBatch(db);
+            const now = new Date().toISOString();
+            const tDate = new Date(transferDate);
+
+            // --- Generate invoice for old unit ---
+            if (transferInvoiceMode !== "none") {
+                const monthName = tDate.toLocaleString("default", { month: "long", year: "numeric" });
+                const invoiceId = `inv_${transferSourceUnit.id}_transfer_${transferDate}`;
+
+                let totalAmount: number;
+                let invoiceData: any = {
+                    unitId: transferSourceUnit.id,
+                    unitNumber: transferSourceUnit.unitNumber,
+                    tenantEmail: transferSourceUnit.tenantEmail || "",
+                    billingPeriod: `${monthName} (Transfer)`,
+                    status: "unpaid",
+                    transactionId: "",
+                    isCustom: true,
+                    createdAt: now,
+                    manualUnitsReason: `Room transfer on ${transferDate}`,
+                };
+
+                if (transferInvoiceMode === "prorate") {
+                    // Pro-rate: days in month tenant stayed
+                    const daysInMonth = new Date(tDate.getFullYear(), tDate.getMonth() + 1, 0).getDate();
+                    const moveIn = transferSourceUnit.moveInDate ? new Date(transferSourceUnit.moveInDate) : new Date(tDate.getFullYear(), tDate.getMonth(), 1);
+                    const startOfMonth = new Date(tDate.getFullYear(), tDate.getMonth(), 1);
+                    const effectiveStart = moveIn > startOfMonth ? moveIn : startOfMonth;
+                    const daysStayed = Math.max(1, Math.ceil((tDate.getTime() - effectiveStart.getTime()) / (1000 * 60 * 60 * 24)));
+                    const proratedRent = Math.round((Number(transferSourceUnit.baseRent || 0) / daysInMonth) * daysStayed);
+
+                    // Electricity: if last reading provided, use difference
+                    const prevReading = Number(transferSourceUnit.lastMeterReading || 0);
+                    const currReading = transferLastReading ? Number(transferLastReading) : prevReading;
+                    const unitsConsumed = Math.max(0, currReading - prevReading);
+                    const elecCharge = unitsConsumed * electricityRate;
+
+                    totalAmount = proratedRent + elecCharge;
+                    invoiceData = {
+                        ...invoiceData,
+                        baseRent: proratedRent,
+                        previousReading: prevReading,
+                        currentReading: currReading,
+                        electricityConsumed: unitsConsumed,
+                        electricityRate,
+                        electricityCharge: elecCharge,
+                        totalAmount,
+                    };
+                } else {
+                    // Custom amount
+                    totalAmount = Number(transferCustomAmount) || 0;
+                    invoiceData = {
+                        ...invoiceData,
+                        baseRent: totalAmount,
+                        electricityCharge: 0,
+                        electricityConsumed: 0,
+                        totalAmount,
+                        manualUnitsReason: transferCustomNote || `Custom transfer invoice — ${transferDate}`,
+                    };
+                }
+
+                batch.set(doc(db, "invoices", invoiceId), invoiceData);
+            }
+
+            // --- Add tenant history to source unit ---
+            const historyEntry = {
+                tenantName: transferSourceUnit.tenantName || "",
+                tenantEmail: transferSourceUnit.tenantEmail || "",
+                tenantPhone: transferSourceUnit.tenantPhone || "",
+                moveInDate: transferSourceUnit.moveInDate || "",
+                moveOutDate: now,
+                securityDeposit: Number(transferSourceUnit.securityDeposit || 0),
+                securityRefund: 0,
+                coTenants: transferSourceUnit.coTenants || [],
+                note: `Transferred to ${destUnit.unitNumber}`
+            };
+
+            // --- Clear source unit ---
+            batch.update(doc(db, "units", transferSourceUnit.id), {
+                tenantHistory: arrayUnion(historyEntry),
+                status: "vacant",
+                tenantEmail: "",
+                tenantName: "",
+                tenantPhone: "",
+                moveInDate: "",
+                paymentDay: "",
+                coTenants: [],
+            });
+
+            // --- Assign tenant to destination unit ---
+            batch.update(doc(db, "units", transferDestUnit), {
+                status: "occupied",
+                tenantEmail: transferSourceUnit.tenantEmail || "",
+                tenantName: transferSourceUnit.tenantName || "",
+                tenantPhone: transferSourceUnit.tenantPhone || "",
+                moveInDate: transferDate,
+                paymentDay: transferSourceUnit.paymentDay || "",
+                securityDeposit: transferSourceUnit.securityDeposit || "",
+                securityDepositDate: transferSourceUnit.securityDepositDate || "",
+                coTenants: transferSourceUnit.coTenants || [],
+            });
+
+            await batch.commit();
+            alert(`✅ Tenant transferred from ${transferSourceUnit.unitNumber} → ${destUnit.unitNumber}${transferInvoiceMode !== "none" ? "\n📄 Invoice generated for old unit." : ""}`);
+            setIsTransferModalOpen(false);
+            setTransferSourceUnit(null);
+        } catch (error) {
+            console.error(error);
+            alert("Failed to transfer tenant.");
+        } finally {
+            setIsTransferring(false);
+        }
     };
 
     // --- Checklist Handlers ---
@@ -1136,6 +1285,7 @@ export default function EmployeeDashboard() {
                                                                             ) : (
                                                                                 <>
                                                                                     <button onClick={() => handleRemoveTenant(unit.id)} className="text-xs text-red-500 hover:underline">Remove</button>
+                                                                                    <button onClick={() => openTransferModal(unit)} className="text-xs text-orange-600 hover:underline">🔄 Transfer</button>
                                                                                     <button onClick={() => { setUnitDocUnit(unit); setUnitDocName(""); setUnitDocFile(null); setIsUnitDocModalOpen(true); }} className="text-xs text-purple-600 hover:underline">📄 Doc</button>
                                                                                     <button onClick={() => { setCoTenantUnit(unit); setCoTenantName(""); setCoTenantPhone(""); setCoTenantEmail(""); setIsAddCoTenantOpen(true); }} className="text-xs text-indigo-600 hover:underline">👥 Add</button>
                                                                                 </>
@@ -1768,6 +1918,84 @@ export default function EmployeeDashboard() {
                 </div>
             )}
 
+            {/* TRANSFER TENANT MODAL */}
+            {isTransferModalOpen && transferSourceUnit && (
+                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setIsTransferModalOpen(false)}>
+                    <div className="bg-white p-6 rounded-xl shadow-xl max-w-md w-full space-y-4 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+                        <h3 className="text-lg font-bold text-gray-800">🔄 Transfer Tenant</h3>
+                        <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 text-xs text-orange-800">
+                            <p><strong>From:</strong> {transferSourceUnit.unitNumber}</p>
+                            <p><strong>Tenant:</strong> {transferSourceUnit.tenantName || transferSourceUnit.tenantEmail || "—"}</p>
+                        </div>
+                        <form onSubmit={handleTransferTenant} className="space-y-3">
+                            <div>
+                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Destination Unit *</label>
+                                <select required value={transferDestUnit} onChange={(e) => setTransferDestUnit(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm">
+                                    <option value="" disabled>Choose a vacant unit...</option>
+                                    {allUnits.filter(u => u.status === "vacant" && u.id !== transferSourceUnit.id).map(u => (
+                                        <option key={u.id} value={u.id}>{u.unitNumber} (Rent: ₹{u.baseRent || 0})</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Transfer Date</label>
+                                <input type="date" required value={transferDate} onChange={(e) => setTransferDate(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
+                            </div>
+
+                            {/* Invoice Mode */}
+                            <div>
+                                <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Invoice for Old Unit</label>
+                                <div className="space-y-2">
+                                    <label className="flex items-center gap-2 cursor-pointer">
+                                        <input type="radio" name="transferInvMode" checked={transferInvoiceMode === "prorate"} onChange={() => setTransferInvoiceMode("prorate")} className="accent-orange-600" />
+                                        <span className="text-sm">📊 Auto Pro-rate (days stayed + electricity)</span>
+                                    </label>
+                                    <label className="flex items-center gap-2 cursor-pointer">
+                                        <input type="radio" name="transferInvMode" checked={transferInvoiceMode === "custom"} onChange={() => setTransferInvoiceMode("custom")} className="accent-orange-600" />
+                                        <span className="text-sm">✍️ Custom Amount (no meter)</span>
+                                    </label>
+                                    <label className="flex items-center gap-2 cursor-pointer">
+                                        <input type="radio" name="transferInvMode" checked={transferInvoiceMode === "none"} onChange={() => setTransferInvoiceMode("none")} className="accent-orange-600" />
+                                        <span className="text-sm">🚫 No invoice (handle separately)</span>
+                                    </label>
+                                </div>
+                            </div>
+
+                            {/* Pro-rate: show meter reading field */}
+                            {transferInvoiceMode === "prorate" && (
+                                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 space-y-2">
+                                    <p className="text-xs text-blue-700 font-medium">Electricity reading at transfer</p>
+                                    <div>
+                                        <label className="block text-[10px] text-gray-500 mb-0.5">Previous: {transferSourceUnit.lastMeterReading || 0}</label>
+                                        <input type="number" min="0" placeholder="Current meter reading" value={transferLastReading} onChange={(e) => setTransferLastReading(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
+                                    </div>
+                                    <p className="text-[10px] text-blue-600">Leave same as previous if meter not applicable.</p>
+                                </div>
+                            )}
+
+                            {/* Custom amount fields */}
+                            {transferInvoiceMode === "custom" && (
+                                <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 space-y-2">
+                                    <div>
+                                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Amount (₹) *</label>
+                                        <input type="number" required min="0" value={transferCustomAmount} onChange={(e) => setTransferCustomAmount(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" placeholder="e.g. 5000" />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Note / Reason</label>
+                                        <input type="text" value={transferCustomNote} onChange={(e) => setTransferCustomNote(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" placeholder="e.g. Partial month, no electricity" />
+                                    </div>
+                                </div>
+                            )}
+
+                            <div className="flex gap-2 pt-2">
+                                <button type="button" onClick={() => setIsTransferModalOpen(false)} className="flex-1 py-2 border border-gray-300 rounded-md text-sm text-gray-600">Cancel</button>
+                                <button type="submit" disabled={isTransferring} className="flex-1 py-2 bg-orange-600 text-white rounded-md text-sm font-medium hover:bg-orange-700 disabled:bg-orange-400">{isTransferring ? "Transferring..." : "Transfer Tenant"}</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
             {/* ADD EXPENSE MODAL */}
             {isExpenseModalOpen && (
                 <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setIsExpenseModalOpen(false)}>
@@ -1875,8 +2103,12 @@ export default function EmployeeDashboard() {
                 <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setIsEditInvoiceOpen(false)}>
                     <div className="bg-white p-6 rounded-xl shadow-xl max-w-md w-full space-y-4" onClick={(e) => e.stopPropagation()}>
                         <h3 className="text-lg font-bold text-gray-800">✏️ Edit Invoice</h3>
-                        <p className="text-xs text-gray-500">{editInvoice.unitNumber} — {editInvoice.billingPeriod}</p>
+                        <p className="text-xs text-gray-500">{editInvoice.unitNumber} — {editInvBillingMonth}</p>
                         <form onSubmit={handleSaveInvoice} className="space-y-3">
+                            <div>
+                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Billing Month / Period</label>
+                                <input type="text" required value={editInvBillingMonth} onChange={(e) => setEditInvBillingMonth(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" placeholder="e.g. August 2026" />
+                            </div>
                             <div>
                                 <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Base Rent (₹)</label>
                                 <input type="number" required min="0" value={editInvBaseRent} onChange={(e) => setEditInvBaseRent(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
