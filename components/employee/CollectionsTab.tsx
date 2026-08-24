@@ -27,11 +27,25 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
     const [editInvBillingMonth, setEditInvBillingMonth] = useState("");
     const [isSavingInvoice, setIsSavingInvoice] = useState(false);
 
+    const isOverdue = (billingPeriod?: string) => {
+        if (!billingPeriod) return false;
+        const now = new Date();
+        const periodDate = new Date(billingPeriod);
+        return periodDate.getFullYear() < now.getFullYear() || (periodDate.getFullYear() === now.getFullYear() && periodDate.getMonth() < now.getMonth());
+    };
+
     const pendingInvoices = allInvoices.filter(inv => inv.status === "unpaid" || inv.status === "pending");
     const periods = [...new Set(pendingInvoices.map(inv => inv.billingPeriod).filter(Boolean))].sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
-    const filteredInvoices = collectionFilter === "all" ? pendingInvoices : pendingInvoices.filter(inv => inv.billingPeriod === collectionFilter);
+    const filteredInvoices = collectionFilter === "all"
+        ? pendingInvoices
+        : collectionFilter === "overdue"
+        ? pendingInvoices.filter(inv => isOverdue(inv.billingPeriod))
+        : pendingInvoices.filter(inv => inv.billingPeriod === collectionFilter);
     const totalPendingRent = filteredInvoices.reduce((sum, inv) => sum + Number(inv.baseRent || 0), 0);
     const totalPendingElec = filteredInvoices.reduce((sum, inv) => sum + Number(inv.electricityCharge || 0), 0);
+
+    const overdueCount = pendingInvoices.filter(inv => isOverdue(inv.billingPeriod)).length;
+    const overdueAmount = pendingInvoices.filter(inv => isOverdue(inv.billingPeriod)).reduce((sum, inv) => sum + Number(inv.totalAmount || 0), 0);
 
     const handleSettleInvoice = async (invId: string) => {
         if (!window.confirm("Mark this invoice as paid (cash collected)?")) return;
@@ -127,6 +141,7 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                     <label className="block text-sm font-medium text-gray-700 mb-2">Filter by Billing Period</label>
                     <select value={collectionFilter} onChange={(e) => setCollectionFilter(e.target.value)} className="w-full px-3 py-2.5 border border-gray-300 rounded-lg font-medium">
                         <option value="all">All Pending ({pendingInvoices.length})</option>
+                        {overdueCount > 0 && <option value="overdue">{"\u26A0\uFE0F"} Overdue ({overdueCount})</option>}
                         {periods.map(p => <option key={p} value={p}>{p}</option>)}
                     </select>
                 </div>
@@ -142,6 +157,19 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                     </div>
                 </div>
 
+                {overdueCount > 0 && (
+                    <button onClick={() => setCollectionFilter("overdue")} className="w-full bg-red-100 border-2 border-red-300 rounded-xl p-3 flex justify-between items-center hover:bg-red-200 transition">
+                        <div className="flex items-center gap-2">
+                            <span className="text-lg">{"\u26A0\uFE0F"}</span>
+                            <div className="text-left">
+                                <p className="text-xs font-bold text-red-800">{overdueCount} Overdue Invoice{overdueCount > 1 ? "s" : ""}</p>
+                                <p className="text-[10px] text-red-600">Past billing period, still unpaid</p>
+                            </div>
+                        </div>
+                        <p className="font-bold text-red-800">{"\u20B9"}{overdueAmount.toLocaleString()}</p>
+                    </button>
+                )}
+
                 <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                     <div className="bg-gray-50 px-5 py-3 border-b border-gray-200 flex justify-between items-center">
                         <h3 className="text-sm font-bold text-gray-800">Pending Invoices</h3>
@@ -150,30 +178,35 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                     <div className="divide-y divide-gray-100 max-h-96 overflow-y-auto">
                         {filteredInvoices.length === 0 ? (
                             <p className="p-6 text-sm text-gray-500 text-center">{"\uD83C\uDF89"} No pending invoices!</p>
-                        ) : (
-                            filteredInvoices.map(inv => (
-                                <div key={inv.id} className="px-5 py-4 flex justify-between items-center hover:bg-gray-50">
-                                    <div>
-                                        <p className="font-bold text-gray-900">{inv.unitNumber}</p>
-                                        <p className="text-xs text-gray-500">{inv.tenantEmail}</p>
-                                        <p className="text-xs text-indigo-600 font-medium mt-0.5">{inv.billingPeriod}</p>
-                                        <button onClick={() => { const unit = occupiedUnits.find(u => u.id === inv.unitId); if (unit) openTenantProfile(unit); }} className="text-[10px] text-indigo-600 hover:underline mt-1">View Profile {"\u2192"}</button>
-                                    </div>
-                                    <div className="text-right flex flex-col items-end gap-2">
+                        ) : filteredInvoices.map(inv => {
+                                const overdue = isOverdue(inv.billingPeriod);
+                                return (
+                                    <div key={inv.id} className={`px-5 py-4 flex justify-between items-center ${overdue ? "bg-red-50 hover:bg-red-100 border-l-4 border-l-red-400" : "hover:bg-gray-50"}`}>
                                         <div>
-                                            <p className="font-bold text-gray-900">{"\u20B9"}{Number(inv.totalAmount || 0).toLocaleString()}</p>
-                                            <p className="text-[10px] text-gray-400">Rent: {"\u20B9"}{inv.baseRent || 0} | Elec: {"\u20B9"}{inv.electricityCharge || 0}</p>
+                                            <div className="flex items-center gap-2">
+                                                <p className="font-bold text-gray-900">{inv.unitNumber}</p>
+                                                {overdue && <span className="text-[9px] font-bold bg-red-200 text-red-800 px-1.5 py-0.5 rounded">OVERDUE</span>}
+                                            </div>
+                                            <p className="text-xs text-gray-500">{inv.tenantEmail}</p>
+                                            <p className={`text-xs font-medium mt-0.5 ${overdue ? "text-red-600" : "text-indigo-600"}`}>{inv.billingPeriod}</p>
+                                            <button onClick={() => { const unit = occupiedUnits.find(u => u.id === inv.unitId); if (unit) openTenantProfile(unit); }} className="text-[10px] text-indigo-600 hover:underline mt-1">View Profile {"\u2192"}</button>
                                         </div>
-                                        <div className="flex gap-1.5">
-                                            <button onClick={() => openEditInvoice(inv)} className="text-xs px-3 py-1.5 bg-blue-600 text-white rounded-md font-bold hover:bg-blue-700 transition">{"\u270F\uFE0F"} Edit</button>
-                                            <button onClick={() => handleSettleInvoice(inv.id)} disabled={isSettling === inv.id} className="text-xs px-3 py-1.5 bg-green-600 text-white rounded-md font-bold hover:bg-green-700 disabled:bg-green-400 transition">
-                                                {isSettling === inv.id ? "..." : "\u2713 Settle"}
-                                            </button>
+                                        <div className="text-right flex flex-col items-end gap-2">
+                                            <div>
+                                                <p className={`font-bold ${overdue ? "text-red-700" : "text-gray-900"}`}>{"\u20B9"}{Number(inv.totalAmount || 0).toLocaleString()}</p>
+                                                <p className="text-[10px] text-gray-400">Rent: {"\u20B9"}{inv.baseRent || 0} | Elec: {"\u20B9"}{inv.electricityCharge || 0}</p>
+                                            </div>
+                                            <div className="flex gap-1.5">
+                                                <button onClick={() => openEditInvoice(inv)} className="text-xs px-3 py-1.5 bg-blue-600 text-white rounded-md font-bold hover:bg-blue-700 transition">{"\u270F\uFE0F"} Edit</button>
+                                                <button onClick={() => handleSettleInvoice(inv.id)} disabled={isSettling === inv.id} className="text-xs px-3 py-1.5 bg-green-600 text-white rounded-md font-bold hover:bg-green-700 disabled:bg-green-400 transition">
+                                                    {isSettling === inv.id ? "..." : "\u2713 Settle"}
+                                                </button>
+                                            </div>
                                         </div>
                                     </div>
-                                </div>
-                            ))
-                        )}
+                                );
+                            })
+                        }
                     </div>
                 </div>
             </div>

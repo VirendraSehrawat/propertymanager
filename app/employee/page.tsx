@@ -20,7 +20,7 @@ export default function EmployeeDashboard() {
 
     const [activeTickets, setActiveTickets] = useState<any[]>([]);
     const [resolvedTickets, setResolvedTickets] = useState<any[]>([]);
-    const [activeTab, setActiveTab] = useState<"active" | "resolved" | "meter" | "collections" | "ledger" | "units" | "occupancy" | "checklist" | "expenses" | "inventory">("active");
+    const [activeTab, setActiveTab] = useState<"home" | "active" | "resolved" | "meter" | "collections" | "ledger" | "units" | "occupancy" | "checklist" | "expenses" | "inventory">("home");
 
     const [isResolveModalOpen, setIsResolveModalOpen] = useState(false);
     const [selectedTicket, setSelectedTicket] = useState<any>(null);
@@ -848,6 +848,7 @@ export default function EmployeeDashboard() {
 
                 {/* TABS */}
                 <div className="flex flex-wrap bg-gray-200 rounded-lg p-1 shadow-inner gap-1">
+                    <TabButton label="🏠 Home" isActive={activeTab === "home"} onClick={() => setActiveTab("home")} activeColor="text-gray-800" />
                     <TabButton label="Collections" isActive={activeTab === "collections"} onClick={() => setActiveTab("collections")} activeColor="text-indigo-600" />
                     <TabButton label={`Tasks (${activeTickets.length})`} isActive={activeTab === "active"} onClick={() => setActiveTab("active")} activeColor="text-orange-600" />
                     <TabButton label="Meter" isActive={activeTab === "meter"} onClick={() => setActiveTab("meter")} activeColor="text-purple-600" />
@@ -859,6 +860,167 @@ export default function EmployeeDashboard() {
                     <TabButton label="💰 Expenses" isActive={activeTab === "expenses"} onClick={() => setActiveTab("expenses")} activeColor="text-amber-600" />
                     <TabButton label="📦 Inventory" isActive={activeTab === "inventory"} onClick={() => setActiveTab("inventory")} activeColor="text-cyan-600" />
                 </div>
+
+                {/* HOME / DAILY SUMMARY TAB */}
+                {activeTab === "home" && (() => {
+                    const pendingInvoices = allInvoices.filter(inv => inv.status === "unpaid" || inv.status === "pending");
+                    const totalPendingAmount = pendingInvoices.reduce((sum, inv) => sum + Number(inv.totalAmount || 0), 0);
+
+                    // Overdue: billing period is a past month
+                    const now = new Date();
+                    const overdueInvoices = pendingInvoices.filter(inv => {
+                        if (!inv.billingPeriod) return false;
+                        const periodDate = new Date(inv.billingPeriod);
+                        return periodDate.getFullYear() < now.getFullYear() || (periodDate.getFullYear() === now.getFullYear() && periodDate.getMonth() < now.getMonth());
+                    });
+
+                    // Units without invoices for current month
+                    const currentMonthName = now.toLocaleString("default", { month: "long", year: "numeric" });
+                    const unitsWithInvoice = new Set(allInvoices.filter(inv => inv.billingPeriod === currentMonthName).map(inv => inv.unitId));
+                    const unitsPendingMeter = occupiedUnits.filter(u => !unitsWithInvoice.has(u.id));
+
+                    // Today's collections
+                    const today = now.toISOString().split("T")[0];
+                    const todayCollections = allInvoices.filter(inv => inv.status === "paid" && inv.paidAt && inv.paidAt.startsWith(today));
+                    const todayCollectedAmount = todayCollections.reduce((sum, inv) => sum + Number(inv.totalAmount || 0), 0);
+
+                    return (
+                        <div className="space-y-4">
+                            {/* Greeting */}
+                            <div className="bg-linear-to-r from-orange-500 to-amber-500 rounded-xl p-5 text-white shadow-md">
+                                <h2 className="text-lg font-bold">👋 Good {now.getHours() < 12 ? "Morning" : now.getHours() < 17 ? "Afternoon" : "Evening"}!</h2>
+                                <p className="text-sm text-orange-100 mt-1">{now.toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</p>
+                            </div>
+
+                            {/* Key Metrics */}
+                            <div className="grid grid-cols-2 gap-3">
+                                <button onClick={() => setActiveTab("collections")} className="bg-white border border-red-200 rounded-xl p-4 text-left hover:shadow-md transition">
+                                    <p className="text-[10px] font-bold text-red-600 uppercase">Pending Collections</p>
+                                    <p className="text-2xl font-bold text-red-800 mt-1">₹{totalPendingAmount.toLocaleString()}</p>
+                                    <p className="text-xs text-gray-500 mt-0.5">{pendingInvoices.length} invoices</p>
+                                </button>
+                                <div className="bg-white border border-green-200 rounded-xl p-4">
+                                    <p className="text-[10px] font-bold text-green-600 uppercase">Collected Today</p>
+                                    <p className="text-2xl font-bold text-green-800 mt-1">₹{todayCollectedAmount.toLocaleString()}</p>
+                                    <p className="text-xs text-gray-500 mt-0.5">{todayCollections.length} payments</p>
+                                </div>
+                                <button onClick={() => setActiveTab("active")} className="bg-white border border-orange-200 rounded-xl p-4 text-left hover:shadow-md transition">
+                                    <p className="text-[10px] font-bold text-orange-600 uppercase">Active Tasks</p>
+                                    <p className="text-2xl font-bold text-orange-800 mt-1">{activeTickets.length}</p>
+                                    <p className="text-xs text-gray-500 mt-0.5">maintenance tickets</p>
+                                </button>
+                                <button onClick={() => setActiveTab("units")} className="bg-white border border-blue-200 rounded-xl p-4 text-left hover:shadow-md transition">
+                                    <p className="text-[10px] font-bold text-blue-600 uppercase">Occupancy</p>
+                                    <p className="text-2xl font-bold text-blue-800 mt-1">{occupiedUnits.length}/{allUnits.length}</p>
+                                    <p className="text-xs text-gray-500 mt-0.5">{vacantUnits.length} vacant</p>
+                                </button>
+                            </div>
+
+                            {/* Quick Actions */}
+                            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
+                                <h3 className="text-xs font-bold text-gray-500 uppercase mb-3">Quick Actions</h3>
+                                <div className="grid grid-cols-3 gap-2">
+                                    <button onClick={() => setActiveTab("collections")} className="flex flex-col items-center gap-1 py-3 bg-indigo-50 rounded-lg hover:bg-indigo-100 transition">
+                                        <span className="text-xl">💰</span>
+                                        <span className="text-[10px] font-bold text-indigo-700">Collect Rent</span>
+                                    </button>
+                                    <button onClick={() => setActiveTab("meter")} className="flex flex-col items-center gap-1 py-3 bg-purple-50 rounded-lg hover:bg-purple-100 transition">
+                                        <span className="text-xl">⚡</span>
+                                        <span className="text-[10px] font-bold text-purple-700">Record Meter</span>
+                                    </button>
+                                    <button onClick={() => { setIsReportIssueOpen(true); }} className="flex flex-col items-center gap-1 py-3 bg-red-50 rounded-lg hover:bg-red-100 transition">
+                                        <span className="text-xl">🚨</span>
+                                        <span className="text-[10px] font-bold text-red-700">Report Issue</span>
+                                    </button>
+                                    <button onClick={() => setActiveTab("expenses")} className="flex flex-col items-center gap-1 py-3 bg-amber-50 rounded-lg hover:bg-amber-100 transition">
+                                        <span className="text-xl">🧾</span>
+                                        <span className="text-[10px] font-bold text-amber-700">Add Expense</span>
+                                    </button>
+                                    <button onClick={() => setActiveTab("checklist")} className="flex flex-col items-center gap-1 py-3 bg-pink-50 rounded-lg hover:bg-pink-100 transition">
+                                        <span className="text-xl">📋</span>
+                                        <span className="text-[10px] font-bold text-pink-700">Checklist</span>
+                                    </button>
+                                    <button onClick={() => setActiveTab("units")} className="flex flex-col items-center gap-1 py-3 bg-blue-50 rounded-lg hover:bg-blue-100 transition">
+                                        <span className="text-xl">🏠</span>
+                                        <span className="text-[10px] font-bold text-blue-700">View Units</span>
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Overdue Invoices Alert */}
+                            {overdueInvoices.length > 0 && (
+                                <div className="bg-red-50 border border-red-200 rounded-xl overflow-hidden">
+                                    <div className="bg-red-100 px-4 py-2.5 border-b border-red-200 flex justify-between items-center">
+                                        <h3 className="text-sm font-bold text-red-800">⚠️ Overdue Invoices</h3>
+                                        <span className="text-xs font-bold bg-red-200 text-red-800 px-2 py-0.5 rounded-full">{overdueInvoices.length}</span>
+                                    </div>
+                                    <div className="divide-y divide-red-100 max-h-48 overflow-y-auto">
+                                        {overdueInvoices.map(inv => (
+                                            <div key={inv.id} className="px-4 py-2.5 flex justify-between items-center">
+                                                <div>
+                                                    <p className="font-bold text-gray-900 text-sm">{inv.unitNumber}</p>
+                                                    <p className="text-[10px] text-gray-500">{inv.billingPeriod}</p>
+                                                </div>
+                                                <p className="font-bold text-red-700 text-sm">₹{Number(inv.totalAmount || 0).toLocaleString()}</p>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <button onClick={() => setActiveTab("collections")} className="w-full text-center text-xs font-bold text-red-700 py-2 bg-red-100 hover:bg-red-200 transition border-t border-red-200">
+                                        View All Collections →
+                                    </button>
+                                </div>
+                            )}
+
+                            {/* Meters Pending for Current Month */}
+                            {unitsPendingMeter.length > 0 && (
+                                <div className="bg-purple-50 border border-purple-200 rounded-xl overflow-hidden">
+                                    <div className="bg-purple-100 px-4 py-2.5 border-b border-purple-200 flex justify-between items-center">
+                                        <h3 className="text-sm font-bold text-purple-800">⚡ Meters Pending — {currentMonthName}</h3>
+                                        <span className="text-xs font-bold bg-purple-200 text-purple-800 px-2 py-0.5 rounded-full">{unitsPendingMeter.length}</span>
+                                    </div>
+                                    <div className="divide-y divide-purple-100 max-h-48 overflow-y-auto">
+                                        {unitsPendingMeter.map(u => (
+                                            <div key={u.id} className="px-4 py-2.5 flex justify-between items-center">
+                                                <div>
+                                                    <p className="font-bold text-gray-900 text-sm">{u.unitNumber}</p>
+                                                    <p className="text-[10px] text-gray-500">{u.tenantName || u.tenantEmail || "—"}</p>
+                                                </div>
+                                                <p className="text-xs text-purple-600">Last: {u.lastMeterReading || 0}</p>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <button onClick={() => setActiveTab("meter")} className="w-full text-center text-xs font-bold text-purple-700 py-2 bg-purple-100 hover:bg-purple-200 transition border-t border-purple-200">
+                                        Record Meter Readings →
+                                    </button>
+                                </div>
+                            )}
+
+                            {/* Active Tasks Preview */}
+                            {activeTickets.length > 0 && (
+                                <div className="bg-orange-50 border border-orange-200 rounded-xl overflow-hidden">
+                                    <div className="bg-orange-100 px-4 py-2.5 border-b border-orange-200 flex justify-between items-center">
+                                        <h3 className="text-sm font-bold text-orange-800">🔧 Active Tasks</h3>
+                                        <span className="text-xs font-bold bg-orange-200 text-orange-800 px-2 py-0.5 rounded-full">{activeTickets.length}</span>
+                                    </div>
+                                    <div className="divide-y divide-orange-100 max-h-48 overflow-y-auto">
+                                        {activeTickets.slice(0, 5).map(t => (
+                                            <div key={t.id} className="px-4 py-2.5 flex justify-between items-center">
+                                                <div>
+                                                    <p className="font-bold text-gray-900 text-sm">{t.unitNumber}</p>
+                                                    <p className="text-[10px] text-gray-500 line-clamp-1">{t.description}</p>
+                                                </div>
+                                                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${t.status === "in-progress" ? "bg-blue-100 text-blue-700" : "bg-orange-100 text-orange-700"}`}>{t.status}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <button onClick={() => setActiveTab("active")} className="w-full text-center text-xs font-bold text-orange-700 py-2 bg-orange-100 hover:bg-orange-200 transition border-t border-orange-200">
+                                        View All Tasks →
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    );
+                })()}
 
                 {/* COLLECTIONS TAB */}
                 {activeTab === "collections" && (
