@@ -1281,7 +1281,7 @@ export default function EmployeeDashboard() {
                                                     </div>
                                                 </button>
                                                 {isExpanded && (
-                                                    <div className="p-3 space-y-2 border-t border-gray-100 bg-white">
+                                                    <div className="p-3 space-y-3 border-t border-gray-100 bg-white">
                                                         {bldgUnits.length === 0 ? (
                                                             <p className="text-xs text-gray-400 text-center py-2">No units in this building.</p>
                                                         ) : (
@@ -1303,9 +1303,9 @@ export default function EmployeeDashboard() {
                                                                                         <div className="mt-1 pl-2 border-l-2 border-indigo-200">
                                                                                             <p className="text-[10px] font-bold text-indigo-600 uppercase">Co-tenants ({unit.coTenants.length})</p>
                                                                                             {unit.coTenants.map((ct: any, i: number) => (
-                                                                                                <div key={i} className="flex items-center gap-1 mt-0.5">
+                                                                                                <div key={i} className="flex items-center gap-2.5 mt-1">
                                                                                                     <span className="text-[10px] text-gray-600">👤 {ct.name || ct.email || "—"}{ct.phone && !ct.email ? ` · 📞 ${ct.phone}` : ""}{ct.email ? ` · ${ct.email}` : ""}</span>
-                                                                                                    <button onClick={() => handleRemoveCoTenant(unit.id, ct)} className="text-[10px] text-red-400 hover:text-red-600">✕</button>
+                                                                                                    <button onClick={() => handleRemoveCoTenant(unit.id, ct)} className="text-[10px] text-red-400 hover:text-red-600 ml-1">✕</button>
                                                                                                 </div>
                                                                                             ))}
                                                                                         </div>
@@ -1313,7 +1313,7 @@ export default function EmployeeDashboard() {
                                                                                 </div>
                                                                             )}
                                                                         </div>
-                                                                        <div className="flex flex-col gap-1.5 shrink-0">
+                                                                        <div className="flex flex-col gap-3 shrink-0">
                                                                             <button onClick={() => { setEditUnit(unit); setEditUnitNumber(unit.unitNumber); setEditBaseRent(String(unit.baseRent || 8000)); setIsEditUnitModalOpen(true); }} className="text-xs text-blue-600 hover:underline">✏️ Edit</button>
                                                                             {unit.status === "vacant" ? (
                                                                                 <button onClick={() => { setAssignUnit(unit); setAssignMode("new"); setAssignEmail(""); setAssignName(""); setAssignPhone(""); setAssignExistingUnit(""); setIsAssignModalOpen(true); }} className="text-xs bg-green-600 text-white px-2 py-1 rounded-md font-medium hover:bg-green-700">+ Assign</button>
@@ -1330,9 +1330,11 @@ export default function EmployeeDashboard() {
                                                                     {unit.documents && unit.documents.length > 0 && (
                                                                         <div className="mt-2 pt-2 border-t border-gray-100">
                                                                             <p className="text-[10px] font-bold text-gray-500 uppercase mb-1">Documents</p>
+                                                                            <div className="space-y-1.5">
                                                                             {unit.documents.map((d: any, i: number) => (
-                                                                                <a key={i} href={d.url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline block">📎 {d.name}</a>
+                                                                                <a key={i} href={d.url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline block py-0.5">📎 {d.name}</a>
                                                                             ))}
+                                                                            </div>
                                                                         </div>
                                                                     )}
                                                                     {unit.tenantHistory && unit.tenantHistory.length > 0 && (
