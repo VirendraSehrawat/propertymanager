@@ -95,6 +95,9 @@ export default function EmployeeDashboard() {
     const [transferLastReading, setTransferLastReading] = useState("");
     const [isTransferring, setIsTransferring] = useState(false);
 
+    // Units Search
+    const [unitSearch, setUnitSearch] = useState("");
+
     // Move-in/Move-out Checklist States
     const [checklistType, setChecklistType] = useState<"move-in" | "move-out">("move-in");
     const [checklistUnit, setChecklistUnit] = useState("");
@@ -1002,14 +1005,27 @@ export default function EmployeeDashboard() {
                                 <h2 className="text-lg font-bold text-blue-800">🏠 Buildings & Units</h2>
                                 <p className="text-xs text-blue-600 mt-1">{vacantUnits.length} vacant · {occupiedForAssign.length} occupied · {buildings.length} buildings</p>
                             </div>
+                            <div className="px-4 pt-4">
+                                <input type="text" placeholder="🔍 Search by tenant name or phone..." value={unitSearch} onChange={(e) => setUnitSearch(e.target.value)} className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none" />
+                            </div>
                             <div className="p-4 space-y-2">
-                                {buildings.length === 0 ? (
-                                    <p className="text-sm text-gray-500 text-center py-8">No buildings found.</p>
-                                ) : (
-                                    buildings.map(bldg => {
+                                {(() => {
+                                    const searchLower = unitSearch.toLowerCase().trim();
+                                    const filteredBuildings = buildings.filter(bldg => {
+                                        if (!searchLower) return true;
                                         const bldgUnits = allUnits.filter(u => u.buildingId === bldg.id);
+                                        return bldgUnits.some(u => (u.tenantName && u.tenantName.toLowerCase().includes(searchLower)) || (u.tenantPhone && u.tenantPhone.includes(searchLower)) || (u.unitNumber && u.unitNumber.toLowerCase().includes(searchLower)));
+                                    });
+                                    return filteredBuildings.length === 0 ? (
+                                        <p className="text-sm text-gray-500 text-center py-8">{searchLower ? "No matching tenants found." : "No buildings found."}</p>
+                                    ) : (
+                                        filteredBuildings.map(bldg => {
+                                            let bldgUnits = allUnits.filter(u => u.buildingId === bldg.id);
+                                            if (searchLower) {
+                                                bldgUnits = bldgUnits.filter(u => (u.tenantName && u.tenantName.toLowerCase().includes(searchLower)) || (u.tenantPhone && u.tenantPhone.includes(searchLower)) || (u.unitNumber && u.unitNumber.toLowerCase().includes(searchLower)));
+                                            }
                                         const bldgVacant = bldgUnits.filter(u => u.status === "vacant");
-                                        const isExpanded = expandedBuildings.includes(bldg.id);
+                                        const isExpanded = expandedBuildings.includes(bldg.id) || !!searchLower;
                                         const toggleBuilding = () => {
                                             setExpandedBuildings(prev => isExpanded ? prev.filter(id => id !== bldg.id) : [...prev, bldg.id]);
                                         };
@@ -1108,7 +1124,8 @@ export default function EmployeeDashboard() {
                                             </div>
                                         );
                                     })
-                                )}
+                                    );
+                                })()}
                             </div>
                         </div>
                     </div>
