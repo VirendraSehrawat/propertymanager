@@ -98,6 +98,10 @@ export default function EmployeeDashboard() {
     // Units Search
     const [unitSearch, setUnitSearch] = useState("");
 
+    // Global Tenant Search
+    const [globalSearch, setGlobalSearch] = useState("");
+    const [isGlobalSearchFocused, setIsGlobalSearchFocused] = useState(false);
+
     // Move-in/Move-out Checklist States
     const [checklistType, setChecklistType] = useState<"move-in" | "move-out">("move-in");
     const [checklistUnit, setChecklistUnit] = useState("");
@@ -846,20 +850,62 @@ export default function EmployeeDashboard() {
 
             <main className="p-4 max-w-2xl mx-auto space-y-6 mt-2">
 
-                {/* TABS */}
-                <div className="flex flex-wrap bg-gray-200 rounded-lg p-1 shadow-inner gap-1">
-                    <TabButton label="🏠 Home" isActive={activeTab === "home"} onClick={() => setActiveTab("home")} activeColor="text-gray-800" />
-                    <TabButton label="Collections" isActive={activeTab === "collections"} onClick={() => setActiveTab("collections")} activeColor="text-indigo-600" />
-                    <TabButton label={`Tasks (${activeTickets.length})`} isActive={activeTab === "active"} onClick={() => setActiveTab("active")} activeColor="text-orange-600" />
-                    <TabButton label="Meter" isActive={activeTab === "meter"} onClick={() => setActiveTab("meter")} activeColor="text-purple-600" />
-                    <TabButton label="Done" isActive={activeTab === "resolved"} onClick={() => setActiveTab("resolved")} activeColor="text-green-600" />
-                    <TabButton label="Ledger" isActive={activeTab === "ledger"} onClick={() => setActiveTab("ledger")} activeColor="text-teal-600" />
-                    <TabButton label="Units" isActive={activeTab === "units"} onClick={() => setActiveTab("units")} activeColor="text-blue-600" />
-                    <TabButton label="📊 Occupancy" isActive={activeTab === "occupancy"} onClick={() => setActiveTab("occupancy")} activeColor="text-emerald-600" />
-                    <TabButton label="📋 Checklist" isActive={activeTab === "checklist"} onClick={() => setActiveTab("checklist")} activeColor="text-pink-600" />
-                    <TabButton label="💰 Expenses" isActive={activeTab === "expenses"} onClick={() => setActiveTab("expenses")} activeColor="text-amber-600" />
-                    <TabButton label="📦 Inventory" isActive={activeTab === "inventory"} onClick={() => setActiveTab("inventory")} activeColor="text-cyan-600" />
+                {/* GLOBAL TENANT SEARCH */}
+                <div className="relative">
+                    <input
+                        type="text"
+                        placeholder="🔍 Quick search tenant by name or phone..."
+                        value={globalSearch}
+                        onChange={(e) => setGlobalSearch(e.target.value)}
+                        onFocus={() => setIsGlobalSearchFocused(true)}
+                        onBlur={() => setTimeout(() => setIsGlobalSearchFocused(false), 200)}
+                        className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm shadow-sm focus:border-orange-400 focus:ring-2 focus:ring-orange-100 outline-none bg-white"
+                    />
+                    {globalSearch.trim() && isGlobalSearchFocused && (() => {
+                        const q = globalSearch.toLowerCase().trim();
+                        const results = allUnits.filter(u => u.status === "occupied" && ((u.tenantName && u.tenantName.toLowerCase().includes(q)) || (u.tenantPhone && u.tenantPhone.includes(q)) || (u.tenantEmail && u.tenantEmail.toLowerCase().includes(q)) || (u.unitNumber && u.unitNumber.toLowerCase().includes(q))));
+                        return results.length > 0 ? (
+                            <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-xl border border-gray-200 shadow-lg z-40 max-h-64 overflow-y-auto">
+                                {results.map(u => (
+                                    <button key={u.id} onClick={() => { openTenantProfile(u); setGlobalSearch(""); }} className="w-full px-4 py-3 flex justify-between items-center hover:bg-orange-50 border-b border-gray-100 last:border-0 text-left">
+                                        <div>
+                                            <p className="font-bold text-gray-900 text-sm">{u.tenantName || u.tenantEmail || "—"}</p>
+                                            <p className="text-[10px] text-gray-500">{u.unitNumber} {u.tenantPhone ? `· ${u.tenantPhone}` : ""}</p>
+                                        </div>
+                                        <span className="text-xs text-orange-600 font-medium">View →</span>
+                                    </button>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-xl border border-gray-200 shadow-lg z-40 p-4 text-center">
+                                <p className="text-sm text-gray-500">No tenants found for &quot;{globalSearch}&quot;</p>
+                            </div>
+                        );
+                    })()}
                 </div>
+
+                {/* TABS */}
+                {(() => {
+                    const pendingCount = allInvoices.filter(inv => inv.status === "unpaid" || inv.status === "pending").length;
+                    const currentMonthLabel = new Date().toLocaleString("default", { month: "long", year: "numeric" });
+                    const unitsNeedingMeter = occupiedUnits.filter(u => !allInvoices.some(inv => inv.unitId === u.id && inv.billingPeriod === currentMonthLabel)).length;
+                    const thisMonthExpenses = allExpenses.filter(exp => { const d = new Date(exp.date || exp.createdAt); const now = new Date(); return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear(); }).length;
+                    return (
+                    <div className="flex flex-wrap bg-gray-200 rounded-lg p-1 shadow-inner gap-1">
+                        <TabButton label="🏠 Home" isActive={activeTab === "home"} onClick={() => setActiveTab("home")} activeColor="text-gray-800" />
+                        <TabButton label={`Collections${pendingCount > 0 ? ` (${pendingCount})` : ""}`} isActive={activeTab === "collections"} onClick={() => setActiveTab("collections")} activeColor="text-indigo-600" />
+                        <TabButton label={`Tasks (${activeTickets.length})`} isActive={activeTab === "active"} onClick={() => setActiveTab("active")} activeColor="text-orange-600" />
+                        <TabButton label={`Meter${unitsNeedingMeter > 0 ? ` (${unitsNeedingMeter})` : ""}`} isActive={activeTab === "meter"} onClick={() => setActiveTab("meter")} activeColor="text-purple-600" />
+                        <TabButton label={`Done (${resolvedTickets.length})`} isActive={activeTab === "resolved"} onClick={() => setActiveTab("resolved")} activeColor="text-green-600" />
+                        <TabButton label="Ledger" isActive={activeTab === "ledger"} onClick={() => setActiveTab("ledger")} activeColor="text-teal-600" />
+                        <TabButton label="Units" isActive={activeTab === "units"} onClick={() => setActiveTab("units")} activeColor="text-blue-600" />
+                        <TabButton label="📊 Occupancy" isActive={activeTab === "occupancy"} onClick={() => setActiveTab("occupancy")} activeColor="text-emerald-600" />
+                        <TabButton label="📋 Checklist" isActive={activeTab === "checklist"} onClick={() => setActiveTab("checklist")} activeColor="text-pink-600" />
+                        <TabButton label={`💰 Expenses${thisMonthExpenses > 0 ? ` (${thisMonthExpenses})` : ""}`} isActive={activeTab === "expenses"} onClick={() => setActiveTab("expenses")} activeColor="text-amber-600" />
+                        <TabButton label="📦 Inventory" isActive={activeTab === "inventory"} onClick={() => setActiveTab("inventory")} activeColor="text-cyan-600" />
+                    </div>
+                    );
+                })()}
 
                 {/* HOME / DAILY SUMMARY TAB */}
                 {activeTab === "home" && (() => {
@@ -1018,6 +1064,34 @@ export default function EmployeeDashboard() {
                                     </button>
                                 </div>
                             )}
+
+                            {/* Recent Activity Feed */}
+                            {(() => {
+                                const activities: { icon: string; text: string; time: number }[] = [];
+                                allLedgerEntries.slice(0, 20).forEach(e => activities.push({ icon: "💵", text: `Payment ₹${e.amount} from ${e.tenantName || e.unitNumber || "tenant"}`, time: new Date(e.date || e.createdAt).getTime() }));
+                                resolvedTickets.slice(0, 10).forEach(t => activities.push({ icon: "✅", text: `Task resolved: ${t.unitNumber} - ${(t.description || "").slice(0, 30)}`, time: new Date(t.resolvedAt || t.createdAt).getTime() }));
+                                allExpenses.slice(0, 10).forEach(ex => activities.push({ icon: "🧾", text: `Expense: ${ex.description || ex.category || "item"} ₹${ex.amount}`, time: new Date(ex.date || ex.createdAt).getTime() }));
+                                activities.sort((a, b) => b.time - a.time);
+                                const recent = activities.slice(0, 10);
+                                if (recent.length === 0) return null;
+                                return (
+                                    <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                                        <div className="px-4 py-3 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+                                            <h3 className="text-sm font-bold text-gray-800">🕐 Recent Activity</h3>
+                                            <span className="text-[10px] text-gray-400">Last {recent.length} actions</span>
+                                        </div>
+                                        <div className="divide-y divide-gray-100 max-h-56 overflow-y-auto">
+                                            {recent.map((a, i) => (
+                                                <div key={i} className="px-4 py-2.5 flex items-center gap-2">
+                                                    <span className="text-base">{a.icon}</span>
+                                                    <p className="text-xs text-gray-700 flex-1 line-clamp-1">{a.text}</p>
+                                                    <span className="text-[10px] text-gray-400 whitespace-nowrap">{new Date(a.time).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                );
+                            })()}
                         </div>
                     );
                 })()}
