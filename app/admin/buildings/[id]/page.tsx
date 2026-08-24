@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { doc, getDoc, collection, query, where, onSnapshot, writeBatch, addDoc, updateDoc, arrayUnion } from "firebase/firestore";
+import { doc, getDoc, collection, query, where, onSnapshot, writeBatch, addDoc, updateDoc, arrayUnion, deleteDoc as firestoreDeleteDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useUploadWithProgress, UploadProgressBar } from "@/lib/useUpload";
 import { useAuth } from "@/context/AuthContext";
@@ -123,6 +123,11 @@ export default function BuildingUnitsPage() {
     const handleRemoveTenant = async (unitId: string) => {
         if (!window.confirm("Remove this tenant?")) return;
         try { await updateDoc(doc(db, "units", unitId), { status: "vacant", tenantEmail: "" }); } catch (error) { console.error(error); }
+    };
+
+    const handleDeleteUnit = async (unit: Unit) => {
+        if (!window.confirm(`Are you sure you want to permanently delete "${unit.unitNumber}"? This cannot be undone.`)) return;
+        try { await firestoreDeleteDoc(doc(db, "units", unit.id)); } catch (error) { console.error(error); alert("Failed to delete unit."); }
     };
 
     const handleAssignExistingTenant = async (e: React.FormEvent) => {
@@ -324,6 +329,7 @@ export default function BuildingUnitsPage() {
                                             <div className="flex gap-2">
                                                 <button onClick={() => { setSelectedVacantUnit(unit); setIsAssignExistingModalOpen(true); }} className="text-sm text-green-600 hover:underline font-medium">Existing Tenant</button>
                                                 <button onClick={() => { setSelectedUnit(unit); setIsAssignModalOpen(true); }} className="text-sm text-blue-600 hover:underline font-medium">New Tenant</button>
+                                                <button onClick={() => handleDeleteUnit(unit)} className="text-sm text-red-600 hover:underline font-medium">🗑 Delete</button>
                                             </div>
                                         ) : (
                                             <div className="flex gap-2">
