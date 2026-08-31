@@ -10,6 +10,7 @@ import { signOut } from "firebase/auth";
 import { auth, db } from "@/lib/firebase";
 import { collection, onSnapshot, doc, updateDoc, arrayUnion, query, where, writeBatch, getDocs, addDoc, getDoc, deleteField } from "firebase/firestore";
 import { useUploadWithProgress, UploadProgressBar } from "@/lib/useUpload";
+import { calculateFundSummary, filterExpenses, buildSettlementUpdate } from "@/lib/expenses";
 import { CollectionsTab, OccupancyTab, LedgerTab, ExpensesTab, InventoryTab, TicketsTab } from "@/components/employee";
 import { TabButton } from "@/components/ui";
 
@@ -772,9 +773,7 @@ export default function EmployeeDashboard() {
         const nextSettled = !exp.settled;
         if (nextSettled && !window.confirm(`Mark "${exp.description}" (₹${Number(exp.amount).toLocaleString()}) as settled? This will be deducted from the allocated amount.`)) return;
         try {
-            await updateDoc(doc(db, "expenses", exp.id), nextSettled
-                ? { settled: true, settledAt: new Date().toISOString(), settledBy: user?.email || "" }
-                : { settled: false, settledAt: deleteField(), settledBy: deleteField() });
+            await updateDoc(doc(db, "expenses", exp.id), buildSettlementUpdate(exp.settled, user?.email || "", deleteField()) as any);
         } catch (error) { console.error(error); alert("Failed to update expense."); }
     };
 
@@ -1539,10 +1538,7 @@ export default function EmployeeDashboard() {
                             <div className="p-4 space-y-4">
                                 {/* Allocated Fund Summary */}
                                 {(() => {
-                                    const totalAllocated = allAllocations.reduce((s, a) => s + Number(a.amount || 0), 0);
-                                    const settledTotal = allExpenses.filter(e => e.settled).reduce((s, e) => s + Number(e.amount || 0), 0);
-                                    const pendingTotal = allExpenses.filter(e => !e.settled).reduce((s, e) => s + Number(e.amount || 0), 0);
-                                    const remaining = totalAllocated - settledTotal;
+                                    const { totalAllocated, settledTotal, pendingTotal, remaining, isOverspent, overspentBy } = calculateFundSummary(allAllocations, allExpenses);
                                     return (
                                         <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
                                             <div className="flex justify-between items-center mb-3">
@@ -1560,14 +1556,14 @@ export default function EmployeeDashboard() {
                                                 </div>
                                                 <div>
                                                     <p className="text-[10px] font-bold text-gray-500 uppercase">Remaining</p>
-                                                    <p className={`text-base font-bold ${remaining < 0 ? "text-red-700" : "text-emerald-800"}`}>₹{remaining.toLocaleString()}</p>
+                                                    <p className={`text-base font-bold ${isOverspent ? "text-red-700" : "text-emerald-800"}`}>₹{remaining.toLocaleString()}</p>
                                                 </div>
                                             </div>
                                             {pendingTotal > 0 && (
                                                 <p className="text-[10px] text-amber-700 bg-amber-100 rounded px-2 py-1 mt-3 text-center">⏳ ₹{pendingTotal.toLocaleString()} in unsettled expenses pending</p>
                                             )}
-                                            {remaining < 0 && (
-                                                <p className="text-[10px] text-red-700 bg-red-100 rounded px-2 py-1 mt-2 text-center font-bold">⚠️ Allocated fund exceeded by ₹{Math.abs(remaining).toLocaleString()}</p>
+                                            {isOverspent && (
+                                                <p className="text-[10px] text-red-700 bg-red-100 rounded px-2 py-1 mt-2 text-center font-bold">⚠️ Allocated fund exceeded by ₹{overspentBy.toLocaleString()}</p>
                                             )}
                                             {allAllocations.length > 0 && (
                                                 <details className="mt-3">
@@ -1621,7 +1617,7 @@ export default function EmployeeDashboard() {
                                 {/* Expense List */}
                                 <div className="divide-y divide-gray-100 max-h-96 overflow-y-auto">
                                     {(() => {
-                                        const filtered = allExpenses.filter(e => expenseFilter === "all" ? true : expenseFilter === "settled" ? !!e.settled : !e.settled);
+                                        const filtered = filterExpenses(allExpenses, expenseFilter);
                                         return filtered.length === 0 ? (
                                             <p className="text-sm text-gray-500 text-center py-6">No {expenseFilter === "all" ? "" : expenseFilter} expenses found.</p>
                                         ) : filtered.map(exp => (
