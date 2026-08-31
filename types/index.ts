@@ -140,6 +140,20 @@ export interface Expense {
     receiptUrl?: string;
     createdBy?: string;
     createdAt: string;
+    settled?: boolean;
+    settledAt?: string;
+    settledBy?: string;
+}
+
+export interface Allocation {
+    id: string;
+    amount: number;
+    note?: string;
+    date: string;
+    buildingId?: string;
+    buildingName?: string;
+    createdBy?: string;
+    createdAt: string;
 }
 
 export interface InventoryItem {

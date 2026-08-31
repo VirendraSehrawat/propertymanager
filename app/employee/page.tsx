@@ -129,6 +129,16 @@ export default function EmployeeDashboard() {
     const [expenseReceipt, setExpenseReceipt] = useState<File | null>(null);
     const [isSubmittingExpense, setIsSubmittingExpense] = useState(false);
 
+    // Allocation (Fund) States
+    const [allAllocations, setAllAllocations] = useState<any[]>([]);
+    const [isAllocationModalOpen, setIsAllocationModalOpen] = useState(false);
+    const [allocAmount, setAllocAmount] = useState("");
+    const [allocNote, setAllocNote] = useState("");
+    const [allocDate, setAllocDate] = useState("");
+    const [allocBuilding, setAllocBuilding] = useState("");
+    const [isSubmittingAllocation, setIsSubmittingAllocation] = useState(false);
+    const [expenseFilter, setExpenseFilter] = useState<"all" | "unsettled" | "settled">("all");
+
     // Inventory States
     const [allInventory, setAllInventory] = useState<any[]>([]);
     const [isInventoryModalOpen, setIsInventoryModalOpen] = useState(false);
@@ -206,7 +216,11 @@ export default function EmployeeDashboard() {
             setAllInventory(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)).sort((a: any, b: any) => a.name?.localeCompare(b.name)));
         });
 
-        return () => { unsubTickets(); unsubUnits(); unsubInvoices(); unsubLedger(); unsubAllUnits(); unsubBuildings(); unsubChecklists(); unsubExpenses(); unsubInventory(); };
+        const unsubAllocations = onSnapshot(collection(db, "allocations"), (snapshot) => {
+            setAllAllocations(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)).sort((a: any, b: any) => new Date(b.date || b.createdAt).getTime() - new Date(a.date || a.createdAt).getTime()));
+        });
+
+        return () => { unsubTickets(); unsubUnits(); unsubInvoices(); unsubLedger(); unsubAllUnits(); unsubBuildings(); unsubChecklists(); unsubExpenses(); unsubInventory(); unsubAllocations(); };
     }, [role]);
 
     const handleMarkInProgress = async (ticketId: string) => {
@@ -731,6 +745,37 @@ export default function EmployeeDashboard() {
             setExpenseAmount(""); setExpenseDesc(""); setExpenseCategory("Maintenance"); setExpenseDate(""); setExpenseBuilding(""); setExpenseReceipt(null);
             alert("Expense logged!");
         } catch (error) { console.error(error); alert("Failed to log expense."); } finally { setIsSubmittingExpense(false); }
+    };
+
+    // --- Allocation (Fund) Handlers ---
+    const handleAddAllocation = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!allocAmount) return;
+        setIsSubmittingAllocation(true);
+        try {
+            await addDoc(collection(db, "allocations"), {
+                amount: Number(allocAmount),
+                note: allocNote || "",
+                date: allocDate || new Date().toISOString().split('T')[0],
+                buildingId: allocBuilding || "",
+                buildingName: allocBuilding ? getBuildingName(allocBuilding) : "General",
+                createdBy: user?.email || "",
+                createdAt: new Date().toISOString()
+            });
+            setIsAllocationModalOpen(false);
+            setAllocAmount(""); setAllocNote(""); setAllocDate(""); setAllocBuilding("");
+            alert("Allocated amount added!");
+        } catch (error) { console.error(error); alert("Failed to add allocation."); } finally { setIsSubmittingAllocation(false); }
+    };
+
+    const handleToggleExpenseSettled = async (exp: any) => {
+        const nextSettled = !exp.settled;
+        if (nextSettled && !window.confirm(`Mark "${exp.description}" (₹${Number(exp.amount).toLocaleString()}) as settled? This will be deducted from the allocated amount.`)) return;
+        try {
+            await updateDoc(doc(db, "expenses", exp.id), nextSettled
+                ? { settled: true, settledAt: new Date().toISOString(), settledBy: user?.email || "" }
+                : { settled: false, settledAt: deleteField(), settledBy: deleteField() });
+        } catch (error) { console.error(error); alert("Failed to update expense."); }
     };
 
     // --- Inventory Handlers ---
@@ -1486,9 +1531,64 @@ export default function EmployeeDashboard() {
                                     <h2 className="text-lg font-bold text-amber-800">💰 Expense Tracker</h2>
                                     <p className="text-xs text-amber-600 mt-1">Log maintenance, supplies & other expenses</p>
                                 </div>
-                                <button onClick={() => { setIsExpenseModalOpen(true); setExpenseDate(new Date().toISOString().split('T')[0]); }} className="text-sm bg-amber-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-amber-700 transition">+ Add</button>
+                                <div className="flex gap-2">
+                                    <button onClick={() => { setIsAllocationModalOpen(true); setAllocDate(new Date().toISOString().split('T')[0]); }} className="text-sm bg-emerald-600 text-white px-3 py-2 rounded-lg font-bold hover:bg-emerald-700 transition">+ Allocate</button>
+                                    <button onClick={() => { setIsExpenseModalOpen(true); setExpenseDate(new Date().toISOString().split('T')[0]); }} className="text-sm bg-amber-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-amber-700 transition">+ Add</button>
+                                </div>
                             </div>
                             <div className="p-4 space-y-4">
+                                {/* Allocated Fund Summary */}
+                                {(() => {
+                                    const totalAllocated = allAllocations.reduce((s, a) => s + Number(a.amount || 0), 0);
+                                    const settledTotal = allExpenses.filter(e => e.settled).reduce((s, e) => s + Number(e.amount || 0), 0);
+                                    const pendingTotal = allExpenses.filter(e => !e.settled).reduce((s, e) => s + Number(e.amount || 0), 0);
+                                    const remaining = totalAllocated - settledTotal;
+                                    return (
+                                        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
+                                            <div className="flex justify-between items-center mb-3">
+                                                <h3 className="text-sm font-bold text-emerald-800">🏦 Allocated Fund</h3>
+                                                <span className="text-[10px] text-emerald-600">{allAllocations.length} allocation(s)</span>
+                                            </div>
+                                            <div className="grid grid-cols-3 gap-2 text-center">
+                                                <div>
+                                                    <p className="text-[10px] font-bold text-gray-500 uppercase">Allocated</p>
+                                                    <p className="text-base font-bold text-emerald-700">₹{totalAllocated.toLocaleString()}</p>
+                                                </div>
+                                                <div>
+                                                    <p className="text-[10px] font-bold text-gray-500 uppercase">Settled</p>
+                                                    <p className="text-base font-bold text-red-600">−₹{settledTotal.toLocaleString()}</p>
+                                                </div>
+                                                <div>
+                                                    <p className="text-[10px] font-bold text-gray-500 uppercase">Remaining</p>
+                                                    <p className={`text-base font-bold ${remaining < 0 ? "text-red-700" : "text-emerald-800"}`}>₹{remaining.toLocaleString()}</p>
+                                                </div>
+                                            </div>
+                                            {pendingTotal > 0 && (
+                                                <p className="text-[10px] text-amber-700 bg-amber-100 rounded px-2 py-1 mt-3 text-center">⏳ ₹{pendingTotal.toLocaleString()} in unsettled expenses pending</p>
+                                            )}
+                                            {remaining < 0 && (
+                                                <p className="text-[10px] text-red-700 bg-red-100 rounded px-2 py-1 mt-2 text-center font-bold">⚠️ Allocated fund exceeded by ₹{Math.abs(remaining).toLocaleString()}</p>
+                                            )}
+                                            {allAllocations.length > 0 && (
+                                                <details className="mt-3">
+                                                    <summary className="text-[10px] font-bold text-emerald-700 uppercase cursor-pointer hover:text-emerald-900">📜 Allocation History</summary>
+                                                    <div className="mt-2 space-y-1.5 max-h-40 overflow-y-auto">
+                                                        {allAllocations.map(a => (
+                                                            <div key={a.id} className="flex justify-between items-center bg-white rounded-lg px-2.5 py-2 border border-emerald-100">
+                                                                <div>
+                                                                    <p className="text-xs font-medium text-gray-800">{a.note || "Fund allocation"}</p>
+                                                                    <p className="text-[10px] text-gray-500">{a.buildingName || "General"} · {a.date || new Date(a.createdAt).toLocaleDateString()}</p>
+                                                                </div>
+                                                                <p className="text-sm font-bold text-emerald-700 shrink-0">+₹{Number(a.amount).toLocaleString()}</p>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </details>
+                                            )}
+                                        </div>
+                                    );
+                                })()}
+
                                 {/* Summary */}
                                 {(() => {
                                     const thisMonth = new Date().toISOString().slice(0, 7);
@@ -1511,24 +1611,45 @@ export default function EmployeeDashboard() {
                                     );
                                 })()}
 
+                                {/* Filter */}
+                                <div className="flex gap-2">
+                                    {(["all", "unsettled", "settled"] as const).map(f => (
+                                        <button key={f} onClick={() => setExpenseFilter(f)} className={`flex-1 text-xs font-bold py-2 rounded-lg capitalize transition ${expenseFilter === f ? "bg-amber-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>{f}</button>
+                                    ))}
+                                </div>
+
                                 {/* Expense List */}
                                 <div className="divide-y divide-gray-100 max-h-96 overflow-y-auto">
-                                    {allExpenses.length === 0 ? (
-                                        <p className="text-sm text-gray-500 text-center py-6">No expenses logged yet.</p>
-                                    ) : allExpenses.map(exp => (
-                                        <div key={exp.id} className="py-3 flex justify-between items-start">
+                                    {(() => {
+                                        const filtered = allExpenses.filter(e => expenseFilter === "all" ? true : expenseFilter === "settled" ? !!e.settled : !e.settled);
+                                        return filtered.length === 0 ? (
+                                            <p className="text-sm text-gray-500 text-center py-6">No {expenseFilter === "all" ? "" : expenseFilter} expenses found.</p>
+                                        ) : filtered.map(exp => (
+                                        <div key={exp.id} className={`py-3 flex justify-between items-start gap-3 ${exp.settled ? "opacity-70" : ""}`}>
                                             <div>
-                                                <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">{exp.category}</span>
-                                                <p className="font-medium text-gray-900 text-sm mt-1">{exp.description}</p>
+                                                <div className="flex items-center gap-2 flex-wrap">
+                                                    <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">{exp.category}</span>
+                                                    {exp.settled ? (
+                                                        <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-green-100 text-green-700">✓ Settled</span>
+                                                    ) : (
+                                                        <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-orange-100 text-orange-700">Pending</span>
+                                                    )}
+                                                </div>
+                                                <p className={`font-medium text-gray-900 text-sm mt-1 ${exp.settled ? "line-through text-gray-500" : ""}`}>{exp.description}</p>
                                                 <p className="text-[10px] text-gray-500">{exp.buildingName || "General"} · {exp.date || new Date(exp.createdAt).toLocaleDateString()}</p>
                                                 {exp.createdBy && <p className="text-[10px] text-gray-400">by {exp.createdBy}</p>}
+                                                {exp.settled && exp.settledAt && <p className="text-[10px] text-green-600">Settled {new Date(exp.settledAt).toLocaleDateString()}{exp.settledBy ? ` by ${exp.settledBy}` : ""}</p>}
                                             </div>
-                                            <div className="text-right shrink-0">
+                                            <div className="text-right shrink-0 flex flex-col items-end gap-2">
                                                 <p className="font-bold text-red-700">₹{Number(exp.amount).toLocaleString()}</p>
                                                 {exp.receiptUrl && <a href={exp.receiptUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] text-blue-600 hover:underline">📎 Receipt</a>}
+                                                <button onClick={() => handleToggleExpenseSettled(exp)} className={`text-[10px] font-bold px-2 py-1 rounded-md transition ${exp.settled ? "bg-gray-100 text-gray-600 hover:bg-gray-200" : "bg-green-600 text-white hover:bg-green-700"}`}>
+                                                    {exp.settled ? "Undo" : "✓ Settle"}
+                                                </button>
                                             </div>
                                         </div>
-                                    ))}
+                                        ));
+                                    })()}
                                 </div>
                             </div>
                         </div>
@@ -2028,6 +2149,41 @@ export default function EmployeeDashboard() {
                             <div className="flex gap-2 pt-2">
                                 <button type="button" onClick={() => setIsTransferModalOpen(false)} className="flex-1 py-2 border border-gray-300 rounded-md text-sm text-gray-600">Cancel</button>
                                 <button type="submit" disabled={isTransferring} className="flex-1 py-2 bg-orange-600 text-white rounded-md text-sm font-medium hover:bg-orange-700 disabled:bg-orange-400">{isTransferring ? "Transferring..." : "Transfer Tenant"}</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* ADD ALLOCATION MODAL */}
+            {isAllocationModalOpen && (
+                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setIsAllocationModalOpen(false)}>
+                    <div className="bg-white p-6 rounded-xl shadow-xl max-w-md w-full space-y-4" onClick={(e) => e.stopPropagation()}>
+                        <h3 className="text-lg font-bold text-gray-800">🏦 Add Allocated Amount</h3>
+                        <p className="text-xs text-gray-500">Funds allocated for expenses. Settled expenses are deducted from this amount.</p>
+                        <form onSubmit={handleAddAllocation} className="space-y-3">
+                            <div>
+                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Amount (₹) *</label>
+                                <input type="number" required min="1" value={allocAmount} onChange={(e) => setAllocAmount(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" placeholder="e.g. 20000" />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Building</label>
+                                <select value={allocBuilding} onChange={(e) => setAllocBuilding(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm">
+                                    <option value="">General (All Buildings)</option>
+                                    {buildings.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Note</label>
+                                <input type="text" value={allocNote} onChange={(e) => setAllocNote(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" placeholder="e.g. Monthly maintenance fund" />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Date</label>
+                                <input type="date" value={allocDate} onChange={(e) => setAllocDate(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
+                            </div>
+                            <div className="flex gap-2 pt-2">
+                                <button type="button" onClick={() => setIsAllocationModalOpen(false)} className="flex-1 py-2 border border-gray-300 rounded-md text-sm text-gray-600">Cancel</button>
+                                <button type="submit" disabled={isSubmittingAllocation} className="flex-1 py-2 bg-emerald-600 text-white rounded-md text-sm font-medium hover:bg-emerald-700 disabled:bg-emerald-400">{isSubmittingAllocation ? "Saving..." : "Add Allocation"}</button>
                             </div>
                         </form>
                     </div>
