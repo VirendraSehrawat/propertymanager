@@ -1,8 +1,6 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
-import { storage } from "@/lib/firebase";
 
 export function useUploadWithProgress() {
     const [uploadProgress, setUploadProgress] = useState<number>(0);
@@ -11,29 +9,34 @@ export function useUploadWithProgress() {
     const uploadFile = useCallback(async (path: string, file: File): Promise<string> => {
         setIsUploading(true);
         setUploadProgress(0);
-        const fileRef = ref(storage, path);
-        const uploadTask = uploadBytesResumable(fileRef, file);
+        setUploadProgress(10);
 
-        return new Promise((resolve, reject) => {
-            uploadTask.on(
-                "state_changed",
-                (snapshot) => {
-                    const progress = Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100);
-                    setUploadProgress(progress);
-                },
-                (error) => {
-                    setIsUploading(false);
-                    setUploadProgress(0);
-                    reject(error);
-                },
-                async () => {
-                    const url = await getDownloadURL(uploadTask.snapshot.ref);
-                    setIsUploading(false);
-                    setUploadProgress(100);
-                    resolve(url);
-                }
-            );
-        });
+        try {
+            const formData = new FormData();
+            formData.append("path", path);
+            formData.append("file", file);
+
+            setUploadProgress(40);
+            const response = await fetch("/api/uploads/cloudinary", {
+                method: "POST",
+                body: formData,
+            });
+
+            setUploadProgress(85);
+            const payload = await response.json();
+
+            if (!response.ok) {
+                throw new Error(payload?.error || "Upload failed");
+            }
+
+            setUploadProgress(100);
+            return payload.url as string;
+        } catch (error) {
+            setUploadProgress(0);
+            throw error;
+        } finally {
+            setIsUploading(false);
+        }
     }, []);
 
     const resetProgress = useCallback(() => {

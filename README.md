@@ -1,6 +1,6 @@
 # Property Manager
 
-Property management web app built with `Next.js` and Firebase services (`Auth`, `Firestore`, `Storage`).
+Property management web app built with `Next.js`, Firebase services (`Auth`, `Firestore`) and Cloudinary for file uploads.
 
 ## Tech stack
 
@@ -26,7 +26,9 @@ Open `http://localhost:3000`.
 
 ## Environment variables
 
-This app expects Firebase client env vars (see `.env.example`):
+This app expects:
+
+### Firebase client vars
 
 - `NEXT_PUBLIC_FIREBASE_API_KEY`
 - `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN`
@@ -34,6 +36,12 @@ This app expects Firebase client env vars (see `.env.example`):
 - `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET`
 - `NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID`
 - `NEXT_PUBLIC_FIREBASE_APP_ID`
+
+### Cloudinary server vars
+
+- `CLOUDINARY_CLOUD_NAME`
+- `CLOUDINARY_API_KEY`
+- `CLOUDINARY_API_SECRET`
 
 ## Tests
 
@@ -50,7 +58,7 @@ This repository is configured for Vercel deployment (`vercel.json`).
 ### Option A: Git integration (recommended)
 
 1. Import this repository in Vercel.
-2. Set all Firebase environment variables in Vercel Project Settings.
+2. Set Firebase + Cloudinary environment variables in Vercel Project Settings.
 3. Use default build settings for Next.js.
 4. Deploy.
 
@@ -62,9 +70,11 @@ npm run deploy:vercel
 
 ## Firebase usage after migration
 
-Firebase remains the backend provider:
+Firebase remains the primary backend provider:
 
 - Firestore rules are still managed via `firebase.json` + `firestore.rules`
 - Emulator/testing workflow remains unchanged
+
+File uploads are now routed through a server API and stored in Cloudinary.
 
 Only app hosting moved from Firebase App Hosting to Vercel.
