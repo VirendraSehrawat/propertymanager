@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "npx firebase emulators:exec --only firestore 'npx vitest run'"
+    "test": "npx firebase emulators:exec --only firestore 'npx vitest run'",
+    "deploy:vercel": "npx vercel --prod"
   },
   "dependencies": {
     "firebase": "^12.12.1",

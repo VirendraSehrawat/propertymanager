@@ -1,36 +1,70 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Property Manager
 
-## Getting Started
+Property management web app built with `Next.js` and Firebase services (`Auth`, `Firestore`, `Storage`).
 
-First, run the development server:
+## Tech stack
+
+- `Next.js` (App Router)
+- `React`
+- `TypeScript`
+- `Firebase` (backend services)
+- `Vitest`
+
+## Local setup
+
+1. Install dependencies
+2. Configure environment variables
+3. Run dev server
 
 ```bash
+npm install
+cp .env.example .env.local
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open `http://localhost:3000`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Environment variables
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+This app expects Firebase client env vars (see `.env.example`):
 
-## Learn More
+- `NEXT_PUBLIC_FIREBASE_API_KEY`
+- `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN`
+- `NEXT_PUBLIC_FIREBASE_PROJECT_ID`
+- `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET`
+- `NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID`
+- `NEXT_PUBLIC_FIREBASE_APP_ID`
 
-To learn more about Next.js, take a look at the following resources:
+## Tests
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+npm test
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+`npm test` runs Vitest with Firestore emulator.
 
-## Deploy on Vercel
+## Deploy to Vercel (primary)
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+This repository is configured for Vercel deployment (`vercel.json`).
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### Option A: Git integration (recommended)
+
+1. Import this repository in Vercel.
+2. Set all Firebase environment variables in Vercel Project Settings.
+3. Use default build settings for Next.js.
+4. Deploy.
+
+### Option B: CLI deploy
+
+```bash
+npm run deploy:vercel
+```
+
+## Firebase usage after migration
+
+Firebase remains the backend provider:
+
+- Firestore rules are still managed via `firebase.json` + `firestore.rules`
+- Emulator/testing workflow remains unchanged
+
+Only app hosting moved from Firebase App Hosting to Vercel.

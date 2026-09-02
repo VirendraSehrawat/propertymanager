@@ -7,16 +7,5 @@
       "port": 8080,
       "host": "127.0.0.1"
     }
-  },
-  "apphosting": {
-    "backendId": "property-manager",
-    "rootDir": "/",
-    "ignore": [
-      "node_modules",
-      ".git",
-      "firebase-debug.log",
-      "firebase-debug.*.log",
-      "functions"
-    ]
   }
 }
