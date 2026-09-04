@@ -11,7 +11,7 @@ import { auth, db } from "@/lib/firebase";
 import { collection, onSnapshot, doc, updateDoc, arrayUnion, query, where, writeBatch, getDocs, addDoc, getDoc, deleteField } from "firebase/firestore";
 import { useUploadWithProgress, UploadProgressBar } from "@/lib/useUpload";
 import { calculateFundSummary, filterExpenses, buildSettlementUpdate } from "@/lib/expenses";
-import { CollectionsTab, OccupancyTab, LedgerTab, ExpensesTab, InventoryTab, TicketsTab, DailyLedgerTab } from "@/components/employee";
+import { CollectionsTab, OccupancyTab, LedgerTab, ExpensesTab, InventoryTab, TicketsTab, DailyLedgerTab, MonthlyOverviewTab } from "@/components/employee";
 import { TabButton } from "@/components/ui";
 
 export default function EmployeeDashboard() {
@@ -21,7 +21,7 @@ export default function EmployeeDashboard() {
 
     const [activeTickets, setActiveTickets] = useState<any[]>([]);
     const [resolvedTickets, setResolvedTickets] = useState<any[]>([]);
-    const [activeTab, setActiveTab] = useState<"home" | "active" | "resolved" | "meter" | "collections" | "ledger" | "daily" | "units" | "occupancy" | "checklist" | "expenses" | "inventory">("home");
+    const [activeTab, setActiveTab] = useState<"home" | "active" | "resolved" | "meter" | "collections" | "ledger" | "daily" | "monthly" | "units" | "occupancy" | "checklist" | "expenses" | "inventory">("home");
 
     const [isResolveModalOpen, setIsResolveModalOpen] = useState(false);
     const [selectedTicket, setSelectedTicket] = useState<any>(null);
@@ -953,6 +953,7 @@ export default function EmployeeDashboard() {
                         <TabButton label={`Done (${resolvedTickets.length})`} isActive={activeTab === "resolved"} onClick={() => setActiveTab("resolved")} activeColor="text-green-600" />
                         <TabButton label="Ledger" isActive={activeTab === "ledger"} onClick={() => setActiveTab("ledger")} activeColor="text-teal-600" />
                         <TabButton label="📓 Daily" isActive={activeTab === "daily"} onClick={() => setActiveTab("daily")} activeColor="text-teal-700" />
+                        <TabButton label="🏘 Monthly" isActive={activeTab === "monthly"} onClick={() => setActiveTab("monthly")} activeColor="text-emerald-700" />
                         <TabButton label="Units" isActive={activeTab === "units"} onClick={() => setActiveTab("units")} activeColor="text-blue-600" />
                         <TabButton label="📊 Occupancy" isActive={activeTab === "occupancy"} onClick={() => setActiveTab("occupancy")} activeColor="text-emerald-600" />
                         <TabButton label="📋 Checklist" isActive={activeTab === "checklist"} onClick={() => setActiveTab("checklist")} activeColor="text-pink-600" />
@@ -1291,6 +1292,11 @@ export default function EmployeeDashboard() {
                 {/* DAILY LEDGER TAB */}
                 {activeTab === "daily" && (
                     <DailyLedgerTab entries={dailyLedgerEntries} buildings={buildings} allUnits={allUnits} allInvoices={allInvoices} currentUserEmail={user?.email || ""} />
+                )}
+
+                {/* MONTHLY OVERVIEW TAB */}
+                {activeTab === "monthly" && (
+                    <MonthlyOverviewTab allUnits={allUnits} buildings={buildings} allInvoices={allInvoices} />
                 )}
 
                 {/* UNITS TAB */}
