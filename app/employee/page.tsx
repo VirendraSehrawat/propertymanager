@@ -139,6 +139,9 @@ export default function EmployeeDashboard() {
     const [allocBuilding, setAllocBuilding] = useState("");
     const [isSubmittingAllocation, setIsSubmittingAllocation] = useState(false);
     const [expenseFilter, setExpenseFilter] = useState<"all" | "unsettled" | "settled">("all");
+    const [expenseViewMode, setExpenseViewMode] = useState<"all" | "daily" | "monthly">("all");
+    const [expenseSelectedDate, setExpenseSelectedDate] = useState<string>(new Date().toISOString().slice(0, 10));
+    const [expenseSelectedMonth, setExpenseSelectedMonth] = useState<string>(new Date().toISOString().slice(0, 7));
 
     // Daily Ledger States
     const [dailyLedgerEntries, setDailyLedgerEntries] = useState<any[]>([]);
@@ -1620,6 +1623,23 @@ export default function EmployeeDashboard() {
                                     );
                                 })()}
 
+                                {/* View mode toggle */}
+                                <div className="flex gap-2">
+                                    {(["all", "daily", "monthly"] as const).map(v => (
+                                        <button key={v} onClick={() => setExpenseViewMode(v)} className={`flex-1 text-xs font-bold py-2 rounded-lg capitalize transition ${expenseViewMode === v ? "bg-teal-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
+                                            {v === "all" ? "🗂 All" : v === "daily" ? "📅 Daily" : "🗓 Monthly"}
+                                        </button>
+                                    ))}
+                                </div>
+
+                                {/* Date/Month picker */}
+                                {expenseViewMode === "daily" && (
+                                    <input type="date" value={expenseSelectedDate} onChange={(e) => setExpenseSelectedDate(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+                                )}
+                                {expenseViewMode === "monthly" && (
+                                    <input type="month" value={expenseSelectedMonth} onChange={(e) => setExpenseSelectedMonth(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+                                )}
+
                                 {/* Filter */}
                                 <div className="flex gap-2">
                                     {(["all", "unsettled", "settled"] as const).map(f => (
@@ -1630,10 +1650,25 @@ export default function EmployeeDashboard() {
                                 {/* Expense List */}
                                 <div className="divide-y divide-gray-100 max-h-96 overflow-y-auto">
                                     {(() => {
-                                        const filtered = filterExpenses(allExpenses, expenseFilter);
+                                        const dateScoped = allExpenses.filter(e => {
+                                            const d = e.date || (e.createdAt || "").slice(0, 10);
+                                            if (expenseViewMode === "daily") return d === expenseSelectedDate;
+                                            if (expenseViewMode === "monthly") return (d || "").startsWith(expenseSelectedMonth);
+                                            return true;
+                                        });
+                                        const filtered = filterExpenses(dateScoped, expenseFilter);
+                                        const scopedTotal = filtered.reduce((s, e) => s + Number(e.amount || 0), 0);
                                         return filtered.length === 0 ? (
-                                            <p className="text-sm text-gray-500 text-center py-6">No {expenseFilter === "all" ? "" : expenseFilter} expenses found.</p>
-                                        ) : filtered.map(exp => (
+                                            <p className="text-sm text-gray-500 text-center py-6">No {expenseFilter === "all" ? "" : expenseFilter} expenses for this {expenseViewMode === "daily" ? "day" : expenseViewMode === "monthly" ? "month" : "period"}.</p>
+                                        ) : (
+                                            <>
+                                                {expenseViewMode !== "all" && (
+                                                    <div className="py-2 px-2 bg-teal-50 border border-teal-200 rounded-lg mb-2 flex justify-between items-center">
+                                                        <span className="text-xs font-bold text-teal-800">{filtered.length} entries {expenseViewMode === "daily" ? `on ${new Date(expenseSelectedDate).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}` : `in ${new Date(expenseSelectedMonth + "-01").toLocaleDateString("en-IN", { month: "long", year: "numeric" })}`}</span>
+                                                        <span className="text-sm font-bold text-teal-800">₹{scopedTotal.toLocaleString()}</span>
+                                                    </div>
+                                                )}
+                                                {filtered.map(exp => (
                                         <div key={exp.id} className={`py-3 flex justify-between items-start gap-3 ${exp.settled ? "opacity-70" : ""}`}>
                                             <div>
                                                 <div className="flex items-center gap-2 flex-wrap">
@@ -1657,7 +1692,9 @@ export default function EmployeeDashboard() {
                                                 </button>
                                             </div>
                                         </div>
-                                        ));
+                                        ))}
+                                            </>
+                                        );
                                     })()}
                                 </div>
                             </div>
