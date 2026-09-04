@@ -1290,7 +1290,7 @@ export default function EmployeeDashboard() {
 
                 {/* DAILY LEDGER TAB */}
                 {activeTab === "daily" && (
-                    <DailyLedgerTab entries={dailyLedgerEntries} buildings={buildings} allUnits={allUnits} currentUserEmail={user?.email || ""} />
+                    <DailyLedgerTab entries={dailyLedgerEntries} buildings={buildings} allUnits={allUnits} allInvoices={allInvoices} currentUserEmail={user?.email || ""} />
                 )}
 
                 {/* UNITS TAB */}

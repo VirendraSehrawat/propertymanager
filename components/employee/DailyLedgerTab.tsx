@@ -2,7 +2,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { addDoc, collection, deleteDoc, doc } from "firebase/firestore";
+import { addDoc, collection, deleteDoc, doc, updateDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { Modal } from "@/components/ui";
 
@@ -28,11 +28,13 @@ interface DailyLedgerEntry {
 
 interface Building { id: string; name: string; }
 interface Unit { id: string; unitNumber: string; buildingId?: string; status?: string; tenantName?: string; tenantEmail?: string; }
+interface Invoice { id: string; unitId: string; unitNumber?: string; tenantEmail?: string; totalAmount?: number; amountPaid?: number; billingPeriod?: string; status?: string; }
 
 interface Props {
     entries: DailyLedgerEntry[];
     buildings: Building[];
     allUnits: Unit[];
+    allInvoices?: Invoice[];
     currentUserEmail?: string;
 }
 
@@ -42,7 +44,7 @@ const OUTFLOW_CATEGORIES = ["labour", "material", "utilities", "repair", "other"
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const currentMonthISO = () => new Date().toISOString().slice(0, 7);
 
-export function DailyLedgerTab({ entries, buildings, allUnits, currentUserEmail }: Props) {
+export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [], currentUserEmail }: Props) {
     const [viewMode, setViewMode] = useState<"daily" | "monthly">("daily");
     const [selectedDate, setSelectedDate] = useState(todayISO());
     const [selectedMonth, setSelectedMonth] = useState(currentMonthISO());
@@ -80,6 +82,14 @@ export function DailyLedgerTab({ entries, buildings, allUnits, currentUserEmail 
         [allUnits, buildingId]
     );
 
+    // Find pending invoices for the selected unit
+    const pendingInvoicesForUnit = useMemo(() => {
+        if (!unitId) return [];
+        return allInvoices
+            .filter(inv => inv.unitId === unitId && (inv.status === "unpaid" || inv.status === "pending"))
+            .sort((a, b) => new Date(a.billingPeriod || "").getTime() - new Date(b.billingPeriod || "").getTime());
+    }, [unitId, allInvoices]);
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!amount || Number(amount) <= 0) { alert("Enter a valid amount."); return; }
@@ -110,6 +120,60 @@ export function DailyLedgerTab({ entries, buildings, allUnits, currentUserEmail 
                 payload.vendor = vendor || "";
             }
             await addDoc(collection(db, "dailyLedger"), payload);
+
+            // Auto-settle matching invoice: inflow + specific unit + settlement-eligible category
+            const settleCategories = ["rent", "electricity", "maintenance"];
+            if (
+                direction === "inflow" &&
+                unitId &&
+                settleCategories.includes(category) &&
+                pendingInvoicesForUnit.length > 0
+            ) {
+                const targetInvoice = pendingInvoicesForUnit[0];
+                const invoiceTotal = Number(targetInvoice.totalAmount || 0);
+                const alreadyPaid = Number(targetInvoice.amountPaid || 0);
+                const remaining = Math.max(0, invoiceTotal - alreadyPaid);
+                const paying = Number(amount);
+                const applied = Math.min(paying, remaining);
+                const newPaid = alreadyPaid + applied;
+                const fullySettled = newPaid >= invoiceTotal;
+
+                if (fullySettled) {
+                    await updateDoc(doc(db, "invoices", targetInvoice.id), {
+                        status: "paid",
+                        paidAt: new Date().toISOString(),
+                        amountPaid: newPaid,
+                        transactionId: "DAILY_LEDGER_AUTOSETTLE",
+                    });
+                } else {
+                    await updateDoc(doc(db, "invoices", targetInvoice.id), {
+                        amountPaid: newPaid,
+                    });
+                }
+
+                await addDoc(collection(db, "ledger"), {
+                    tenantEmail: targetInvoice.tenantEmail || unit?.tenantEmail || "",
+                    unitId: targetInvoice.unitId,
+                    unitNumber: targetInvoice.unitNumber || unit?.unitNumber || "",
+                    invoiceId: targetInvoice.id,
+                    billingPeriod: targetInvoice.billingPeriod || "Ad-Hoc",
+                    invoiceAmount: invoiceTotal,
+                    amountPaid: applied,
+                    balance: applied - invoiceTotal + alreadyPaid,
+                    transactionId: "DAILY_LEDGER_AUTOSETTLE",
+                    type: "payment",
+                    settledBy: "employee-daily-ledger",
+                    category,
+                    createdAt: new Date().toISOString(),
+                });
+
+                if (fullySettled) {
+                    alert(`✅ Invoice ${targetInvoice.billingPeriod} settled for ${targetInvoice.unitNumber}.`);
+                } else {
+                    alert(`💵 Partial payment ₹${applied} applied. Remaining ₹${(invoiceTotal - newPaid).toLocaleString()} on ${targetInvoice.billingPeriod}.`);
+                }
+            }
+
             setIsModalOpen(false);
             resetForm();
         } catch (err) {
@@ -279,6 +343,18 @@ export function DailyLedgerTab({ entries, buildings, allUnits, currentUserEmail 
                                     <option key={u.id} value={u.id}>{u.unitNumber}{u.tenantName ? ` — ${u.tenantName}` : ""}</option>
                                 ))}
                             </select>
+                        </div>
+                    )}
+
+                    {/* Pending invoice hint for auto-settle */}
+                    {direction === "inflow" && unitId && ["rent", "electricity", "maintenance"].includes(category) && pendingInvoicesForUnit.length > 0 && (
+                        <div className="bg-teal-50 border border-teal-200 rounded-lg p-3 text-xs">
+                            <p className="font-bold text-teal-800 mb-1">💡 Auto-settle preview</p>
+                            <p className="text-teal-700">Oldest pending invoice for this unit will be updated on save:</p>
+                            <p className="mt-1 text-teal-900 font-medium">{pendingInvoicesForUnit[0].billingPeriod} — ₹{Number(pendingInvoicesForUnit[0].totalAmount || 0).toLocaleString()} due</p>
+                            {pendingInvoicesForUnit.length > 1 && (
+                                <p className="mt-0.5 text-[10px] text-teal-600">({pendingInvoicesForUnit.length - 1} more pending)</p>
+                            )}
                         </div>
                     )}
 
