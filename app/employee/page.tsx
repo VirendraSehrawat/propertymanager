@@ -11,7 +11,7 @@ import { auth, db } from "@/lib/firebase";
 import { collection, onSnapshot, doc, updateDoc, arrayUnion, query, where, writeBatch, getDocs, addDoc, getDoc, deleteField } from "firebase/firestore";
 import { useUploadWithProgress, UploadProgressBar } from "@/lib/useUpload";
 import { calculateFundSummary, filterExpenses, buildSettlementUpdate } from "@/lib/expenses";
-import { CollectionsTab, OccupancyTab, LedgerTab, ExpensesTab, InventoryTab, TicketsTab } from "@/components/employee";
+import { CollectionsTab, OccupancyTab, LedgerTab, ExpensesTab, InventoryTab, TicketsTab, DailyLedgerTab } from "@/components/employee";
 import { TabButton } from "@/components/ui";
 
 export default function EmployeeDashboard() {
@@ -21,7 +21,7 @@ export default function EmployeeDashboard() {
 
     const [activeTickets, setActiveTickets] = useState<any[]>([]);
     const [resolvedTickets, setResolvedTickets] = useState<any[]>([]);
-    const [activeTab, setActiveTab] = useState<"home" | "active" | "resolved" | "meter" | "collections" | "ledger" | "units" | "occupancy" | "checklist" | "expenses" | "inventory">("home");
+    const [activeTab, setActiveTab] = useState<"home" | "active" | "resolved" | "meter" | "collections" | "ledger" | "daily" | "units" | "occupancy" | "checklist" | "expenses" | "inventory">("home");
 
     const [isResolveModalOpen, setIsResolveModalOpen] = useState(false);
     const [selectedTicket, setSelectedTicket] = useState<any>(null);
@@ -140,6 +140,9 @@ export default function EmployeeDashboard() {
     const [isSubmittingAllocation, setIsSubmittingAllocation] = useState(false);
     const [expenseFilter, setExpenseFilter] = useState<"all" | "unsettled" | "settled">("all");
 
+    // Daily Ledger States
+    const [dailyLedgerEntries, setDailyLedgerEntries] = useState<any[]>([]);
+
     // Inventory States
     const [allInventory, setAllInventory] = useState<any[]>([]);
     const [isInventoryModalOpen, setIsInventoryModalOpen] = useState(false);
@@ -221,7 +224,11 @@ export default function EmployeeDashboard() {
             setAllAllocations(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)).sort((a: any, b: any) => new Date(b.date || b.createdAt).getTime() - new Date(a.date || a.createdAt).getTime()));
         });
 
-        return () => { unsubTickets(); unsubUnits(); unsubInvoices(); unsubLedger(); unsubAllUnits(); unsubBuildings(); unsubChecklists(); unsubExpenses(); unsubInventory(); unsubAllocations(); };
+        const unsubDailyLedger = onSnapshot(collection(db, "dailyLedger"), (snapshot) => {
+            setDailyLedgerEntries(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)).sort((a: any, b: any) => (b.date || "").localeCompare(a.date || "")));
+        });
+
+        return () => { unsubTickets(); unsubUnits(); unsubInvoices(); unsubLedger(); unsubAllUnits(); unsubBuildings(); unsubChecklists(); unsubExpenses(); unsubInventory(); unsubAllocations(); unsubDailyLedger(); };
     }, [role]);
 
     const handleMarkInProgress = async (ticketId: string) => {
@@ -942,6 +949,7 @@ export default function EmployeeDashboard() {
                         <TabButton label={`Meter${unitsNeedingMeter > 0 ? ` (${unitsNeedingMeter})` : ""}`} isActive={activeTab === "meter"} onClick={() => setActiveTab("meter")} activeColor="text-purple-600" />
                         <TabButton label={`Done (${resolvedTickets.length})`} isActive={activeTab === "resolved"} onClick={() => setActiveTab("resolved")} activeColor="text-green-600" />
                         <TabButton label="Ledger" isActive={activeTab === "ledger"} onClick={() => setActiveTab("ledger")} activeColor="text-teal-600" />
+                        <TabButton label="📓 Daily" isActive={activeTab === "daily"} onClick={() => setActiveTab("daily")} activeColor="text-teal-700" />
                         <TabButton label="Units" isActive={activeTab === "units"} onClick={() => setActiveTab("units")} activeColor="text-blue-600" />
                         <TabButton label="📊 Occupancy" isActive={activeTab === "occupancy"} onClick={() => setActiveTab("occupancy")} activeColor="text-emerald-600" />
                         <TabButton label="📋 Checklist" isActive={activeTab === "checklist"} onClick={() => setActiveTab("checklist")} activeColor="text-pink-600" />
@@ -1275,6 +1283,11 @@ export default function EmployeeDashboard() {
                 {/* LEDGER TAB */}
                 {activeTab === "ledger" && (
                     <LedgerTab allLedgerEntries={allLedgerEntries} occupiedUnits={occupiedUnits} />
+                )}
+
+                {/* DAILY LEDGER TAB */}
+                {activeTab === "daily" && (
+                    <DailyLedgerTab entries={dailyLedgerEntries} buildings={buildings} allUnits={allUnits} currentUserEmail={user?.email || ""} />
                 )}
 
                 {/* UNITS TAB */}
