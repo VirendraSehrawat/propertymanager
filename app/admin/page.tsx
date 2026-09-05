@@ -8,6 +8,7 @@ import { signOut } from "firebase/auth";
 import { collection, addDoc, onSnapshot, query, orderBy, where, doc, updateDoc, setDoc, getDocs, writeBatch, deleteDoc, getDoc, deleteField } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
 import { useUploadWithProgress, UploadProgressBar } from "@/lib/useUpload";
+import { DailyLedgerTab } from "@/components/employee";
 
 interface Building {
     id: string;
@@ -199,6 +200,10 @@ export default function AdminDashboard() {
     // --- User Management State ---
     const [allUsers, setAllUsers] = useState<any[]>([]);
 
+    // --- Daily Ledger State ---
+    const [dailyLedgerEntries, setDailyLedgerEntries] = useState<any[]>([]);
+    const [allUnits, setAllUnits] = useState<any[]>([]);
+
     // --- Single Invoice Generation State ---
     const [isSingleInvModalOpen, setIsSingleInvModalOpen] = useState(false);
     const [singleInvUnit, setSingleInvUnit] = useState("");
@@ -237,8 +242,10 @@ export default function AdminDashboard() {
         const unsubDocs = onSnapshot(collection(db, "documents"), (snapshot) => { const docData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as DocumentData)); docData.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()); setDocuments(docData); });
         const unsubLedger = onSnapshot(collection(db, "ledger"), (snapshot) => { setAllLedgerEntries(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)).sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())); });
         const unsubUsers = onSnapshot(collection(db, "users"), (snapshot) => { setAllUsers(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)).sort((a: any, b: any) => (a.email || "").localeCompare(b.email || ""))); });
+        const unsubDailyLedger = onSnapshot(collection(db, "dailyLedger"), (snapshot) => { setDailyLedgerEntries(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)).sort((a: any, b: any) => (b.date || "").localeCompare(a.date || ""))); });
+        const unsubAllUnits = onSnapshot(collection(db, "units"), (snapshot) => { setAllUnits(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any))); });
 
-        return () => { unsubBldgs(); unsubApps(); unsubAllInvoices(); unsubTickets(); unsubContacts(); unsubOccupied(); unsubExpenses(); unsubSettings(); unsubAnnouncements(); unsubDocs(); unsubLedger(); unsubUsers(); };
+        return () => { unsubBldgs(); unsubApps(); unsubAllInvoices(); unsubTickets(); unsubContacts(); unsubOccupied(); unsubExpenses(); unsubSettings(); unsubAnnouncements(); unsubDocs(); unsubLedger(); unsubUsers(); unsubDailyLedger(); unsubAllUnits(); };
     }, [role]);
 
     const totalIncome = paidInvoices.reduce((sum, inv) => sum + Number(inv.totalAmount || 0), 0);
@@ -539,6 +546,23 @@ export default function AdminDashboard() {
                     <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200 flex flex-col justify-center border-l-4 border-l-green-500"><span className="text-sm text-gray-500 font-medium">Total Income</span><span className="text-2xl font-bold text-green-700 mt-1">₹{totalIncome.toLocaleString()}</span></div>
                     <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200 flex flex-col justify-center border-l-4 border-l-red-500"><span className="text-sm text-gray-500 font-medium">Total Expenses</span><span className="text-2xl font-bold text-red-700 mt-1">₹{totalExpenses.toLocaleString()}</span></div>
                     <div className="bg-gray-900 p-6 rounded-lg shadow-sm flex flex-col justify-center"><span className="text-sm text-gray-300 font-medium">Net Profit (ROI)</span><span className={`text-2xl font-bold mt-1 ${netProfit >= 0 ? 'text-white' : 'text-red-400'}`}>₹{netProfit.toLocaleString()}</span></div>
+                </div>
+
+                {/* DAILY LEDGER (Manager Books) */}
+                <div className="bg-white rounded-lg shadow-sm border border-teal-200 overflow-hidden">
+                    <div className="bg-teal-50 px-6 py-4 border-b border-teal-200">
+                        <h2 className="text-lg font-bold text-teal-800">📓 Daily Ledger</h2>
+                        <p className="text-xs text-teal-700 mt-1">Record walk-in tenant payments (inflow) and daily expenses (outflow). Inflows auto-settle the oldest pending invoice.</p>
+                    </div>
+                    <div className="p-4">
+                        <DailyLedgerTab
+                            entries={dailyLedgerEntries}
+                            buildings={buildings}
+                            allUnits={allUnits}
+                            allInvoices={[...pendingInvoices, ...unpaidInvoices, ...paidInvoices]}
+                            currentUserEmail={user?.email || undefined}
+                        />
+                    </div>
                 </div>
 
                 {/* INCOME & EXPENSE DASHBOARD */}

@@ -5,6 +5,7 @@ import { useState } from "react";
 import { doc, updateDoc, addDoc, getDocs, collection, query, where, deleteField } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import type { Invoice, Unit } from "@/types";
+import { buildTransactionId, type PaymentMode } from "@/lib/payments";
 
 interface CollectionsTabProps {
     allInvoices: Invoice[];
@@ -19,6 +20,12 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
 
     const [isEditInvoiceOpen, setIsEditInvoiceOpen] = useState(false);
     const [editInvoice, setEditInvoice] = useState<any>(null);
+
+    // Settle modal (mark as paid with reference)
+    const [settleInvoice, setSettleInvoice] = useState<Invoice | null>(null);
+    const [settleMode, setSettleMode] = useState<PaymentMode>("cash");
+    const [settleReference, setSettleReference] = useState("");
+    const [settleNote, setSettleNote] = useState("");
     const [editInvBaseRent, setEditInvBaseRent] = useState("");
     const [editInvElecRate, setEditInvElecRate] = useState("");
     const [editInvUnitsConsumed, setEditInvUnitsConsumed] = useState("");
@@ -47,30 +54,46 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
     const overdueCount = pendingInvoices.filter(inv => isOverdue(inv.billingPeriod)).length;
     const overdueAmount = pendingInvoices.filter(inv => isOverdue(inv.billingPeriod)).reduce((sum, inv) => sum + Number(inv.totalAmount || 0), 0);
 
-    const handleSettleInvoice = async (invId: string) => {
-        if (!window.confirm("Mark this invoice as paid (cash collected)?")) return;
-        setIsSettling(invId);
+    const openSettleModal = (inv: Invoice) => {
+        setSettleInvoice(inv);
+        setSettleMode("cash");
+        setSettleReference("");
+        setSettleNote("");
+    };
+
+    const handleConfirmSettle = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!settleInvoice) return;
+        const inv = settleInvoice;
+        setIsSettling(inv.id);
         try {
-            const inv = allInvoices.find(i => i.id === invId);
-            await updateDoc(doc(db, "invoices", invId), { status: "paid", paidAt: new Date().toISOString(), transactionId: "CASH_COLLECTED" });
-            if (inv) {
-                const invoiceAmount = Number(inv.totalAmount || 0);
-                const amountPaid = Number(inv.amountPaid || invoiceAmount);
-                await addDoc(collection(db, "ledger"), {
-                    tenantEmail: inv.tenantEmail,
-                    unitId: inv.unitId,
-                    unitNumber: inv.unitNumber,
-                    invoiceId: invId,
-                    billingPeriod: inv.billingPeriod || "Ad-Hoc",
-                    invoiceAmount,
-                    amountPaid,
-                    balance: amountPaid - invoiceAmount,
-                    transactionId: "CASH_COLLECTED",
-                    type: "payment",
-                    settledBy: "employee",
-                    createdAt: new Date().toISOString(),
-                });
-            }
+            const txnId = buildTransactionId(settleMode, settleReference);
+            await updateDoc(doc(db, "invoices", inv.id), {
+                status: "paid",
+                paidAt: new Date().toISOString(),
+                transactionId: txnId,
+                ...(settleNote.trim() ? { paymentNote: settleNote.trim() } : {}),
+            });
+            const invoiceAmount = Number(inv.totalAmount || 0);
+            const amountPaid = Number(inv.amountPaid || invoiceAmount);
+            await addDoc(collection(db, "ledger"), {
+                tenantEmail: inv.tenantEmail,
+                unitId: inv.unitId,
+                unitNumber: inv.unitNumber,
+                invoiceId: inv.id,
+                billingPeriod: inv.billingPeriod || "Ad-Hoc",
+                invoiceAmount,
+                amountPaid,
+                balance: amountPaid - invoiceAmount,
+                transactionId: txnId,
+                paymentMode: settleMode,
+                paymentReference: settleReference.trim() || null,
+                paymentNote: settleNote.trim() || null,
+                type: "payment",
+                settledBy: "employee",
+                createdAt: new Date().toISOString(),
+            });
+            setSettleInvoice(null);
         } catch (error) {
             console.error(error);
             alert("Failed to settle invoice.");
@@ -198,7 +221,7 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                                             </div>
                                             <div className="flex gap-1.5">
                                                 <button onClick={() => openEditInvoice(inv)} className="text-xs px-3 py-1.5 bg-blue-600 text-white rounded-md font-bold hover:bg-blue-700 transition">{"\u270F\uFE0F"} Edit</button>
-                                                <button onClick={() => handleSettleInvoice(inv.id)} disabled={isSettling === inv.id} className="text-xs px-3 py-1.5 bg-green-600 text-white rounded-md font-bold hover:bg-green-700 disabled:bg-green-400 transition">
+                                                <button onClick={() => openSettleModal(inv)} disabled={isSettling === inv.id} className="text-xs px-3 py-1.5 bg-green-600 text-white rounded-md font-bold hover:bg-green-700 disabled:bg-green-400 transition">
                                                     {isSettling === inv.id ? "..." : "\u2713 Settle"}
                                                 </button>
                                             </div>
@@ -252,6 +275,64 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                             <div className="flex gap-2 pt-2">
                                 <button type="button" onClick={() => setIsEditInvoiceOpen(false)} className="flex-1 py-2 border border-gray-300 rounded-md text-sm text-gray-600">Cancel</button>
                                 <button type="submit" disabled={isSavingInvoice} className="flex-1 py-2 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 disabled:bg-blue-400">{isSavingInvoice ? "Saving..." : "Save Changes"}</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {settleInvoice && (
+                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setSettleInvoice(null)}>
+                    <div className="bg-white p-6 rounded-xl shadow-xl max-w-md w-full space-y-4" onClick={(e) => e.stopPropagation()}>
+                        <div>
+                            <h3 className="text-lg font-bold text-gray-800">{"\u2713"} Mark as Paid</h3>
+                            <p className="text-xs text-gray-500 mt-0.5">{settleInvoice.unitNumber} {"\u2014"} {settleInvoice.billingPeriod} {"\u2014"} {"\u20B9"}{Number(settleInvoice.totalAmount || 0).toLocaleString()}</p>
+                        </div>
+                        <form onSubmit={handleConfirmSettle} className="space-y-3">
+                            <div>
+                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Payment Mode</label>
+                                <div className="grid grid-cols-5 gap-1">
+                                    {(["cash", "upi", "bank", "cheque", "other"] as const satisfies readonly PaymentMode[]).map(m => (
+                                        <button
+                                            key={m}
+                                            type="button"
+                                            onClick={() => setSettleMode(m)}
+                                            className={`px-2 py-2 rounded-md text-xs font-bold border transition ${settleMode === m ? "bg-green-600 text-white border-green-700" : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50"}`}
+                                        >
+                                            {m.toUpperCase()}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                            {settleMode !== "cash" && (
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
+                                        {settleMode === "upi" ? "UPI Txn ID" : settleMode === "bank" ? "Bank Ref No." : settleMode === "cheque" ? "Cheque No." : "Reference"}
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={settleReference}
+                                        onChange={(e) => setSettleReference(e.target.value)}
+                                        placeholder={settleMode === "upi" ? "e.g. 4XXXXXX8291" : settleMode === "cheque" ? "e.g. 000123" : "Reference / transaction id"}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                                    />
+                                </div>
+                            )}
+                            <div>
+                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Note (optional)</label>
+                                <input
+                                    type="text"
+                                    value={settleNote}
+                                    onChange={(e) => setSettleNote(e.target.value)}
+                                    placeholder="e.g. paid to owner directly"
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                                />
+                            </div>
+                            <div className="flex gap-2 pt-2">
+                                <button type="button" onClick={() => setSettleInvoice(null)} className="flex-1 py-2 border border-gray-300 rounded-md text-sm text-gray-600">Cancel</button>
+                                <button type="submit" disabled={isSettling === settleInvoice.id} className="flex-1 py-2 bg-green-600 text-white rounded-md text-sm font-bold hover:bg-green-700 disabled:bg-green-400">
+                                    {isSettling === settleInvoice.id ? "Settling..." : "\u2713 Confirm Paid"}
+                                </button>
                             </div>
                         </form>
                     </div>
