@@ -217,7 +217,7 @@ export default function EmployeeDashboard() {
         });
 
         const unsubExpenses = onSnapshot(collection(db, "expenses"), (snapshot) => {
-            setAllExpenses(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)).sort((a: any, b: any) => new Date(b.date || b.createdAt).getTime() - new Date(a.date || a.createdAt).getTime()));
+            setAllExpenses(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)).filter((e: any) => !e.deleted).sort((a: any, b: any) => new Date(b.date || b.createdAt).getTime() - new Date(a.date || a.createdAt).getTime()));
         });
 
         const unsubInventory = onSnapshot(collection(db, "inventory"), (snapshot) => {
@@ -229,7 +229,7 @@ export default function EmployeeDashboard() {
         });
 
         const unsubDailyLedger = onSnapshot(collection(db, "dailyLedger"), (snapshot) => {
-            setDailyLedgerEntries(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)).sort((a: any, b: any) => (b.date || "").localeCompare(a.date || "")));
+            setDailyLedgerEntries(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)).filter((e: any) => !e.deleted).sort((a: any, b: any) => (b.date || "").localeCompare(a.date || "")));
         });
 
         return () => { unsubTickets(); unsubUnits(); unsubInvoices(); unsubLedger(); unsubAllUnits(); unsubBuildings(); unsubChecklists(); unsubExpenses(); unsubInventory(); unsubAllocations(); unsubDailyLedger(); };
@@ -733,6 +733,11 @@ export default function EmployeeDashboard() {
     };
 
     // --- Expense Handlers ---
+    // NOTE: Expense and Daily Ledger "outflow" are the same feature. When we
+    // write to `expenses` we also mirror the entry to `dailyLedger` so the
+    // Daily Ledger view stays consistent. Both docs share a linkage:
+    //   expenses.dailyLedgerId   <->   dailyLedger.expenseId
+    // Soft-delete cascades across both.
     const handleAddExpense = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!expenseAmount || !expenseDesc) return;
@@ -742,21 +747,70 @@ export default function EmployeeDashboard() {
             if (expenseReceipt) {
                 receiptUrl = await uploadFile(`expense_receipts/${new Date().getTime()}_${expenseReceipt.name}`, expenseReceipt);
             }
-            await addDoc(collection(db, "expenses"), {
-                amount: Number(expenseAmount),
+            const nowIso = new Date().toISOString();
+            const dateStr = expenseDate || nowIso.split('T')[0];
+            const buildingName = expenseBuilding ? getBuildingName(expenseBuilding) : "General";
+            const amountNum = Number(expenseAmount);
+
+            // 1) Write the canonical expense
+            const expenseRef = await addDoc(collection(db, "expenses"), {
+                amount: amountNum,
                 category: expenseCategory,
                 description: expenseDesc,
-                date: expenseDate || new Date().toISOString().split('T')[0],
+                date: dateStr,
                 buildingId: expenseBuilding || "",
-                buildingName: expenseBuilding ? getBuildingName(expenseBuilding) : "General",
+                buildingName,
                 ...(receiptUrl ? { receiptUrl } : {}),
                 createdBy: user?.email || "",
-                createdAt: new Date().toISOString()
+                createdAt: nowIso,
             });
+
+            // 2) Mirror it as a Daily Ledger outflow so the two views stay in sync
+            const ledgerRef = await addDoc(collection(db, "dailyLedger"), {
+                date: dateStr,
+                direction: "outflow",
+                category: (expenseCategory || "other").toLowerCase(),
+                buildingId: expenseBuilding || "",
+                buildingName,
+                unitId: "",
+                unitNumber: "",
+                amount: amountNum,
+                description: expenseDesc,
+                expenseId: expenseRef.id,
+                createdBy: user?.email || "",
+                createdAt: nowIso,
+            });
+
+            // Back-link the ledger id onto the expense (so soft-delete can cascade)
+            await updateDoc(doc(db, "expenses", expenseRef.id), { dailyLedgerId: ledgerRef.id });
+
             setIsExpenseModalOpen(false);
             setExpenseAmount(""); setExpenseDesc(""); setExpenseCategory("Maintenance"); setExpenseDate(""); setExpenseBuilding(""); setExpenseReceipt(null);
-            alert("Expense logged!");
+            alert("Expense logged (also visible in Daily Ledger)!");
         } catch (error) { console.error(error); alert("Failed to log expense."); } finally { setIsSubmittingExpense(false); }
+    };
+
+    // Soft-delete an expense: the record is not removed, we just mark it as
+    // deleted with a mandatory reason for the audit trail. If the expense has
+    // a linked daily-ledger outflow entry, that mirror is soft-deleted too.
+    const handleSoftDeleteExpense = async (exp: any) => {
+        if (exp.deleted) return;
+        const reason = window.prompt(`Delete expense "${exp.description}" (₹${Number(exp.amount).toLocaleString()})?\n\nPlease provide a reason (required):`, "");
+        if (reason === null) return; // cancelled
+        const trimmed = reason.trim();
+        if (!trimmed) { alert("A reason is required to delete an expense."); return; }
+        try {
+            const patch = {
+                deleted: true,
+                deleteReason: trimmed,
+                deletedBy: user?.email || "",
+                deletedAt: new Date().toISOString(),
+            } as const;
+            await updateDoc(doc(db, "expenses", exp.id), patch);
+            if (exp.dailyLedgerId) {
+                await updateDoc(doc(db, "dailyLedger", exp.dailyLedgerId), patch);
+            }
+        } catch (error) { console.error(error); alert("Failed to delete expense."); }
     };
 
     // --- Allocation (Fund) Handlers ---
@@ -1731,9 +1785,12 @@ export default function EmployeeDashboard() {
                                             <div className="text-right shrink-0 flex flex-col items-end gap-2">
                                                 <p className="font-bold text-red-700">₹{Number(exp.amount).toLocaleString()}</p>
                                                 {exp.receiptUrl && <a href={exp.receiptUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] text-blue-600 hover:underline">📎 Receipt</a>}
-                                                <button onClick={() => handleToggleExpenseSettled(exp)} className={`text-[10px] font-bold px-2 py-1 rounded-md transition ${exp.settled ? "bg-gray-100 text-gray-600 hover:bg-gray-200" : "bg-green-600 text-white hover:bg-green-700"}`}>
-                                                    {exp.settled ? "Undo" : "✓ Settle"}
-                                                </button>
+                                                <div className="flex gap-1">
+                                                    <button onClick={() => handleToggleExpenseSettled(exp)} className={`text-[10px] font-bold px-2 py-1 rounded-md transition ${exp.settled ? "bg-gray-100 text-gray-600 hover:bg-gray-200" : "bg-green-600 text-white hover:bg-green-700"}`}>
+                                                        {exp.settled ? "Undo" : "✓ Settle"}
+                                                    </button>
+                                                    <button onClick={() => handleSoftDeleteExpense(exp)} title="Delete with reason" className="text-[10px] font-bold px-2 py-1 rounded-md bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 transition">🗑</button>
+                                                </div>
                                             </div>
                                         </div>
                                         ))}

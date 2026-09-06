@@ -2,7 +2,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { addDoc, collection, deleteDoc, doc, updateDoc } from "firebase/firestore";
+import { addDoc, collection, doc, updateDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { Modal } from "@/components/ui";
 
@@ -119,7 +119,31 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
                 payload.quantity = quantity ? Number(quantity) : 0;
                 payload.vendor = vendor || "";
             }
-            await addDoc(collection(db, "dailyLedger"), payload);
+            const ledgerRef = await addDoc(collection(db, "dailyLedger"), payload);
+
+            // Merge: an "outflow" in the Daily Ledger is the same thing as an
+            // Expense. Mirror it to the `expenses` collection so it appears in
+            // the Expenses tab, fund summary and reports. Both docs are linked
+            // via `expenseId` / `dailyLedgerId` so soft-delete cascades.
+            if (direction === "outflow") {
+                try {
+                    const expenseRef = await addDoc(collection(db, "expenses"), {
+                        amount: Number(amount),
+                        category,
+                        description: description || category,
+                        date: entryDate || todayISO(),
+                        buildingId: buildingId || "",
+                        buildingName: bldg?.name || "General",
+                        dailyLedgerId: ledgerRef.id,
+                        source: "dailyLedger",
+                        createdBy: currentUserEmail || "",
+                        createdAt: new Date().toISOString(),
+                    });
+                    await updateDoc(doc(db, "dailyLedger", ledgerRef.id), { expenseId: expenseRef.id });
+                } catch (mirrorErr) {
+                    console.warn("Expense mirror write failed", mirrorErr);
+                }
+            }
 
             // Auto-settle matching invoice: inflow + specific unit + settlement-eligible category
             const settleCategories = ["rent", "electricity", "maintenance"];
@@ -185,8 +209,23 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
     };
 
     const handleDelete = async (entry: DailyLedgerEntry) => {
-        if (!window.confirm(`Delete ${entry.direction} entry of ₹${entry.amount}?`)) return;
-        try { await deleteDoc(doc(db, "dailyLedger", entry.id)); }
+        const reason = window.prompt(`Delete ${entry.direction} entry of ₹${entry.amount}?\n\nPlease provide a reason (required):`, "");
+        if (reason === null) return; // cancelled
+        const trimmed = reason.trim();
+        if (!trimmed) { alert("A reason is required to delete an entry."); return; }
+        try {
+            const patch = {
+                deleted: true,
+                deleteReason: trimmed,
+                deletedBy: currentUserEmail || "",
+                deletedAt: new Date().toISOString(),
+            } as const;
+            await updateDoc(doc(db, "dailyLedger", entry.id), patch);
+            const anyEntry = entry as any;
+            if (anyEntry.expenseId) {
+                await updateDoc(doc(db, "expenses", anyEntry.expenseId), patch);
+            }
+        }
         catch (err) { console.error(err); alert("Failed to delete."); }
     };
 
