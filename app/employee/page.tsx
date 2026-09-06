@@ -8,7 +8,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { signOut } from "firebase/auth";
 import { auth, db } from "@/lib/firebase";
-import { collection, onSnapshot, doc, updateDoc, arrayUnion, query, where, writeBatch, getDocs, addDoc, getDoc, deleteField } from "firebase/firestore";
+import { collection, onSnapshot, doc, updateDoc, arrayUnion, query, where, writeBatch, getDocs, addDoc, getDoc, deleteField, deleteDoc } from "firebase/firestore";
 import { useUploadWithProgress, UploadProgressBar } from "@/lib/useUpload";
 import { calculateFundSummary, filterExpenses, buildSettlementUpdate } from "@/lib/expenses";
 import { CollectionsTab, OccupancyTab, LedgerTab, ExpensesTab, InventoryTab, TicketsTab, DailyLedgerTab, MonthlyOverviewTab } from "@/components/employee";
@@ -138,6 +138,7 @@ export default function EmployeeDashboard() {
     const [allocDate, setAllocDate] = useState("");
     const [allocBuilding, setAllocBuilding] = useState("");
     const [isSubmittingAllocation, setIsSubmittingAllocation] = useState(false);
+    const [editingAllocationId, setEditingAllocationId] = useState<string | null>(null);
     const [expenseFilter, setExpenseFilter] = useState<"all" | "unsettled" | "settled">("all");
     const [expenseViewMode, setExpenseViewMode] = useState<"all" | "daily" | "monthly">("all");
     const [expenseSelectedDate, setExpenseSelectedDate] = useState<string>(new Date().toISOString().slice(0, 10));
@@ -759,24 +760,57 @@ export default function EmployeeDashboard() {
     };
 
     // --- Allocation (Fund) Handlers ---
+    const openEditAllocation = (a: any) => {
+        setEditingAllocationId(a.id);
+        setAllocAmount(String(a.amount ?? ""));
+        setAllocNote(a.note || "");
+        setAllocDate(a.date || (a.createdAt ? a.createdAt.slice(0, 10) : new Date().toISOString().split('T')[0]));
+        setAllocBuilding(a.buildingId || "");
+        setIsAllocationModalOpen(true);
+    };
+
+    const closeAllocationModal = () => {
+        setIsAllocationModalOpen(false);
+        setEditingAllocationId(null);
+        setAllocAmount(""); setAllocNote(""); setAllocDate(""); setAllocBuilding("");
+    };
+
     const handleAddAllocation = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!allocAmount) return;
         setIsSubmittingAllocation(true);
         try {
-            await addDoc(collection(db, "allocations"), {
+            const payload = {
                 amount: Number(allocAmount),
                 note: allocNote || "",
                 date: allocDate || new Date().toISOString().split('T')[0],
                 buildingId: allocBuilding || "",
                 buildingName: allocBuilding ? getBuildingName(allocBuilding) : "General",
-                createdBy: user?.email || "",
-                createdAt: new Date().toISOString()
-            });
-            setIsAllocationModalOpen(false);
-            setAllocAmount(""); setAllocNote(""); setAllocDate(""); setAllocBuilding("");
-            alert("Allocated amount added!");
-        } catch (error) { console.error(error); alert("Failed to add allocation."); } finally { setIsSubmittingAllocation(false); }
+            };
+            if (editingAllocationId) {
+                await updateDoc(doc(db, "allocations", editingAllocationId), {
+                    ...payload,
+                    updatedBy: user?.email || "",
+                    updatedAt: new Date().toISOString(),
+                });
+                alert("Allocation updated!");
+            } else {
+                await addDoc(collection(db, "allocations"), {
+                    ...payload,
+                    createdBy: user?.email || "",
+                    createdAt: new Date().toISOString(),
+                });
+                alert("Allocated amount added!");
+            }
+            closeAllocationModal();
+        } catch (error) { console.error(error); alert("Failed to save allocation."); } finally { setIsSubmittingAllocation(false); }
+    };
+
+    const handleDeleteAllocation = async (a: any) => {
+        if (!window.confirm(`Delete allocation of ₹${Number(a.amount).toLocaleString()} (${a.note || "no note"})?\n\nThis will reduce the total allocated fund.`)) return;
+        try {
+            await deleteDoc(doc(db, "allocations", a.id));
+        } catch (error) { console.error(error); alert("Failed to delete allocation."); }
     };
 
     const handleToggleExpenseSettled = async (exp: any) => {
@@ -1593,11 +1627,15 @@ export default function EmployeeDashboard() {
                                                     <div className="mt-2 space-y-1.5 max-h-40 overflow-y-auto">
                                                         {allAllocations.map(a => (
                                                             <div key={a.id} className="flex justify-between items-center bg-white rounded-lg px-2.5 py-2 border border-emerald-100">
-                                                                <div>
-                                                                    <p className="text-xs font-medium text-gray-800">{a.note || "Fund allocation"}</p>
+                                                                <div className="min-w-0">
+                                                                    <p className="text-xs font-medium text-gray-800 truncate">{a.note || "Fund allocation"}</p>
                                                                     <p className="text-[10px] text-gray-500">{a.buildingName || "General"} · {a.date || new Date(a.createdAt).toLocaleDateString()}</p>
                                                                 </div>
-                                                                <p className="text-sm font-bold text-emerald-700 shrink-0">+₹{Number(a.amount).toLocaleString()}</p>
+                                                                <div className="flex items-center gap-1.5 shrink-0">
+                                                                    <p className="text-sm font-bold text-emerald-700">+₹{Number(a.amount).toLocaleString()}</p>
+                                                                    <button type="button" onClick={() => openEditAllocation(a)} title="Edit" className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100">✏️</button>
+                                                                    <button type="button" onClick={() => handleDeleteAllocation(a)} title="Delete" className="text-[10px] px-1.5 py-0.5 rounded bg-red-50 text-red-700 border border-red-200 hover:bg-red-100">🗑</button>
+                                                                </div>
                                                             </div>
                                                         ))}
                                                     </div>
@@ -2209,9 +2247,9 @@ export default function EmployeeDashboard() {
 
             {/* ADD ALLOCATION MODAL */}
             {isAllocationModalOpen && (
-                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setIsAllocationModalOpen(false)}>
+                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={closeAllocationModal}>
                     <div className="bg-white p-6 rounded-xl shadow-xl max-w-md w-full space-y-4" onClick={(e) => e.stopPropagation()}>
-                        <h3 className="text-lg font-bold text-gray-800">🏦 Add Allocated Amount</h3>
+                        <h3 className="text-lg font-bold text-gray-800">🏦 {editingAllocationId ? "Edit Allocated Amount" : "Add Allocated Amount"}</h3>
                         <p className="text-xs text-gray-500">Funds allocated for expenses. Settled expenses are deducted from this amount.</p>
                         <form onSubmit={handleAddAllocation} className="space-y-3">
                             <div>
@@ -2234,8 +2272,8 @@ export default function EmployeeDashboard() {
                                 <input type="date" value={allocDate} onChange={(e) => setAllocDate(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
                             </div>
                             <div className="flex gap-2 pt-2">
-                                <button type="button" onClick={() => setIsAllocationModalOpen(false)} className="flex-1 py-2 border border-gray-300 rounded-md text-sm text-gray-600">Cancel</button>
-                                <button type="submit" disabled={isSubmittingAllocation} className="flex-1 py-2 bg-emerald-600 text-white rounded-md text-sm font-medium hover:bg-emerald-700 disabled:bg-emerald-400">{isSubmittingAllocation ? "Saving..." : "Add Allocation"}</button>
+                                <button type="button" onClick={closeAllocationModal} className="flex-1 py-2 border border-gray-300 rounded-md text-sm text-gray-600">Cancel</button>
+                                <button type="submit" disabled={isSubmittingAllocation} className="flex-1 py-2 bg-emerald-600 text-white rounded-md text-sm font-medium hover:bg-emerald-700 disabled:bg-emerald-400">{isSubmittingAllocation ? "Saving..." : (editingAllocationId ? "Save Changes" : "Add Allocation")}</button>
                             </div>
                         </form>
                     </div>
