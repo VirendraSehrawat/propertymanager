@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import { addDoc, collection, doc, updateDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { Modal } from "@/components/ui";
+import { useUploadWithProgress, UploadProgressBar } from "@/lib/useUpload";
 
 interface DailyLedgerEntry {
     id: string;
@@ -22,6 +23,7 @@ interface DailyLedgerEntry {
     hoursWorked?: number;
     quantity?: number;
     vendor?: string;
+    receiptUrl?: string;
     createdBy?: string;
     createdAt: string;
 }
@@ -62,12 +64,15 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
     const [hoursWorked, setHoursWorked] = useState("");
     const [quantity, setQuantity] = useState("");
     const [vendor, setVendor] = useState("");
+    const [receiptFile, setReceiptFile] = useState<File | null>(null);
     const [isSaving, setIsSaving] = useState(false);
+    const { uploadFile, uploadProgress, isUploading, resetProgress } = useUploadWithProgress();
 
     const resetForm = () => {
         setDirection("inflow"); setCategory("rent"); setBuildingId(""); setUnitId("");
         setAmount(""); setDescription(""); setEntryDate(todayISO());
         setWorkerName(""); setHoursWorked(""); setQuantity(""); setVendor("");
+        setReceiptFile(null); resetProgress();
     };
 
     const openModal = (dir: "inflow" | "outflow") => {
@@ -95,6 +100,16 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
         if (!amount || Number(amount) <= 0) { alert("Enter a valid amount."); return; }
         setIsSaving(true);
         try {
+            // Upload receipt image first (if any). Fail-safe: entry still saves without it if upload fails.
+            let receiptUrl = "";
+            if (receiptFile) {
+                try {
+                    receiptUrl = await uploadFile(`daily_ledger_receipts/${Date.now()}_${receiptFile.name}`, receiptFile);
+                } catch (upErr) {
+                    console.warn("Receipt upload failed, saving entry without it", upErr);
+                }
+            }
+
             const bldg = buildings.find(b => b.id === buildingId);
             const unit = allUnits.find(u => u.id === unitId);
             const payload: any = {
@@ -108,6 +123,7 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
                 tenantName: unit?.tenantName || "",
                 amount: Number(amount),
                 description: description || "",
+                ...(receiptUrl ? { receiptUrl } : {}),
                 createdBy: currentUserEmail || "",
                 createdAt: new Date().toISOString(),
             };
@@ -136,6 +152,7 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
                         buildingName: bldg?.name || "General",
                         dailyLedgerId: ledgerRef.id,
                         source: "dailyLedger",
+                        ...(receiptUrl ? { receiptUrl } : {}),
                         createdBy: currentUserEmail || "",
                         createdAt: new Date().toISOString(),
                     });
@@ -493,6 +510,26 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
                         </div>
                     )}
 
+                    {direction === "outflow" && (
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">📷 Receipt / Bill Image (optional)</label>
+                            <input
+                                type="file"
+                                accept="image/*"
+                                capture="environment"
+                                onChange={(e) => setReceiptFile(e.target.files?.[0] || null)}
+                                className="w-full text-xs file:mr-2 file:py-1.5 file:px-3 file:rounded file:border-0 file:text-xs file:font-bold file:bg-red-50 file:text-red-700 hover:file:bg-red-100"
+                            />
+                            {receiptFile && (
+                                <div className="mt-2 flex items-center gap-2 bg-gray-50 border border-gray-200 rounded p-2">
+                                    <span className="text-[10px] text-gray-600 truncate flex-1">📎 {receiptFile.name}</span>
+                                    <button type="button" onClick={() => setReceiptFile(null)} className="text-[10px] text-red-600 hover:text-red-800 font-bold">✕ Remove</button>
+                                </div>
+                            )}
+                            <UploadProgressBar progress={uploadProgress} />
+                        </div>
+                    )}
+
                     <div>
                         <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Description</label>
                         <textarea rows={2} value={description} onChange={(e) => setDescription(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" placeholder="Optional notes" />
@@ -500,8 +537,8 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
 
                     <div className="flex gap-2 pt-2">
                         <button type="button" onClick={() => setIsModalOpen(false)} className="flex-1 py-2 border border-gray-300 rounded-md text-sm text-gray-600">Cancel</button>
-                        <button type="submit" disabled={isSaving} className={`flex-1 py-2 rounded-md text-sm font-medium text-white ${direction === "inflow" ? "bg-green-600 hover:bg-green-700 disabled:bg-green-400" : "bg-red-600 hover:bg-red-700 disabled:bg-red-400"}`}>
-                            {isSaving ? "Saving..." : "Save Entry"}
+                        <button type="submit" disabled={isSaving || isUploading} className={`flex-1 py-2 rounded-md text-sm font-medium text-white ${direction === "inflow" ? "bg-green-600 hover:bg-green-700 disabled:bg-green-400" : "bg-red-600 hover:bg-red-700 disabled:bg-red-400"}`}>
+                            {isUploading ? "Uploading..." : isSaving ? "Saving..." : "Save Entry"}
                         </button>
                     </div>
                 </form>
@@ -532,6 +569,12 @@ function EntryRow({ entry, onDelete, compact }: { entry: DailyLedgerEntry; onDel
             </div>
             <div className="text-right shrink-0 flex flex-col items-end gap-1">
                 <p className={`font-bold ${isInflow ? "text-green-700" : "text-red-700"}`}>{isInflow ? "+" : "−"}₹{Number(entry.amount).toLocaleString()}</p>
+                {entry.receiptUrl && (
+                    <a href={entry.receiptUrl} target="_blank" rel="noopener noreferrer" title="View receipt" className="block">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={entry.receiptUrl} alt="receipt" className="w-10 h-10 object-cover rounded border border-gray-200 hover:border-red-400" />
+                    </a>
+                )}
                 <button onClick={() => onDelete(entry)} className="text-[10px] text-gray-400 hover:text-red-600">Delete</button>
             </div>
         </div>
