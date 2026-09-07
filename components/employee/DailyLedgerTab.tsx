@@ -27,7 +27,7 @@ interface DailyLedgerEntry {
 }
 
 interface Building { id: string; name: string; }
-interface Unit { id: string; unitNumber: string; buildingId?: string; status?: string; tenantName?: string; tenantEmail?: string; }
+interface Unit { id: string; unitNumber: string; buildingId?: string; status?: string; tenantName?: string; tenantEmail?: string; baseRent?: number; lastMeterReading?: number; electricityRate?: number; }
 interface Invoice { id: string; unitId: string; unitNumber?: string; tenantEmail?: string; totalAmount?: number; amountPaid?: number; billingPeriod?: string; status?: string; }
 
 interface Props {
@@ -145,15 +145,63 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
                 }
             }
 
-            // Auto-settle matching invoice: inflow + specific unit + settlement-eligible category
+            // Auto-settle matching invoice: inflow + specific unit + settlement-eligible category.
+            // NEW: if no invoice exists yet (manager collected before the monthly bill
+            // was generated), we auto-create an "on-the-fly" invoice for the current
+            // month and immediately settle it. This keeps `invoices` + `ledger`
+            // canonical even when collection happens before invoicing.
             const settleCategories = ["rent", "electricity", "maintenance"];
             if (
                 direction === "inflow" &&
                 unitId &&
-                settleCategories.includes(category) &&
-                pendingInvoicesForUnit.length > 0
+                settleCategories.includes(category)
             ) {
-                const targetInvoice = pendingInvoicesForUnit[0];
+                let targetInvoice = pendingInvoicesForUnit[0];
+
+                // No pending invoice → create one on the fly using the unit's rent
+                // and the amount paid (electricity charge is inferred as the delta).
+                if (!targetInvoice) {
+                    const paying = Number(amount);
+                    const baseRent = Number(unit?.baseRent || 0);
+                    const inferredElectricity = category === "rent"
+                        ? 0
+                        : category === "electricity"
+                            ? paying
+                            : 0; // maintenance → treat whole amount as base
+                    const totalAmount = category === "rent"
+                        ? Math.max(baseRent, paying)
+                        : category === "electricity"
+                            ? baseRent + inferredElectricity
+                            : paying;
+                    const monthName = new Date((entryDate || todayISO()) + "T00:00:00").toLocaleString("default", { month: "long", year: "numeric" });
+                    const newInvRef = await addDoc(collection(db, "invoices"), {
+                        unitId,
+                        unitNumber: unit?.unitNumber || "",
+                        tenantEmail: unit?.tenantEmail || "",
+                        baseRent,
+                        electricityCharge: inferredElectricity,
+                        totalAmount,
+                        billingPeriod: monthName,
+                        status: "unpaid",
+                        isCustom: false,
+                        autoCreated: true,
+                        autoCreatedReason: `Auto-created from Daily Ledger inflow (${category})`,
+                        transactionId: "",
+                        createdBy: currentUserEmail || "",
+                        createdAt: new Date().toISOString(),
+                    });
+                    targetInvoice = {
+                        id: newInvRef.id,
+                        unitId,
+                        unitNumber: unit?.unitNumber,
+                        tenantEmail: unit?.tenantEmail,
+                        totalAmount,
+                        amountPaid: 0,
+                        billingPeriod: monthName,
+                        status: "unpaid",
+                    };
+                }
+
                 const invoiceTotal = Number(targetInvoice.totalAmount || 0);
                 const alreadyPaid = Number(targetInvoice.amountPaid || 0);
                 const remaining = Math.max(0, invoiceTotal - alreadyPaid);
@@ -394,6 +442,28 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
                             {pendingInvoicesForUnit.length > 1 && (
                                 <p className="mt-0.5 text-[10px] text-teal-600">({pendingInvoicesForUnit.length - 1} more pending)</p>
                             )}
+                        </div>
+                    )}
+
+                    {/* No pending invoice — will be auto-created */}
+                    {direction === "inflow" && unitId && ["rent", "electricity", "maintenance"].includes(category) && pendingInvoicesForUnit.length === 0 && (
+                        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs">
+                            <p className="font-bold text-amber-800 mb-1">🧾 Auto-invoice preview</p>
+                            <p className="text-amber-700">
+                                No invoice found for this unit. On save, a new invoice for{" "}
+                                <span className="font-semibold">
+                                    {new Date((entryDate || todayISO()) + "T00:00:00").toLocaleString("default", { month: "long", year: "numeric" })}
+                                </span>{" "}
+                                will be created and settled with this payment.
+                            </p>
+                            {(() => {
+                                const u = allUnits.find(x => x.id === unitId);
+                                const rent = Number(u?.baseRent || 0);
+                                if (rent > 0) {
+                                    return <p className="mt-1 text-[10px] text-amber-600">Base rent on file: ₹{rent.toLocaleString()}</p>;
+                                }
+                                return <p className="mt-1 text-[10px] text-amber-600">No base rent on file — invoice total will match the amount paid.</p>;
+                            })()}
                         </div>
                     )}
 
