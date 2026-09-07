@@ -41,7 +41,10 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
         return periodDate.getFullYear() < now.getFullYear() || (periodDate.getFullYear() === now.getFullYear() && periodDate.getMonth() < now.getMonth());
     };
 
-    const pendingInvoices = allInvoices.filter(inv => inv.status === "unpaid" || inv.status === "pending");
+    const pendingInvoices = allInvoices
+        .filter(inv => inv.status === "unpaid" || inv.status === "pending")
+        .slice()
+        .sort((a, b) => String(a.unitNumber || "").localeCompare(String(b.unitNumber || ""), undefined, { numeric: true, sensitivity: "base" }));
     // Settled collections (paid invoices) sorted by paidAt desc → newest first.
     const settledInvoices = allInvoices
         .filter(inv => inv.status === "paid")
