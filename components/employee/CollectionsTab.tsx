@@ -42,6 +42,26 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
     };
 
     const pendingInvoices = allInvoices.filter(inv => inv.status === "unpaid" || inv.status === "pending");
+    // Settled collections (paid invoices) sorted by paidAt desc → newest first.
+    const settledInvoices = allInvoices
+        .filter(inv => inv.status === "paid")
+        .slice()
+        .sort((a, b) => {
+            const ad = (a.paidAt || a.createdAt || "");
+            const bd = (b.paidAt || b.createdAt || "");
+            return bd.localeCompare(ad);
+        });
+    const [settledLimit, setSettledLimit] = useState(20);
+    const [settledFilter, setSettledFilter] = useState("");
+    const filteredSettled = settledInvoices.filter(inv => {
+        if (!settledFilter) return true;
+        const q = settledFilter.toLowerCase();
+        return (inv.unitNumber || "").toLowerCase().includes(q)
+            || (inv.tenantEmail || "").toLowerCase().includes(q)
+            || (inv.billingPeriod || "").toLowerCase().includes(q)
+            || (inv.transactionId || "").toLowerCase().includes(q);
+    });
+    const totalSettledAmount = filteredSettled.reduce((s, inv) => s + Number(inv.totalAmount || 0), 0);
     const periods = [...new Set(pendingInvoices.map(inv => inv.billingPeriod).filter(Boolean))].sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
     const filteredInvoices = collectionFilter === "all"
         ? pendingInvoices
@@ -230,6 +250,70 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                                 );
                             })
                         }
+                    </div>
+                </div>
+
+                {/* SETTLED COLLECTIONS — detail view, newest first */}
+                <div className="bg-white rounded-xl shadow-sm border border-green-200 overflow-hidden">
+                    <div className="bg-green-50 px-5 py-3 border-b border-green-200 flex justify-between items-center gap-2">
+                        <div>
+                            <h3 className="text-sm font-bold text-green-800">{"\u2713"} Settled Collections</h3>
+                            <p className="text-[10px] text-green-700 mt-0.5">{filteredSettled.length} shown · Total {"\u20B9"}{totalSettledAmount.toLocaleString()}</p>
+                        </div>
+                        <input
+                            type="text"
+                            value={settledFilter}
+                            onChange={(e) => { setSettledFilter(e.target.value); setSettledLimit(20); }}
+                            placeholder="Search unit / tenant / ref"
+                            className="text-xs px-2 py-1.5 border border-green-300 rounded-md w-40 focus:outline-none focus:border-green-500"
+                        />
+                    </div>
+                    <div className="divide-y divide-gray-100 max-h-96 overflow-y-auto">
+                        {filteredSettled.length === 0 ? (
+                            <p className="p-6 text-sm text-gray-500 text-center">No settled collections yet.</p>
+                        ) : filteredSettled.slice(0, settledLimit).map(inv => {
+                            const paidDate = inv.paidAt || inv.createdAt;
+                            const paidStr = paidDate ? new Date(paidDate).toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
+                            const txn = inv.transactionId || "";
+                            // Decode "MODE:REF" (e.g. "UPI:4XXX8291") produced by Mark-as-Paid
+                            const [mode, ref] = txn === "CASH_COLLECTED"
+                                ? ["CASH", ""]
+                                : txn.includes(":")
+                                    ? [txn.split(":", 2)[0], txn.split(":", 2)[1]]
+                                    : [txn === "DAILY_LEDGER_AUTOSETTLE" ? "LEDGER" : (txn || "—"), ""];
+                            return (
+                                <div key={inv.id} className="px-5 py-3 hover:bg-green-50/40">
+                                    <div className="flex justify-between items-start gap-3">
+                                        <div className="min-w-0">
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                                <p className="font-bold text-gray-900">{inv.unitNumber}</p>
+                                                <span className="text-[9px] font-bold bg-green-200 text-green-800 px-1.5 py-0.5 rounded">PAID</span>
+                                                <span className="text-[9px] font-bold bg-gray-100 text-gray-700 px-1.5 py-0.5 rounded">{mode}</span>
+                                            </div>
+                                            <p className="text-xs text-gray-500 truncate">{inv.tenantEmail}</p>
+                                            <p className="text-xs font-medium text-green-700 mt-0.5">{inv.billingPeriod}</p>
+                                            <div className="text-[10px] text-gray-400 mt-1 flex gap-2 flex-wrap">
+                                                <span>📅 {paidStr}</span>
+                                                {ref && <span title="Reference">🔖 {ref}</span>}
+                                                {(inv as any).paymentNote && <span>📝 {(inv as any).paymentNote}</span>}
+                                            </div>
+                                        </div>
+                                        <div className="text-right shrink-0">
+                                            <p className="font-bold text-green-700">{"\u20B9"}{Number(inv.totalAmount || 0).toLocaleString()}</p>
+                                            <p className="text-[10px] text-gray-400">Rent: {"\u20B9"}{inv.baseRent || 0} | Elec: {"\u20B9"}{inv.electricityCharge || 0}</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                        {filteredSettled.length > settledLimit && (
+                            <button
+                                onClick={() => setSettledLimit(l => l + 20)}
+                                className="w-full py-2 text-xs font-bold text-green-700 hover:bg-green-50 border-t border-gray-100"
+                            >
+                                Show more ({filteredSettled.length - settledLimit} remaining)
+                            </button>
+                        )}
                     </div>
                 </div>
             </div>
