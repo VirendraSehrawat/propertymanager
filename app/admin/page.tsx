@@ -213,6 +213,7 @@ export default function AdminDashboard() {
     const [singleInvMeterChanged, setSingleInvMeterChanged] = useState(false);
     const [singleInvUnitsConsumed, setSingleInvUnitsConsumed] = useState("");
     const [singleInvNewReading, setSingleInvNewReading] = useState("");
+    const [singleInvChargeType, setSingleInvChargeType] = useState<"both" | "rent" | "electricity">("both");
 
     const handleReadingChange = (unitId: string, value: string) => {
         setMeterReadings(prev => ({ ...prev, [unitId]: Number(value) }));
@@ -356,14 +357,16 @@ export default function AdminDashboard() {
     const handleGenerateSingleInvoice = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!singleInvUnit || !singleInvMonth) return;
-        if (!singleInvMeterChanged && !singleInvReading) return;
-        if (singleInvMeterChanged && !singleInvUnitsConsumed) return;
+        const needsMeter = singleInvChargeType !== "rent";
+        if (needsMeter && !singleInvMeterChanged && !singleInvReading) return;
+        if (needsMeter && singleInvMeterChanged && !singleInvUnitsConsumed) return;
         const unit = occupiedUnits.find(u => u.id === singleInvUnit);
         if (!unit) return;
 
         const [year, month] = singleInvMonth.split("-");
         const monthKey = `${month}_${year}`;
-        const invoiceId = `inv_${unit.id}_${monthKey}`;
+        const chargeSuffix = singleInvChargeType === "rent" ? "_rent" : singleInvChargeType === "electricity" ? "_elec" : "";
+        const invoiceId = `inv_${unit.id}_${monthKey}${chargeSuffix}`;
 
         // Check if invoice already exists
         const existingSnap = await getDoc(doc(db, "invoices", invoiceId));
@@ -375,27 +378,33 @@ export default function AdminDashboard() {
         setIsGeneratingSingleInv(true);
         try {
             const monthName = new Date(Number(year), Number(month) - 1).toLocaleString('default', { month: 'long', year: 'numeric' });
+            const chargeLabel = singleInvChargeType === "rent" ? " (Rent only)" : singleInvChargeType === "electricity" ? " (Electricity only)" : "";
+            const billingPeriodLabel = `${monthName}${chargeLabel}`;
 
-            let reading: number;
-            let previousReading: number;
-            let unitsConsumed: number;
+            let reading = 0;
+            const previousReading = Number(unit.lastMeterReading) || 0;
+            let unitsConsumed = 0;
 
-            if (singleInvMeterChanged) {
-                unitsConsumed = Number(singleInvUnitsConsumed);
-                previousReading = Number(unit.lastMeterReading) || 0;
-                reading = singleInvNewReading ? Number(singleInvNewReading) : 0;
+            if (needsMeter) {
+                if (singleInvMeterChanged) {
+                    unitsConsumed = Number(singleInvUnitsConsumed);
+                    reading = singleInvNewReading ? Number(singleInvNewReading) : 0;
+                } else {
+                    reading = Number(singleInvReading);
+                    unitsConsumed = Math.max(0, reading - previousReading);
+                }
             } else {
-                reading = Number(singleInvReading);
-                previousReading = Number(unit.lastMeterReading) || 0;
-                unitsConsumed = Math.max(0, reading - previousReading);
+                // rent-only invoice: don't touch meter
+                reading = previousReading;
             }
-            const electricityCharge = unitsConsumed * electricityRate;
+            const electricityCharge = needsMeter ? unitsConsumed * electricityRate : 0;
+            const baseRentApplied = singleInvChargeType === "electricity" ? 0 : Number(unit.baseRent || 0);
 
             // Fetch carry-forward
             const ledgerSnap = await getDocs(query(collection(db, "ledger"), where("tenantEmail", "==", unit.tenantEmail)));
             const runningBalance = ledgerSnap.docs.reduce((sum, d) => sum + Number(d.data().balance || 0), 0);
             const carryForward = -runningBalance;
-            const baseTotal = Number(unit.baseRent || 0) + electricityCharge;
+            const baseTotal = baseRentApplied + electricityCharge;
             const totalAmount = Math.max(0, baseTotal + carryForward);
 
             const batch = writeBatch(db);
@@ -403,26 +412,32 @@ export default function AdminDashboard() {
                 unitId: unit.id,
                 unitNumber: unit.unitNumber,
                 tenantEmail: unit.tenantEmail,
-                baseRent: unit.baseRent || 0,
+                baseRent: baseRentApplied,
                 previousReading,
                 currentReading: reading,
                 electricityConsumed: unitsConsumed,
-                electricityRate,
+                electricityRate: needsMeter ? electricityRate : 0,
                 electricityCharge,
+                chargeType: singleInvChargeType,
                 ...(singleInvMeterChanged ? { meterChanged: true } : { meterChanged: deleteField() }),
                 ...(carryForward !== 0 ? { carryForward } : { carryForward: deleteField() }),
                 totalAmount,
-                billingPeriod: monthName,
+                billingPeriod: billingPeriodLabel,
                 status: "unpaid",
                 transactionId: "",
                 createdAt: new Date().toISOString()
             }, { merge: true });
-            batch.update(doc(db, "units", unit.id), { lastMeterReading: reading });
+            // Only bump the unit's stored meter reading when the invoice actually consumed electricity units
+            if (needsMeter) {
+                batch.update(doc(db, "units", unit.id), { lastMeterReading: reading });
+            }
             await batch.commit();
 
             const cfMsg = carryForward !== 0 ? `\nCarry Forward: ${carryForward > 0 ? '+' : ''}₹${carryForward}` : '';
             const meterNote = singleInvMeterChanged ? '\n⚠️ Meter was changed — units entered manually' : '';
-            alert(`Invoice generated for ${unit.unitNumber}!${meterNote}\n\nRent: ₹${unit.baseRent || 0}\nElectricity: ${unitsConsumed} units × ₹${electricityRate} = ₹${electricityCharge}${cfMsg}\nTotal: ₹${totalAmount}`);
+            const rentLine = singleInvChargeType === "electricity" ? "" : `\nRent: ₹${baseRentApplied}`;
+            const elecLine = singleInvChargeType === "rent" ? "" : `\nElectricity: ${unitsConsumed} units × ₹${electricityRate} = ₹${electricityCharge}`;
+            alert(`Invoice generated for ${unit.unitNumber}!${meterNote}${rentLine}${elecLine}${cfMsg}\nTotal: ₹${totalAmount}`);
             setIsSingleInvModalOpen(false);
             setSingleInvUnit("");
             setSingleInvMonth("");
@@ -430,6 +445,7 @@ export default function AdminDashboard() {
             setSingleInvMeterChanged(false);
             setSingleInvUnitsConsumed("");
             setSingleInvNewReading("");
+            setSingleInvChargeType("both");
         } catch (error) {
             console.error(error);
             alert("Failed to generate invoice.");
@@ -1008,13 +1024,41 @@ export default function AdminDashboard() {
                                 <input type="month" required value={singleInvMonth} onChange={(e) => setSingleInvMonth(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md" />
                             </div>
 
-                            {/* Meter Changed Toggle */}
-                            <div className="flex items-center gap-3 bg-yellow-50 border border-yellow-200 rounded-lg p-3">
-                                <input type="checkbox" id="adminMeterChanged" checked={singleInvMeterChanged} onChange={(e) => setSingleInvMeterChanged(e.target.checked)} className="w-4 h-4 accent-yellow-600" />
-                                <label htmlFor="adminMeterChanged" className="text-sm text-yellow-800 font-medium cursor-pointer">⚠️ Meter was changed / replaced</label>
+                            {/* Charge Type: rent only / electricity only / both */}
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Charge Type</label>
+                                <div className="grid grid-cols-3 gap-2">
+                                    {([
+                                        { key: "both", label: "🏠⚡ Rent + Electricity" },
+                                        { key: "rent", label: "🏠 Rent only" },
+                                        { key: "electricity", label: "⚡ Electricity only" },
+                                    ] as const).map(opt => (
+                                        <button
+                                            key={opt.key}
+                                            type="button"
+                                            onClick={() => setSingleInvChargeType(opt.key)}
+                                            className={`px-2 py-2 rounded-md text-xs font-bold border transition ${singleInvChargeType === opt.key ? "bg-purple-600 text-white border-purple-700" : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"}`}
+                                        >
+                                            {opt.label}
+                                        </button>
+                                    ))}
+                                </div>
+                                <p className="text-[10px] text-gray-500 mt-1">
+                                    {singleInvChargeType === "rent" && "Only base rent is billed. Meter fields are hidden and the unit's stored reading will not change."}
+                                    {singleInvChargeType === "electricity" && "Only electricity is billed. Base rent is excluded."}
+                                    {singleInvChargeType === "both" && "Rent and electricity are combined into a single invoice."}
+                                </p>
                             </div>
 
-                            {!singleInvMeterChanged ? (
+                            {/* Meter Changed Toggle — only when electricity is billed */}
+                            {singleInvChargeType !== "rent" && (
+                                <div className="flex items-center gap-3 bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                                    <input type="checkbox" id="adminMeterChanged" checked={singleInvMeterChanged} onChange={(e) => setSingleInvMeterChanged(e.target.checked)} className="w-4 h-4 accent-yellow-600" />
+                                    <label htmlFor="adminMeterChanged" className="text-sm text-yellow-800 font-medium cursor-pointer">⚠️ Meter was changed / replaced</label>
+                                </div>
+                            )}
+
+                            {singleInvChargeType !== "rent" && (!singleInvMeterChanged ? (
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-1">Current Meter Reading</label>
                                     <input type="number" required min="0" value={singleInvReading} onChange={(e) => setSingleInvReading(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md" placeholder="e.g. 1250" />
@@ -1032,21 +1076,24 @@ export default function AdminDashboard() {
                                         <p className="text-xs text-gray-500 mt-1">Saved as last reading for next month</p>
                                     </div>
                                 </div>
-                            )}
+                            ))}
 
                             {/* Live preview */}
-                            {singleInvUnit && (singleInvMeterChanged ? singleInvUnitsConsumed : singleInvReading) && (() => {
+                            {singleInvUnit && (singleInvChargeType === "rent" || (singleInvMeterChanged ? singleInvUnitsConsumed : singleInvReading)) && (() => {
                                 const u = occupiedUnits.find(x => x.id === singleInvUnit);
                                 if (!u) return null;
                                 const prev = Number(u.lastMeterReading) || 0;
-                                const consumed = singleInvMeterChanged ? Number(singleInvUnitsConsumed) : Math.max(0, Number(singleInvReading) - prev);
+                                const consumed = singleInvChargeType === "rent"
+                                    ? 0
+                                    : (singleInvMeterChanged ? Number(singleInvUnitsConsumed) : Math.max(0, Number(singleInvReading) - prev));
                                 const elecCharge = consumed * electricityRate;
-                                const total = Number(u.baseRent || 0) + elecCharge;
+                                const rentApplied = singleInvChargeType === "electricity" ? 0 : Number(u.baseRent || 0);
+                                const total = rentApplied + elecCharge;
                                 return (
                                     <div className="bg-purple-50 border border-purple-200 rounded-md p-3 text-sm">
-                                        {singleInvMeterChanged && <div className="bg-yellow-50 border border-yellow-200 rounded p-2 text-xs text-yellow-800 mb-2">⚠️ Meter changed — units entered manually</div>}
-                                        <div className="flex justify-between"><span>Rent:</span><span>₹{u.baseRent || 0}</span></div>
-                                        <div className="flex justify-between"><span>Electricity ({consumed} units × ₹{electricityRate}):</span><span>₹{elecCharge}</span></div>
+                                        {singleInvMeterChanged && singleInvChargeType !== "rent" && <div className="bg-yellow-50 border border-yellow-200 rounded p-2 text-xs text-yellow-800 mb-2">⚠️ Meter changed — units entered manually</div>}
+                                        {singleInvChargeType !== "electricity" && <div className="flex justify-between"><span>Rent:</span><span>₹{rentApplied}</span></div>}
+                                        {singleInvChargeType !== "rent" && <div className="flex justify-between"><span>Electricity ({consumed} units × ₹{electricityRate}):</span><span>₹{elecCharge}</span></div>}
                                         <div className="flex justify-between font-bold border-t border-purple-200 mt-2 pt-2"><span>Total:</span><span>₹{total}</span></div>
                                     </div>
                                 );
