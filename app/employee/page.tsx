@@ -47,6 +47,7 @@ export default function EmployeeDashboard() {
 
     // Collections States
     const [allInvoices, setAllInvoices] = useState<any[]>([]);
+    const [isTodayCollectionsOpen, setIsTodayCollectionsOpen] = useState(false);
 
     // Tenant Profile States
     const [isTenantProfileOpen, setIsTenantProfileOpen] = useState(false);
@@ -1092,11 +1093,11 @@ export default function EmployeeDashboard() {
                                     <p className="text-2xl font-bold text-red-800 mt-1">₹{totalPendingAmount.toLocaleString()}</p>
                                     <p className="text-xs text-gray-500 mt-0.5">{pendingInvoices.length} invoices</p>
                                 </button>
-                                <div className="bg-white border border-green-200 rounded-xl p-4">
+                                <button type="button" onClick={() => setIsTodayCollectionsOpen(true)} disabled={todayCollections.length === 0} className="bg-white border border-green-200 rounded-xl p-4 text-left hover:shadow-md transition disabled:cursor-default disabled:hover:shadow-none">
                                     <p className="text-[10px] font-bold text-green-600 uppercase">Collected Today</p>
                                     <p className="text-2xl font-bold text-green-800 mt-1">₹{todayCollectedAmount.toLocaleString()}</p>
-                                    <p className="text-xs text-gray-500 mt-0.5">{todayCollections.length} payments</p>
-                                </div>
+                                    <p className="text-xs text-gray-500 mt-0.5">{todayCollections.length} payments{todayCollections.length > 0 ? " · tap to view" : ""}</p>
+                                </button>
                                 <button onClick={() => setActiveTab("active")} className="bg-white border border-orange-200 rounded-xl p-4 text-left hover:shadow-md transition">
                                     <p className="text-[10px] font-bold text-orange-600 uppercase">Active Tasks</p>
                                     <p className="text-2xl font-bold text-orange-800 mt-1">{activeTickets.length}</p>
@@ -2143,6 +2144,71 @@ export default function EmployeeDashboard() {
                     </div>
                 </div>
             )}
+
+            {/* TODAY'S COLLECTIONS MODAL */}
+            {isTodayCollectionsOpen && (() => {
+                const today = new Date().toISOString().split("T")[0];
+                const todays = allInvoices
+                    .filter(inv => inv.status === "paid" && inv.paidAt && inv.paidAt.startsWith(today))
+                    .slice()
+                    .sort((a, b) => String(b.paidAt || "").localeCompare(String(a.paidAt || "")));
+                const total = todays.reduce((s, inv) => s + Number(inv.totalAmount || 0), 0);
+                const decodeMode = (txn: string) => {
+                    if (!txn) return { mode: "—", ref: "" };
+                    if (txn === "CASH_COLLECTED") return { mode: "CASH", ref: "" };
+                    if (txn === "DAILY_LEDGER_AUTOSETTLE") return { mode: "LEDGER", ref: "" };
+                    if (txn.includes(":")) { const [m, ...rest] = txn.split(":"); return { mode: m, ref: rest.join(":") }; }
+                    return { mode: "OTHER", ref: txn };
+                };
+                return (
+                    <div className="fixed inset-0 bg-black/60 flex items-end sm:items-center justify-center p-4 z-50 overflow-y-auto" onClick={() => setIsTodayCollectionsOpen(false)}>
+                        <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-lg shadow-2xl my-8 overflow-hidden" onClick={(e) => e.stopPropagation()}>
+                            <div className="bg-green-50 px-5 py-4 border-b border-green-200 flex justify-between items-center">
+                                <div>
+                                    <h2 className="text-lg font-bold text-green-800">💵 Collected Today</h2>
+                                    <p className="text-xs text-green-600 mt-0.5">{new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" })} · {todays.length} payment{todays.length !== 1 ? "s" : ""} · ₹{total.toLocaleString()}</p>
+                                </div>
+                                <button onClick={() => setIsTodayCollectionsOpen(false)} className="text-2xl text-gray-400 hover:text-gray-700">×</button>
+                            </div>
+                            <div className="max-h-[70vh] overflow-y-auto divide-y divide-gray-100">
+                                {todays.length === 0 ? (
+                                    <p className="text-sm text-gray-500 text-center py-10">No collections today yet.</p>
+                                ) : todays.map(inv => {
+                                    const { mode, ref } = decodeMode(inv.transactionId || "");
+                                    return (
+                                        <div key={inv.id} className="px-5 py-3 hover:bg-gray-50">
+                                            <div className="flex justify-between items-start gap-3">
+                                                <div className="min-w-0">
+                                                    <div className="flex items-center gap-2 flex-wrap">
+                                                        <span className="font-bold text-gray-900 text-sm">{inv.unitNumber}</span>
+                                                        <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-green-100 text-green-700">PAID</span>
+                                                        <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">{mode}</span>
+                                                    </div>
+                                                    <p className="text-xs text-gray-600 mt-0.5 truncate">{inv.tenantEmail || "—"}</p>
+                                                    <p className="text-[10px] text-gray-500 mt-0.5">{inv.billingPeriod}</p>
+                                                    <p className="text-[10px] text-gray-500 mt-0.5">📅 {inv.paidAt ? new Date(inv.paidAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : "—"}</p>
+                                                    {ref && <p className="text-[10px] text-gray-500 mt-0.5">🔖 {ref}</p>}
+                                                    {inv.paymentNote && <p className="text-[10px] text-gray-500 mt-0.5">📝 {inv.paymentNote}</p>}
+                                                </div>
+                                                <div className="text-right shrink-0">
+                                                    <p className="font-bold text-green-700 text-base">₹{Number(inv.totalAmount || 0).toLocaleString()}</p>
+                                                    {(inv.baseRent > 0 || inv.electricityCharge > 0) && (
+                                                        <p className="text-[10px] text-gray-500 mt-0.5">Rent ₹{Number(inv.baseRent || 0).toLocaleString()} · Elec ₹{Number(inv.electricityCharge || 0).toLocaleString()}</p>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                            <div className="px-5 py-3 border-t border-gray-200 flex justify-between items-center bg-gray-50">
+                                <span className="text-sm font-bold text-gray-700">Total</span>
+                                <span className="text-lg font-bold text-green-700">₹{total.toLocaleString()}</span>
+                            </div>
+                        </div>
+                    </div>
+                );
+            })()}
 
             {/* ASSIGN TENANT MODAL */}
             {isAssignModalOpen && assignUnit && (
