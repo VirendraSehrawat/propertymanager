@@ -335,7 +335,9 @@ export default function EmployeeDashboard() {
                     unitsConsumed = Math.max(0, reading - previousReading);
                 }
             }
-            const electricityCharge = unitsConsumed * electricityRate;
+            // Per-unit electricity rate (fall back to global default if not set)
+            const effectiveRate = Number(unit.electricityRate) > 0 ? Number(unit.electricityRate) : electricityRate;
+            const electricityCharge = unitsConsumed * effectiveRate;
 
             // Fetch tenant ledger balance (carry-forward)
             const ledgerSnap = await getDocs(query(collection(db, "ledger"), where("tenantEmail", "==", unit.tenantEmail)));
@@ -354,7 +356,7 @@ export default function EmployeeDashboard() {
                 previousReading,
                 currentReading: reading,
                 electricityConsumed: unitsConsumed,
-                electricityRate,
+                electricityRate: effectiveRate,
                 electricityCharge,
                 ...(meterChanged ? { meterChanged: true } : { meterChanged: deleteField() }),
                 ...(manualOverrideNote ? { manualUnitsReason: manualOverrideNote } : { manualUnitsReason: deleteField() }),
@@ -372,7 +374,7 @@ export default function EmployeeDashboard() {
             const cfMsg = carryForward !== 0 ? `\nCarry Forward: ${carryForward > 0 ? '+' : ''}₹${carryForward}` : '';
             const meterNote = meterChanged ? '\n⚠️ Meter was changed — units entered manually' : '';
             const manualNote = manualOverrideNote ? `\n📝 Manual units: ${manualOverrideNote}` : '';
-            alert(`Invoice generated for ${unit.unitNumber}!${meterNote}${manualNote}\n\nRent: ₹${unit.baseRent || 0}\nElectricity: ${unitsConsumed} units × ₹${electricityRate} = ₹${electricityCharge}${cfMsg}\nTotal: ₹${totalAmount}`);
+            alert(`Invoice generated for ${unit.unitNumber}!${meterNote}${manualNote}\n\nRent: ₹${unit.baseRent || 0}\nElectricity: ${unitsConsumed} units × ₹${effectiveRate} = ₹${electricityCharge}${cfMsg}\nTotal: ₹${totalAmount}`);
             setSelectedMeterUnit("");
             setCurrentReading("");
             setPreviousReadingOverride("");
@@ -588,7 +590,8 @@ export default function EmployeeDashboard() {
                     const prevReading = Number(transferSourceUnit.lastMeterReading || 0);
                     const currReading = transferLastReading ? Number(transferLastReading) : prevReading;
                     const unitsConsumed = Math.max(0, currReading - prevReading);
-                    const elecCharge = unitsConsumed * electricityRate;
+                    const transferRate = Number(transferSourceUnit.electricityRate) > 0 ? Number(transferSourceUnit.electricityRate) : electricityRate;
+                    const elecCharge = unitsConsumed * transferRate;
 
                     totalAmount = proratedRent + elecCharge;
                     invoiceData = {
@@ -597,7 +600,7 @@ export default function EmployeeDashboard() {
                         previousReading: prevReading,
                         currentReading: currReading,
                         electricityConsumed: unitsConsumed,
-                        electricityRate,
+                        electricityRate: transferRate,
                         electricityCharge: elecCharge,
                         totalAmount,
                     };
@@ -1250,7 +1253,7 @@ export default function EmployeeDashboard() {
                     <div className="bg-white rounded-xl shadow-sm border border-purple-200 overflow-hidden">
                         <div className="bg-purple-50 px-5 py-4 border-b border-purple-100">
                             <h2 className="text-lg font-bold text-purple-800">⚡ Record Meter Reading & Generate Invoice</h2>
-                            <p className="text-xs text-purple-600 mt-1">Enter readings to calculate electricity bill (₹{electricityRate}/unit)</p>
+                            <p className="text-xs text-purple-600 mt-1">Enter readings to calculate electricity bill. Default rate ₹{electricityRate}/unit — per-tenant rate can be set in the Tenant Profile.</p>
                         </div>
                         <form onSubmit={handleGenerateMeterInvoice} className="p-5 space-y-4">
                             <div>
@@ -1268,7 +1271,7 @@ export default function EmployeeDashboard() {
                                 return (
                                     <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-800 space-y-1">
                                         <p><strong>Unit:</strong> {u.unitNumber} | <strong>Tenant:</strong> {u.tenantEmail || u.tenantName || "—"}</p>
-                                        <p><strong>Last Meter Reading (from system):</strong> {u.lastMeterReading || 0} | <strong>Base Rent:</strong> ₹{u.baseRent || 0}</p>
+                                        <p><strong>Last Meter Reading (from system):</strong> {u.lastMeterReading || 0} | <strong>Base Rent:</strong> ₹{u.baseRent || 0} | <strong>Rate:</strong> ₹{Number(u.electricityRate) > 0 ? Number(u.electricityRate) : electricityRate}/unit{Number(u.electricityRate) > 0 ? " (custom)" : " (default)"}</p>
                                     </div>
                                 );
                             })()}
@@ -1340,7 +1343,8 @@ export default function EmployeeDashboard() {
                                     : hasManualOverride
                                         ? Number(manualUnitsConsumed)
                                         : Math.max(0, Number(currentReading) - prev);
-                                const elecCharge = consumed * electricityRate;
+                                const effectiveRate = Number(unit.electricityRate) > 0 ? Number(unit.electricityRate) : electricityRate;
+                                const elecCharge = consumed * effectiveRate;
                                 const total = Number(unit.baseRent || 0) + elecCharge;
                                 return (
                                     <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 space-y-2 text-sm">
@@ -1358,7 +1362,7 @@ export default function EmployeeDashboard() {
                                             <div className="bg-orange-50 border border-orange-200 rounded p-2 text-xs text-orange-800">📝 Manual override: {manualUnitsConsumed} units — {manualUnitsReason || "No reason"}</div>
                                         )}
                                         <div className="flex justify-between"><span className="text-gray-600">Units Consumed:</span><span className="font-mono font-bold">{consumed}</span></div>
-                                        <div className="flex justify-between"><span className="text-gray-600">Electricity (×₹{electricityRate}):</span><span className="font-mono">₹{elecCharge}</span></div>
+                                        <div className="flex justify-between"><span className="text-gray-600">Electricity (×₹{effectiveRate}):</span><span className="font-mono">₹{elecCharge}</span></div>
                                         <div className="flex justify-between"><span className="text-gray-600">Base Rent:</span><span className="font-mono">₹{unit.baseRent || 0}</span></div>
                                         <div className="flex justify-between border-t border-gray-300 pt-2 mt-2"><span className="font-bold text-gray-900">Total Invoice:</span><span className="font-bold text-lg text-green-700">₹{total}</span></div>
                                     </div>
@@ -2066,6 +2070,34 @@ export default function EmployeeDashboard() {
                                     </div>
                                     {profileUnit.securityDeposit && <p className="text-[10px] text-green-600 mt-0.5">₹{Number(profileUnit.securityDeposit).toLocaleString()} {profileUnit.securityDepositDate ? `(${new Date(profileUnit.securityDepositDate).toLocaleDateString()})` : ""}</p>}
                                 </div>
+                            </div>
+                            {/* Per-tenant Electricity Rate */}
+                            <div className="mt-3">
+                                <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">⚡ Electricity Rate (₹ per unit)</label>
+                                <div className="flex gap-1">
+                                    <input type="number" min="0" step="0.01" defaultValue={profileUnit.electricityRate ?? ""} id="profileElectricityRate" className="flex-1 px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder={`Default ₹${electricityRate}/unit`} />
+                                    <button type="button" onClick={async () => {
+                                        const raw = (document.getElementById('profileElectricityRate') as HTMLInputElement).value;
+                                        try {
+                                            if (raw === "" || raw === null) {
+                                                await updateDoc(doc(db, "units", profileUnit.id), { electricityRate: deleteField() });
+                                                setProfileUnit({ ...profileUnit, electricityRate: undefined });
+                                                alert(`Custom rate cleared. Using default ₹${electricityRate}/unit.`);
+                                            } else {
+                                                const val = Number(raw);
+                                                if (!(val > 0)) { alert("Enter a positive rate, or leave empty to use default."); return; }
+                                                await updateDoc(doc(db, "units", profileUnit.id), { electricityRate: val });
+                                                setProfileUnit({ ...profileUnit, electricityRate: val });
+                                                alert(`Electricity rate saved: ₹${val}/unit`);
+                                            }
+                                        } catch (err) { console.error(err); alert("Failed to save rate."); }
+                                    }} className="px-2 py-1 bg-purple-100 text-purple-700 rounded text-xs font-bold hover:bg-purple-200">✓</button>
+                                </div>
+                                <p className="text-[10px] text-purple-600 mt-0.5">
+                                    {Number(profileUnit.electricityRate) > 0
+                                        ? `Custom: ₹${Number(profileUnit.electricityRate)}/unit — applied to future meter invoices for this tenant.`
+                                        : `Using default ₹${electricityRate}/unit. Set a value here to override for this tenant.`}
+                                </p>
                             </div>
                         </div>
 
