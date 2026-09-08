@@ -267,6 +267,29 @@ export default function AdminDashboard() {
     const [dashboardDate, setDashboardDate] = useState(() => new Date().toISOString().split("T")[0]);
     const [dashboardViewMode, setDashboardViewMode] = useState<"day" | "month">("day");
 
+    // Global month selector — drives every month-scoped section on this page.
+    // Format: "YYYY-MM". Setting this cascades the individual pickers so all sections stay in sync.
+    const [globalMonth, setGlobalMonthState] = useState<string>(() => {
+        const d = new Date();
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    });
+    const applyGlobalMonth = (ym: string) => {
+        setGlobalMonthState(ym);
+        const [y, m] = ym.split("-").map(Number);
+        const label = new Date(y, m - 1, 1).toLocaleString('default', { month: 'long', year: 'numeric' });
+        setDashboardMonth(label);
+        setVerifyMonth(label);
+        setDashboardDate(`${ym}-01`);
+        setDashboardViewMode("month");
+        setExportMonth(ym);
+    };
+    // Given a "Month YYYY" label, cascade through the global setter.
+    const applyGlobalMonthFromLabel = (label: string) => {
+        const d = new Date(label);
+        if (isNaN(d.getTime())) return;
+        applyGlobalMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+    };
+
     // --- NEW: FINANCIAL EXPORT LOGIC ---
     const handleExportFinancials = () => {
         if (!exportMonth) {
@@ -549,6 +572,36 @@ export default function AdminDashboard() {
 
             <main className="p-6 max-w-7xl mx-auto space-y-8">
 
+                {/* Global Month Selector — filters every month-scoped section below */}
+                {(() => {
+                    const [y, m] = globalMonth.split("-").map(Number);
+                    const label = new Date(y, m - 1, 1).toLocaleString('default', { month: 'long', year: 'numeric' });
+                    const shift = (delta: number) => {
+                        const d = new Date(y, m - 1 + delta, 1);
+                        applyGlobalMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+                    };
+                    const nowYm = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+                    return (
+                        <div className="bg-white rounded-lg shadow-sm border border-indigo-200 px-5 py-3 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 sticky top-16 z-10">
+                            <div className="flex items-center gap-3">
+                                <span className="text-xs font-bold text-gray-500 uppercase">Viewing</span>
+                                <button onClick={() => shift(-1)} className="w-8 h-8 rounded-md bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold hover:bg-indigo-100">‹</button>
+                                <div className="text-center min-w-35">
+                                    <p className="text-base font-bold text-indigo-800">{label}</p>
+                                    {globalMonth === nowYm && <p className="text-[10px] text-indigo-500 -mt-0.5">Current month</p>}
+                                </div>
+                                <button onClick={() => shift(1)} className="w-8 h-8 rounded-md bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold hover:bg-indigo-100">›</button>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <input type="month" value={globalMonth} onChange={(e) => e.target.value && applyGlobalMonth(e.target.value)} className="px-3 py-1.5 border border-indigo-300 rounded-md text-sm font-medium bg-white" />
+                                {globalMonth !== nowYm && (
+                                    <button onClick={() => applyGlobalMonth(nowYm)} className="text-xs px-3 py-1.5 border border-indigo-200 text-indigo-700 rounded-md hover:bg-indigo-50 font-bold">Today</button>
+                                )}
+                            </div>
+                        </div>
+                    );
+                })()}
+
                 <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 bg-white p-6 rounded-lg shadow-sm border border-gray-200">
                     <div><h2 className="text-xl font-bold text-gray-900">Command Center</h2><p className="text-sm text-gray-500">Manage billing, maintenance, portfolio, and staff.</p></div>
                     <div className="flex flex-wrap gap-3 w-full lg:w-auto">
@@ -618,9 +671,9 @@ export default function AdminDashboard() {
                                         <button onClick={() => setDashboardViewMode("month")} className={`px-3 py-1.5 text-xs font-bold transition ${dashboardViewMode === "month" ? "bg-emerald-600 text-white" : "text-emerald-700 hover:bg-emerald-100"}`}>Month</button>
                                     </div>
                                     {dashboardViewMode === "day" ? (
-                                        <input type="date" value={dashboardDate} onChange={(e) => setDashboardDate(e.target.value)} className="px-3 py-1.5 border border-emerald-300 rounded-md text-sm font-medium" />
+                                        <input type="date" value={dashboardDate} onChange={(e) => { setDashboardDate(e.target.value); applyGlobalMonth(e.target.value.substring(0, 7)); }} className="px-3 py-1.5 border border-emerald-300 rounded-md text-sm font-medium" />
                                     ) : (
-                                        <input type="month" value={dashboardDate.substring(0, 7)} onChange={(e) => setDashboardDate(e.target.value + "-01")} className="px-3 py-1.5 border border-emerald-300 rounded-md text-sm font-medium" />
+                                        <input type="month" value={dashboardDate.substring(0, 7)} onChange={(e) => { setDashboardDate(e.target.value + "-01"); applyGlobalMonth(e.target.value); }} className="px-3 py-1.5 border border-emerald-300 rounded-md text-sm font-medium" />
                                     )}
                                 </div>
                             </div>
@@ -715,7 +768,7 @@ export default function AdminDashboard() {
                         <div className="bg-white rounded-lg shadow-sm border border-indigo-200 overflow-hidden">
                             <div className="bg-indigo-50 px-6 py-4 border-b border-indigo-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                                 <h2 className="text-lg font-bold text-indigo-800">📊 Monthly Dashboard</h2>
-                                <select value={dashboardMonth} onChange={(e) => setDashboardMonth(e.target.value)} className="px-3 py-2 border border-indigo-300 rounded-md text-sm font-medium bg-white">
+                                <select value={dashboardMonth} onChange={(e) => { setDashboardMonth(e.target.value); applyGlobalMonthFromLabel(e.target.value); }} className="px-3 py-2 border border-indigo-300 rounded-md text-sm font-medium bg-white">
                                     {dashboardPeriods.length === 0 ? <option>No invoices yet</option> : dashboardPeriods.map(p => <option key={p} value={p}>{p}</option>)}
                                 </select>
                             </div>
@@ -778,7 +831,7 @@ export default function AdminDashboard() {
                                                 {verifyMonth !== "all" && ` · ${verifiedForMonth.length} verified · ₹${verifiedTotal.toLocaleString()}`}
                                             </p>
                                         </div>
-                                        <select value={verifyMonth} onChange={(e) => setVerifyMonth(e.target.value)} className="px-3 py-2 border border-green-300 rounded-md text-sm font-medium bg-white">
+                                        <select value={verifyMonth} onChange={(e) => { setVerifyMonth(e.target.value); if (e.target.value !== "all") applyGlobalMonthFromLabel(e.target.value); }} className="px-3 py-2 border border-green-300 rounded-md text-sm font-medium bg-white">
                                             <option value="all">All Months</option>
                                             {dashboardPeriods.map(p => <option key={p} value={p}>{p}</option>)}
                                         </select>
@@ -846,7 +899,7 @@ export default function AdminDashboard() {
                                 <input
                                     type="month"
                                     value={exportMonth}
-                                    onChange={(e) => setExportMonth(e.target.value)}
+                                    onChange={(e) => { setExportMonth(e.target.value); if (e.target.value) applyGlobalMonth(e.target.value); }}
                                     className="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm"
                                 />
                                 <button
