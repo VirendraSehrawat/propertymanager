@@ -1471,6 +1471,24 @@ export default function EmployeeDashboard() {
                             <h2 className="text-lg font-bold text-purple-800">⚡ Record Meter Reading & Generate Invoice</h2>
                             <p className="text-xs text-purple-600 mt-1">Enter readings to calculate electricity bill. Default rate ₹{electricityRate}/unit — per-tenant rate can be set in the Tenant Profile.</p>
                         </div>
+                        {/* Billing rule reminder — always visible so employee knows what the invoice covers */}
+                        <div className="mx-5 mt-4 bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-900">
+                            <p className="font-bold flex items-center gap-1">📌 How this invoice works</p>
+                            <ul className="mt-1 space-y-0.5 list-disc list-inside">
+                                <li><strong>🏠 Rent</strong> is for the <strong>upcoming month</strong> (from tenant&apos;s payment day).</li>
+                                <li><strong>⚡ Electricity</strong> is for the <strong>month that just ended</strong> — the units read now were consumed last month.</li>
+                            </ul>
+                            {billingMonth && (() => {
+                                const rp = computeRentPeriod(billingMonth, Number(occupiedUnits.find(x => x.id === selectedMeterUnit)?.paymentDay) || undefined);
+                                const ep = computeElectricityPeriod(billingMonth);
+                                return (
+                                    <div className="mt-2 pt-2 border-t border-amber-200 grid grid-cols-1 sm:grid-cols-2 gap-1.5 font-medium">
+                                        <p>🏠 <span className="text-amber-700">Collecting rent for:</span> {rp}</p>
+                                        <p>⚡ <span className="text-amber-700">Charging electricity for:</span> {ep}</p>
+                                    </div>
+                                );
+                            })()}
+                        </div>
                         <form onSubmit={handleGenerateMeterInvoice} className="p-5 space-y-4">
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Select Unit</label>
@@ -1494,6 +1512,16 @@ export default function EmployeeDashboard() {
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Billing Month</label>
                                 <input type="month" required value={billingMonth} onChange={(e) => setBillingMonth(e.target.value)} className="w-full px-3 py-2.5 border border-gray-300 rounded-lg" />
+                                {billingMonth && (() => {
+                                    const unitSel = occupiedUnits.find(x => x.id === selectedMeterUnit);
+                                    const rp = computeRentPeriod(billingMonth, Number(unitSel?.paymentDay) || undefined);
+                                    const ep = computeElectricityPeriod(billingMonth);
+                                    return (
+                                        <p className="text-[11px] text-purple-700 mt-1">
+                                            → Rent: <span className="font-medium">{rp}</span> · Electricity: <span className="font-medium">{ep}</span>
+                                        </p>
+                                    );
+                                })()}
                             </div>
 
                             {/* Meter Changed Toggle */}
