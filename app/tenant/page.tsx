@@ -228,6 +228,12 @@ export default function TenantDashboard() {
                                         <div key={invoice.id} className="border border-gray-200 p-4 rounded-md flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 bg-white hover:shadow-sm transition">
                                             <div className="w-full lg:w-auto">
                                                 <div className="flex items-center gap-3 mb-2"><p className="font-bold text-gray-800 text-lg">{invoice.billingPeriod}</p><span className={`px-2 py-0.5 text-xs font-bold rounded-full ${invoice.status === 'paid' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{invoice.status.toUpperCase()}</span></div>
+                                                {(invoice.rentPeriod || invoice.electricityPeriod) && (
+                                                    <div className="text-xs text-gray-600 mb-2 space-y-0.5">
+                                                        {invoice.rentPeriod && <p>🏠 <span className="font-medium">Rent for:</span> {invoice.rentPeriod}</p>}
+                                                        {invoice.electricityPeriod && <p>⚡ <span className="font-medium">Electricity for:</span> {invoice.electricityPeriod}</p>}
+                                                    </div>
+                                                )}
                                                 {invoice.isCustom ? (
                                                     <div className="bg-yellow-50 border border-yellow-100 p-3 rounded text-sm text-gray-700 mb-2 max-w-sm"><div className="flex justify-between items-center font-bold"><span>Ad-Hoc Charge:</span><span className="text-lg">₹{invoice.totalAmount}</span></div></div>
                                                 ) : (

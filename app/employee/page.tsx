@@ -11,6 +11,7 @@ import { auth, db } from "@/lib/firebase";
 import { collection, onSnapshot, doc, updateDoc, arrayUnion, query, where, writeBatch, getDocs, addDoc, getDoc, deleteField, deleteDoc } from "firebase/firestore";
 import { useUploadWithProgress, UploadProgressBar } from "@/lib/useUpload";
 import { calculateFundSummary, filterExpenses, buildSettlementUpdate } from "@/lib/expenses";
+import { computeRentPeriod, computeElectricityPeriod } from "@/lib/billingPeriods";
 import { CollectionsTab, OccupancyTab, LedgerTab, ExpensesTab, InventoryTab, TicketsTab, DailyLedgerTab, MonthlyOverviewTab } from "@/components/employee";
 import { TabButton } from "@/components/ui";
 
@@ -368,6 +369,8 @@ export default function EmployeeDashboard() {
                 ...(carryForward !== 0 ? { carryForward } : { carryForward: deleteField() }),
                 totalAmount,
                 billingPeriod: monthName,
+                rentPeriod: computeRentPeriod(billingMonth, Number(unit.paymentDay) || undefined),
+                electricityPeriod: computeElectricityPeriod(billingMonth),
                 status: "unpaid",
                 transactionId: "",
                 createdAt: new Date().toISOString()
@@ -379,7 +382,9 @@ export default function EmployeeDashboard() {
             const cfMsg = carryForward !== 0 ? `\nCarry Forward: ${carryForward > 0 ? '+' : ''}₹${carryForward}` : '';
             const meterNote = meterChanged ? '\n⚠️ Meter was changed — units entered manually' : '';
             const manualNote = manualOverrideNote ? `\n📝 Manual units: ${manualOverrideNote}` : '';
-            alert(`Invoice generated for ${unit.unitNumber}!${meterNote}${manualNote}\n\nRent: ₹${unit.baseRent || 0}\nElectricity: ${unitsConsumed} units × ₹${effectiveRate} = ₹${electricityCharge}${cfMsg}\nTotal: ₹${totalAmount}`);
+            const rentP = computeRentPeriod(billingMonth, Number(unit.paymentDay) || undefined);
+            const elecP = computeElectricityPeriod(billingMonth);
+            alert(`Invoice generated for ${unit.unitNumber}!${meterNote}${manualNote}\n\nRent (${rentP}): ₹${unit.baseRent || 0}\nElectricity (${elecP}): ${unitsConsumed} units × ₹${effectiveRate} = ₹${electricityCharge}${cfMsg}\nTotal: ₹${totalAmount}`);
             setSelectedMeterUnit("");
             setCurrentReading("");
             setPreviousReadingOverride("");
@@ -1560,6 +1565,10 @@ export default function EmployeeDashboard() {
                                 return (
                                     <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 space-y-2 text-sm">
                                         <p className="font-bold text-gray-800 text-base">Invoice Preview</p>
+                                        <div className="bg-blue-50 border border-blue-200 rounded p-2 text-[11px] text-blue-900 space-y-0.5">
+                                            <p>🏠 <strong>Rent period:</strong> {computeRentPeriod(billingMonth, Number(unit.paymentDay) || undefined)}</p>
+                                            <p>⚡ <strong>Electricity for:</strong> {computeElectricityPeriod(billingMonth)}</p>
+                                        </div>
                                         {meterChanged ? (
                                             <div className="bg-yellow-50 border border-yellow-200 rounded p-2 text-xs text-yellow-800 mb-2">⚠️ Meter changed — units entered manually</div>
                                         ) : (

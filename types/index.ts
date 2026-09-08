@@ -70,6 +70,10 @@ export interface Invoice {
     status: "unpaid" | "pending" | "paid";
     totalAmount: number;
     billingPeriod: string;
+    /** Human-readable date range the rent covers, e.g. "8 Sep 2026 – 8 Oct 2026". */
+    rentPeriod?: string;
+    /** Month label for which electricity consumption is billed, e.g. "August 2026". */
+    electricityPeriod?: string;
     baseRent: number;
     previousReading?: number;
     currentReading?: number;

@@ -235,6 +235,13 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                                             </div>
                                             <p className="text-xs text-gray-500">{inv.tenantEmail}</p>
                                             <p className={`text-xs font-medium mt-0.5 ${overdue ? "text-red-600" : "text-indigo-600"}`}>{inv.billingPeriod}</p>
+                                            {((inv as any).rentPeriod || (inv as any).electricityPeriod) && (
+                                                <p className="text-[10px] text-gray-500 mt-0.5">
+                                                    {(inv as any).rentPeriod && <>🏠 <span className="font-medium">{(inv as any).rentPeriod}</span></>}
+                                                    {(inv as any).rentPeriod && (inv as any).electricityPeriod && " · "}
+                                                    {(inv as any).electricityPeriod && <>⚡ <span className="font-medium">{(inv as any).electricityPeriod}</span></>}
+                                                </p>
+                                            )}
                                             <button onClick={() => { const unit = occupiedUnits.find(u => u.id === inv.unitId); if (unit) openTenantProfile(unit); }} className="text-[10px] text-indigo-600 hover:underline mt-1">View Profile {"\u2192"}</button>
                                         </div>
                                         <div className="text-right flex flex-col items-end gap-2">
@@ -295,6 +302,13 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                                             </div>
                                             <p className="text-xs text-gray-500 truncate">{inv.tenantEmail}</p>
                                             <p className="text-xs font-medium text-green-700 mt-0.5">{inv.billingPeriod}</p>
+                                            {((inv as any).rentPeriod || (inv as any).electricityPeriod) && (
+                                                <p className="text-[10px] text-gray-500 mt-0.5 truncate">
+                                                    {(inv as any).rentPeriod && <>🏠 {(inv as any).rentPeriod}</>}
+                                                    {(inv as any).rentPeriod && (inv as any).electricityPeriod && " · "}
+                                                    {(inv as any).electricityPeriod && <>⚡ {(inv as any).electricityPeriod}</>}
+                                                </p>
+                                            )}
                                             <div className="text-[10px] text-gray-400 mt-1 flex gap-2 flex-wrap">
                                                 <span>📅 {paidStr}</span>
                                                 {ref && <span title="Reference">🔖 {ref}</span>}
