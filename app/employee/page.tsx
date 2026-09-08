@@ -48,6 +48,10 @@ export default function EmployeeDashboard() {
     // Collections States
     const [allInvoices, setAllInvoices] = useState<any[]>([]);
     const [isTodayCollectionsOpen, setIsTodayCollectionsOpen] = useState(false);
+    const [homeMonth, setHomeMonth] = useState<string>(() => {
+        const d = new Date();
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    });
 
     // Tenant Profile States
     const [isTenantProfileOpen, setIsTenantProfileOpen] = useState(false);
@@ -1109,6 +1113,212 @@ export default function EmployeeDashboard() {
                                     <p className="text-xs text-gray-500 mt-0.5">{vacantUnits.length} vacant</p>
                                 </button>
                             </div>
+
+                            {/* MONTHLY COLLECTIONS & PENDING (picker) */}
+                            {(() => {
+                                const [yr, mo] = homeMonth.split("-").map(Number);
+                                const selDate = new Date(yr, mo - 1, 1);
+                                const selLabel = selDate.toLocaleString("default", { month: "long", year: "numeric" });
+                                const isSameBillingPeriod = (bp: string | undefined) => {
+                                    if (!bp) return false;
+                                    // billingPeriod format: "March 2026" (may include suffix like " (Transfer)")
+                                    const base = bp.replace(/\s*\(.+\)\s*$/, "").trim();
+                                    return base === selLabel;
+                                };
+                                const monthInvoices = allInvoices.filter(inv => isSameBillingPeriod(inv.billingPeriod));
+                                let paidRent = 0, paidElec = 0, dueRent = 0, dueElec = 0, totalBilled = 0;
+                                let paidInvoices = 0, partialInvoices = 0, unpaidInvoices = 0;
+                                monthInvoices.forEach(inv => {
+                                    const rent = Number(inv.baseRent || 0);
+                                    const elec = Number(inv.electricityCharge || 0);
+                                    const total = Number(inv.totalAmount || 0) || (rent + elec);
+                                    const paid = Number(inv.amountPaid || 0);
+                                    totalBilled += total;
+                                    // Allocate paid amount rent-first, then electricity
+                                    const pR = Math.min(paid, rent);
+                                    const pE = Math.min(Math.max(0, paid - rent), elec);
+                                    paidRent += pR; paidElec += pE;
+                                    dueRent += Math.max(0, rent - pR);
+                                    dueElec += Math.max(0, elec - pE);
+                                    if (inv.status === "paid") paidInvoices++;
+                                    else if (paid > 0) partialInvoices++;
+                                    else unpaidInvoices++;
+                                });
+                                const collected = paidRent + paidElec;
+                                const due = dueRent + dueElec;
+                                const collectPct = totalBilled > 0 ? Math.round((collected / totalBilled) * 100) : 0;
+
+                                // Month nav helpers
+                                const shiftMonth = (delta: number) => {
+                                    const d = new Date(yr, mo - 1 + delta, 1);
+                                    setHomeMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+                                };
+                                const nowYm = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+                                const isCurrent = homeMonth === nowYm;
+
+                                return (
+                                    <div className="bg-white rounded-xl shadow-sm border border-indigo-200 overflow-hidden">
+                                        <div className="bg-indigo-50 px-4 py-3 border-b border-indigo-200 flex items-center justify-between gap-2">
+                                            <div className="flex items-center gap-2 min-w-0">
+                                                <button onClick={() => shiftMonth(-1)} className="w-8 h-8 rounded-md bg-white border border-indigo-200 text-indigo-700 font-bold hover:bg-indigo-100">‹</button>
+                                                <div className="min-w-0">
+                                                    <h3 className="text-sm font-bold text-indigo-800 truncate">📅 {selLabel}{isCurrent ? " · Current" : ""}</h3>
+                                                    <p className="text-[10px] text-indigo-600">{monthInvoices.length} invoice{monthInvoices.length !== 1 ? "s" : ""} for this month</p>
+                                                </div>
+                                                <button onClick={() => shiftMonth(1)} disabled={isCurrent} className="w-8 h-8 rounded-md bg-white border border-indigo-200 text-indigo-700 font-bold hover:bg-indigo-100 disabled:opacity-40 disabled:cursor-not-allowed">›</button>
+                                            </div>
+                                            <input type="month" value={homeMonth} max={nowYm} onChange={(e) => setHomeMonth(e.target.value)} className="text-xs px-2 py-1.5 border border-indigo-200 rounded-md bg-white" />
+                                        </div>
+                                        <div className="p-4 space-y-3">
+                                            {monthInvoices.length === 0 ? (
+                                                <p className="text-sm text-gray-500 text-center py-4">No invoices generated for {selLabel}.</p>
+                                            ) : (
+                                                <>
+                                                    {/* Progress bar */}
+                                                    <div>
+                                                        <div className="flex justify-between text-[11px] font-bold text-gray-600 mb-1">
+                                                            <span>Collected ₹{collected.toLocaleString()} / ₹{totalBilled.toLocaleString()}</span>
+                                                            <span>{collectPct}%</span>
+                                                        </div>
+                                                        <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+                                                            <div className="h-full bg-green-500 rounded-full transition-all" style={{ width: `${collectPct}%` }} />
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Two-column summary */}
+                                                    <div className="grid grid-cols-2 gap-3">
+                                                        <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                                                            <p className="text-[10px] font-bold text-green-700 uppercase">Collected</p>
+                                                            <p className="text-xl font-bold text-green-800 mt-0.5">₹{collected.toLocaleString()}</p>
+                                                            <div className="mt-1.5 space-y-0.5 text-[11px] text-green-700">
+                                                                <div className="flex justify-between"><span>🏠 Rent</span><span className="font-bold">₹{paidRent.toLocaleString()}</span></div>
+                                                                <div className="flex justify-between"><span>⚡ Electricity</span><span className="font-bold">₹{paidElec.toLocaleString()}</span></div>
+                                                            </div>
+                                                        </div>
+                                                        <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                                                            <p className="text-[10px] font-bold text-red-700 uppercase">Pending</p>
+                                                            <p className="text-xl font-bold text-red-800 mt-0.5">₹{due.toLocaleString()}</p>
+                                                            <div className="mt-1.5 space-y-0.5 text-[11px] text-red-700">
+                                                                <div className="flex justify-between"><span>🏠 Rent</span><span className="font-bold">₹{dueRent.toLocaleString()}</span></div>
+                                                                <div className="flex justify-between"><span>⚡ Electricity</span><span className="font-bold">₹{dueElec.toLocaleString()}</span></div>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Invoice status chips */}
+                                                    <div className="flex gap-2 text-[10px] font-bold">
+                                                        <span className="flex-1 text-center py-1.5 rounded-md bg-green-100 text-green-800">✓ Paid {paidInvoices}</span>
+                                                        <span className="flex-1 text-center py-1.5 rounded-md bg-amber-100 text-amber-800">◐ Partial {partialInvoices}</span>
+                                                        <span className="flex-1 text-center py-1.5 rounded-md bg-red-100 text-red-800">✗ Unpaid {unpaidInvoices}</span>
+                                                    </div>
+
+                                                    {/* Details toggle */}
+                                                    {(unpaidInvoices + partialInvoices) > 0 && (
+                                                        <details className="border border-gray-200 rounded-lg">
+                                                            <summary className="px-3 py-2 text-xs font-bold text-gray-700 cursor-pointer hover:bg-gray-50">📋 Pending Details ({unpaidInvoices + partialInvoices})</summary>
+                                                            <div className="max-h-72 overflow-y-auto divide-y divide-gray-100">
+                                                                {monthInvoices
+                                                                    .filter(inv => inv.status !== "paid")
+                                                                    .sort((a, b) => String(a.unitNumber || "").localeCompare(String(b.unitNumber || ""), undefined, { numeric: true, sensitivity: "base" }))
+                                                                    .map(inv => {
+                                                                        const paid = Number(inv.amountPaid || 0);
+                                                                        const total = Number(inv.totalAmount || 0);
+                                                                        const remaining = Math.max(0, total - paid);
+                                                                        const rent = Number(inv.baseRent || 0);
+                                                                        const elec = Number(inv.electricityCharge || 0);
+                                                                        const rRent = Math.max(0, rent - Math.min(paid, rent));
+                                                                        const rElec = Math.max(0, elec - Math.max(0, paid - rent));
+                                                                        const isPartial = paid > 0 && paid < total;
+                                                                        return (
+                                                                            <div key={inv.id} className="px-3 py-2 flex justify-between items-start gap-2">
+                                                                                <div className="min-w-0">
+                                                                                    <div className="flex items-center gap-2 flex-wrap">
+                                                                                        <span className="font-bold text-gray-900 text-sm">{inv.unitNumber}</span>
+                                                                                        <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ${isPartial ? "bg-amber-100 text-amber-800" : "bg-red-100 text-red-800"}`}>{isPartial ? "Partial" : "Unpaid"}</span>
+                                                                                    </div>
+                                                                                    <p className="text-[10px] text-gray-500 truncate">{inv.tenantEmail || "—"}</p>
+                                                                                    <p className="text-[10px] text-gray-500">🏠 ₹{rRent.toLocaleString()} · ⚡ ₹{rElec.toLocaleString()}</p>
+                                                                                </div>
+                                                                                <div className="text-right shrink-0">
+                                                                                    <p className="font-bold text-red-700 text-sm">₹{remaining.toLocaleString()}</p>
+                                                                                    {isPartial && <p className="text-[10px] text-gray-500">of ₹{total.toLocaleString()}</p>}
+                                                                                </div>
+                                                                            </div>
+                                                                        );
+                                                                    })}
+                                                            </div>
+                                                        </details>
+                                                    )}
+                                                </>
+                                            )}
+                                        </div>
+                                    </div>
+                                );
+                            })()}
+
+                            {/* PREVIOUS MONTH BALANCE — tenants with unpaid/partial for month PRIOR to selected */}
+                            {(() => {
+                                const [yr, mo] = homeMonth.split("-").map(Number);
+                                const prev = new Date(yr, mo - 2, 1); // one month before selected
+                                const prevLabel = prev.toLocaleString("default", { month: "long", year: "numeric" });
+                                const isSameBillingPeriod = (bp: string | undefined) => {
+                                    if (!bp) return false;
+                                    const base = bp.replace(/\s*\(.+\)\s*$/, "").trim();
+                                    return base === prevLabel;
+                                };
+                                const outstanding = allInvoices
+                                    .filter(inv => isSameBillingPeriod(inv.billingPeriod))
+                                    .map(inv => {
+                                        const total = Number(inv.totalAmount || 0);
+                                        const paid = Number(inv.amountPaid || 0);
+                                        const remaining = Math.max(0, total - paid);
+                                        return { inv, total, paid, remaining, isPartial: paid > 0 && paid < total, isUnpaid: paid <= 0 && remaining > 0 };
+                                    })
+                                    .filter(x => x.remaining > 0)
+                                    .sort((a, b) => String(a.inv.unitNumber || "").localeCompare(String(b.inv.unitNumber || ""), undefined, { numeric: true, sensitivity: "base" }));
+                                const totalOutstanding = outstanding.reduce((s, x) => s + x.remaining, 0);
+                                if (outstanding.length === 0) return null;
+                                return (
+                                    <div className="bg-white rounded-xl shadow-sm border border-amber-200 overflow-hidden">
+                                        <div className="bg-amber-50 px-4 py-3 border-b border-amber-200 flex justify-between items-center">
+                                            <div>
+                                                <h3 className="text-sm font-bold text-amber-800">⚠️ Previous Month Balance — {prevLabel}</h3>
+                                                <p className="text-[10px] text-amber-600 mt-0.5">{outstanding.length} tenant{outstanding.length !== 1 ? "s" : ""} carrying dues</p>
+                                            </div>
+                                            <span className="text-base font-bold text-amber-800">₹{totalOutstanding.toLocaleString()}</span>
+                                        </div>
+                                        <div className="divide-y divide-gray-100 max-h-80 overflow-y-auto">
+                                            {outstanding.map(({ inv, total, paid, remaining, isPartial }) => {
+                                                const rent = Number(inv.baseRent || 0);
+                                                const elec = Number(inv.electricityCharge || 0);
+                                                const rRent = Math.max(0, rent - Math.min(paid, rent));
+                                                const rElec = Math.max(0, elec - Math.max(0, paid - rent));
+                                                const u = occupiedUnits.find(x => x.id === inv.unitId);
+                                                return (
+                                                    <button key={inv.id} onClick={() => { if (u) openTenantProfile(u); }} disabled={!u} className="w-full text-left px-4 py-3 hover:bg-amber-50 transition disabled:cursor-default flex justify-between items-start gap-3">
+                                                        <div className="min-w-0">
+                                                            <div className="flex items-center gap-2 flex-wrap">
+                                                                <span className="font-bold text-gray-900 text-sm">{inv.unitNumber}</span>
+                                                                <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ${isPartial ? "bg-amber-100 text-amber-800" : "bg-red-100 text-red-800"}`}>{isPartial ? "Partial" : "Unpaid"}</span>
+                                                            </div>
+                                                            <p className="text-[11px] text-gray-600 mt-0.5 truncate">{inv.tenantEmail || "—"}</p>
+                                                            <p className="text-[10px] text-gray-500 mt-0.5">🏠 Rent ₹{rRent.toLocaleString()} · ⚡ Elec ₹{rElec.toLocaleString()}</p>
+                                                            {isPartial && <p className="text-[10px] text-amber-700 mt-0.5">Paid ₹{paid.toLocaleString()} of ₹{total.toLocaleString()}</p>}
+                                                        </div>
+                                                        <div className="text-right shrink-0">
+                                                            <p className="font-bold text-amber-800 text-base">₹{remaining.toLocaleString()}</p>
+                                                            <p className="text-[10px] text-gray-400">due</p>
+                                                        </div>
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                        <button onClick={() => setActiveTab("collections")} className="w-full text-center text-xs font-bold text-amber-700 py-2 bg-amber-100 hover:bg-amber-200 transition border-t border-amber-200">
+                                            Open Collections →
+                                        </button>
+                                    </div>
+                                );
+                            })()}
 
                             {/* Quick Actions */}
                             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
