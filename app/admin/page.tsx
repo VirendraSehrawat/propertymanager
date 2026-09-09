@@ -613,11 +613,143 @@ export default function AdminDashboard() {
                     </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200 flex flex-col justify-center border-l-4 border-l-green-500"><span className="text-sm text-gray-500 font-medium">Total Income</span><span className="text-2xl font-bold text-green-700 mt-1">₹{totalIncome.toLocaleString()}</span></div>
-                    <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200 flex flex-col justify-center border-l-4 border-l-red-500"><span className="text-sm text-gray-500 font-medium">Total Expenses</span><span className="text-2xl font-bold text-red-700 mt-1">₹{totalExpenses.toLocaleString()}</span></div>
-                    <div className="bg-gray-900 p-6 rounded-lg shadow-sm flex flex-col justify-center"><span className="text-sm text-gray-300 font-medium">Net Profit (ROI)</span><span className={`text-2xl font-bold mt-1 ${netProfit >= 0 ? 'text-white' : 'text-red-400'}`}>₹{netProfit.toLocaleString()}</span></div>
-                </div>
+                {/* MONTH-SCOPED FINANCIAL SUMMARY */}
+                {(() => {
+                    const [y, m] = globalMonth.split("-").map(Number);
+                    const monthLabel = new Date(y, m - 1, 1).toLocaleString("default", { month: "long", year: "numeric" });
+                    const norm = (bp: string | undefined) => (bp || "").replace(/\s*\(.+\)\s*$/, "").trim();
+                    // Income: paid invoices whose billingPeriod matches selected month
+                    const monthPaid = paidInvoices.filter(inv => norm(inv.billingPeriod) === monthLabel);
+                    const monthIncome = monthPaid.reduce((s, inv) => s + Number(inv.amountPaid || inv.totalAmount || 0), 0);
+                    // Expenses: match on date YYYY-MM
+                    const monthExp = expenses.filter(e => (e.date || e.createdAt || "").startsWith(globalMonth));
+                    const monthExpense = monthExp.reduce((s, e) => s + Number(e.amount || 0), 0);
+                    const monthNet = monthIncome - monthExpense;
+                    return (
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                            <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200 flex flex-col justify-center border-l-4 border-l-green-500">
+                                <span className="text-xs text-gray-400 font-medium">Income — {monthLabel}</span>
+                                <span className="text-2xl font-bold text-green-700 mt-1">₹{monthIncome.toLocaleString()}</span>
+                                <span className="text-[10px] text-gray-400 mt-0.5">{monthPaid.length} paid invoices · all-time ₹{totalIncome.toLocaleString()}</span>
+                            </div>
+                            <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200 flex flex-col justify-center border-l-4 border-l-red-500">
+                                <span className="text-xs text-gray-400 font-medium">Expenses — {monthLabel}</span>
+                                <span className="text-2xl font-bold text-red-700 mt-1">₹{monthExpense.toLocaleString()}</span>
+                                <span className="text-[10px] text-gray-400 mt-0.5">{monthExp.length} entries · all-time ₹{totalExpenses.toLocaleString()}</span>
+                            </div>
+                            <div className="bg-gray-900 p-6 rounded-lg shadow-sm flex flex-col justify-center">
+                                <span className="text-xs text-gray-300 font-medium">Net Profit — {monthLabel}</span>
+                                <span className={`text-2xl font-bold mt-1 ${monthNet >= 0 ? "text-white" : "text-red-400"}`}>₹{monthNet.toLocaleString()}</span>
+                                <span className="text-[10px] text-gray-400 mt-0.5">all-time ₹{netProfit.toLocaleString()}</span>
+                            </div>
+                        </div>
+                    );
+                })()}
+
+                {/* DAILY TRANSACTIONS BY BUILDING (Inflow / Outflow) */}
+                {(() => {
+                    const monthEntries = dailyLedgerEntries.filter(e => !e.deleted && (e.date || "").startsWith(globalMonth));
+                    const [y, m] = globalMonth.split("-").map(Number);
+                    const monthLabel = new Date(y, m - 1, 1).toLocaleString("default", { month: "long", year: "numeric" });
+                    if (monthEntries.length === 0) {
+                        return (
+                            <div className="bg-white rounded-lg shadow-sm border border-orange-200 p-6">
+                                <h2 className="text-lg font-bold text-orange-800 mb-1">🏢 Daily Transactions by Building — {monthLabel}</h2>
+                                <p className="text-sm text-gray-500">No inflow / outflow entries recorded for this month yet.</p>
+                            </div>
+                        );
+                    }
+                    // Group: buildingId → day → { inflow, outflow, entries[] }
+                    type DayBucket = { inflow: number; outflow: number; entries: any[] };
+                    type BldgBucket = { name: string; days: Map<string, DayBucket>; totalIn: number; totalOut: number };
+                    const map = new Map<string, BldgBucket>();
+                    monthEntries.forEach(e => {
+                        const bid = e.buildingId || "__general__";
+                        const bname = e.buildingName || "General / Unassigned";
+                        if (!map.has(bid)) map.set(bid, { name: bname, days: new Map(), totalIn: 0, totalOut: 0 });
+                        const b = map.get(bid)!;
+                        const day = e.date || "unknown";
+                        if (!b.days.has(day)) b.days.set(day, { inflow: 0, outflow: 0, entries: [] });
+                        const d = b.days.get(day)!;
+                        const amt = Number(e.amount || 0);
+                        if (e.direction === "inflow") { d.inflow += amt; b.totalIn += amt; }
+                        else { d.outflow += amt; b.totalOut += amt; }
+                        d.entries.push(e);
+                    });
+                    const bldgList = Array.from(map.entries()).sort((a, b) => a[1].name.localeCompare(b[1].name));
+                    const grandIn = bldgList.reduce((s, [, b]) => s + b.totalIn, 0);
+                    const grandOut = bldgList.reduce((s, [, b]) => s + b.totalOut, 0);
+                    return (
+                        <div className="bg-white rounded-lg shadow-sm border border-orange-200 overflow-hidden">
+                            <div className="bg-orange-50 px-6 py-4 border-b border-orange-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+                                <div>
+                                    <h2 className="text-lg font-bold text-orange-800">🏢 Daily Transactions by Building — {monthLabel}</h2>
+                                    <p className="text-[11px] text-orange-600 mt-0.5">{bldgList.length} building{bldgList.length !== 1 ? "s" : ""} · {monthEntries.length} entr{monthEntries.length !== 1 ? "ies" : "y"}</p>
+                                </div>
+                                <div className="text-right text-sm">
+                                    <p><span className="text-green-700 font-bold">↓ Inflow ₹{grandIn.toLocaleString()}</span> · <span className="text-red-700 font-bold">↑ Outflow ₹{grandOut.toLocaleString()}</span></p>
+                                    <p className={`text-xs font-bold ${grandIn - grandOut >= 0 ? "text-emerald-700" : "text-red-700"}`}>Net ₹{(grandIn - grandOut).toLocaleString()}</p>
+                                </div>
+                            </div>
+                            <div className="divide-y divide-gray-100">
+                                {bldgList.map(([bid, b]) => {
+                                    const dayList = Array.from(b.days.entries()).sort((a, c) => c[0].localeCompare(a[0]));
+                                    return (
+                                        <details key={bid} className="group" open={bldgList.length <= 2}>
+                                            <summary className="px-6 py-4 flex justify-between items-center hover:bg-gray-50 cursor-pointer list-none">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-gray-400 group-open:rotate-90 transition-transform inline-block">▶</span>
+                                                    <div>
+                                                        <p className="font-bold text-gray-900">{b.name}</p>
+                                                        <p className="text-[10px] text-gray-500">{dayList.length} day{dayList.length !== 1 ? "s" : ""} with activity</p>
+                                                    </div>
+                                                </div>
+                                                <div className="text-right text-xs">
+                                                    <p><span className="text-green-700 font-bold">↓ ₹{b.totalIn.toLocaleString()}</span> · <span className="text-red-700 font-bold">↑ ₹{b.totalOut.toLocaleString()}</span></p>
+                                                    <p className={`font-bold ${b.totalIn - b.totalOut >= 0 ? "text-emerald-700" : "text-red-700"}`}>Net ₹{(b.totalIn - b.totalOut).toLocaleString()}</p>
+                                                </div>
+                                            </summary>
+                                            <div className="bg-gray-50 border-t border-gray-100 px-6 py-3 space-y-3">
+                                                {dayList.map(([day, d]) => (
+                                                    <div key={day} className="bg-white border border-gray-200 rounded-md p-3">
+                                                        <div className="flex justify-between items-center mb-2 pb-2 border-b border-gray-100">
+                                                            <p className="text-sm font-bold text-gray-800">📅 {new Date(day + "T00:00:00").toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" })}</p>
+                                                            <div className="text-xs">
+                                                                <span className="text-green-700 font-bold">↓ ₹{d.inflow.toLocaleString()}</span>
+                                                                <span className="mx-2 text-gray-300">|</span>
+                                                                <span className="text-red-700 font-bold">↑ ₹{d.outflow.toLocaleString()}</span>
+                                                                <span className="mx-2 text-gray-300">|</span>
+                                                                <span className={`font-bold ${d.inflow - d.outflow >= 0 ? "text-emerald-700" : "text-red-700"}`}>Net ₹{(d.inflow - d.outflow).toLocaleString()}</span>
+                                                            </div>
+                                                        </div>
+                                                        <div className="divide-y divide-gray-50">
+                                                            {d.entries
+                                                                .slice()
+                                                                .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""))
+                                                                .map(e => (
+                                                                    <div key={e.id} className="py-1.5 flex justify-between items-center text-xs">
+                                                                        <div className="min-w-0">
+                                                                            <div className="flex items-center gap-1.5 flex-wrap">
+                                                                                <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ${e.direction === "inflow" ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>{e.direction === "inflow" ? "IN" : "OUT"}</span>
+                                                                                <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">{e.category || "other"}</span>
+                                                                                {e.unitNumber && <span className="text-[10px] text-gray-700 font-medium">{e.unitNumber}</span>}
+                                                                            </div>
+                                                                            {e.description && <p className="text-[11px] text-gray-600 truncate mt-0.5">{e.description}</p>}
+                                                                        </div>
+                                                                        <p className={`font-bold shrink-0 ${e.direction === "inflow" ? "text-green-700" : "text-red-700"}`}>{e.direction === "inflow" ? "+" : "−"}₹{Number(e.amount || 0).toLocaleString()}</p>
+                                                                    </div>
+                                                                ))}
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </details>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    );
+                })()}
 
                 {/* DAILY LEDGER (Manager Books) */}
                 <div className="bg-white rounded-lg shadow-sm border border-teal-200 overflow-hidden">
