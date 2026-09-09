@@ -289,7 +289,30 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                     <div className="divide-y divide-gray-100 max-h-96 overflow-y-auto">
                         {filteredSettled.length === 0 ? (
                             <p className="p-6 text-sm text-gray-500 text-center">No settled collections yet.</p>
-                        ) : filteredSettled.slice(0, settledLimit).map(inv => {
+                        ) : (() => {
+                            // Group settled invoices by paid day (YYYY-MM-DD)
+                            const shown = filteredSettled.slice(0, settledLimit);
+                            const groups = new Map<string, typeof shown>();
+                            shown.forEach(inv => {
+                                const src = inv.paidAt || inv.createdAt || "";
+                                const day = src ? src.slice(0, 10) : "unknown";
+                                if (!groups.has(day)) groups.set(day, [] as any);
+                                (groups.get(day) as any).push(inv);
+                            });
+                            const dayKeys = Array.from(groups.keys()).sort((a, b) => b.localeCompare(a));
+                            return dayKeys.map(day => {
+                                const rows = groups.get(day)!;
+                                const dayTotal = rows.reduce((s, inv) => s + Number(inv.totalAmount || 0), 0);
+                                const dayLabel = day === "unknown"
+                                    ? "Unknown date"
+                                    : new Date(day + "T00:00:00").toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+                                return (
+                                    <div key={day}>
+                                        <div className="sticky top-0 z-10 bg-green-100/90 backdrop-blur px-5 py-1.5 flex justify-between items-center border-b border-green-200">
+                                            <span className="text-[11px] font-bold text-green-900">📅 {dayLabel}</span>
+                                            <span className="text-[11px] font-bold text-green-900">{rows.length} · {"\u20B9"}{dayTotal.toLocaleString()}</span>
+                                        </div>
+                                        {rows.map(inv => {
                             const paidDate = inv.paidAt || inv.createdAt;
                             const paidStr = paidDate ? new Date(paidDate).toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
                             const txn = inv.transactionId || "";
@@ -331,6 +354,10 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                                 </div>
                             );
                         })}
+                                    </div>
+                                );
+                            });
+                        })()}
                         {filteredSettled.length > settledLimit && (
                             <button
                                 onClick={() => setSettledLimit(l => l + 20)}
