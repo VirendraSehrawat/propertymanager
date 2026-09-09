@@ -15,7 +15,9 @@ interface CollectionsTabProps {
 }
 
 export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, openTenantProfile }: CollectionsTabProps) {
-    const [collectionFilter, setCollectionFilter] = useState("all");
+    // Default: current month label like "September 2026" (matches Invoice.billingPeriod format)
+    const currentMonthLabel = new Date().toLocaleString("default", { month: "long", year: "numeric" });
+    const [collectionFilter, setCollectionFilter] = useState<string>(currentMonthLabel);
     const [isSettling, setIsSettling] = useState("");
 
     const [isEditInvoiceOpen, setIsEditInvoiceOpen] = useState(false);
@@ -56,7 +58,9 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
         });
     const [settledLimit, setSettledLimit] = useState(20);
     const [settledFilter, setSettledFilter] = useState("");
+    const norm = (bp?: string) => (bp || "").replace(/\s*\(.+\)\s*$/, "").trim();
     const filteredSettled = settledInvoices.filter(inv => {
+        if (collectionFilter !== "all" && collectionFilter !== "overdue" && norm(inv.billingPeriod) !== collectionFilter) return false;
         if (!settledFilter) return true;
         const q = settledFilter.toLowerCase();
         return (inv.unitNumber || "").toLowerCase().includes(q)
@@ -65,12 +69,16 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
             || (inv.transactionId || "").toLowerCase().includes(q);
     });
     const totalSettledAmount = filteredSettled.reduce((s, inv) => s + Number(inv.totalAmount || 0), 0);
-    const periods = [...new Set(pendingInvoices.map(inv => inv.billingPeriod).filter(Boolean))].sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
+    // Build month list from pending + settled + current month so picker always shows this month
+    const periods = [...new Set([
+        currentMonthLabel,
+        ...allInvoices.map(inv => norm(inv.billingPeriod)).filter(Boolean),
+    ])].sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
     const filteredInvoices = collectionFilter === "all"
         ? pendingInvoices
         : collectionFilter === "overdue"
         ? pendingInvoices.filter(inv => isOverdue(inv.billingPeriod))
-        : pendingInvoices.filter(inv => inv.billingPeriod === collectionFilter);
+        : pendingInvoices.filter(inv => norm(inv.billingPeriod) === collectionFilter);
     const totalPendingRent = filteredInvoices.reduce((sum, inv) => sum + Number(inv.baseRent || 0), 0);
     const totalPendingElec = filteredInvoices.reduce((sum, inv) => sum + Number(inv.electricityCharge || 0), 0);
 
@@ -184,11 +192,11 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
         <>
             <div className="space-y-4">
                 <div className="bg-white rounded-xl shadow-sm border border-indigo-200 p-4">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Filter by Billing Period</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Billing Month</label>
                     <select value={collectionFilter} onChange={(e) => setCollectionFilter(e.target.value)} className="w-full px-3 py-2.5 border border-gray-300 rounded-lg font-medium">
+                        {periods.map(p => <option key={p} value={p}>{p}{p === currentMonthLabel ? " (current)" : ""}</option>)}
                         <option value="all">All Pending ({pendingInvoices.length})</option>
                         {overdueCount > 0 && <option value="overdue">{"\u26A0\uFE0F"} Overdue ({overdueCount})</option>}
-                        {periods.map(p => <option key={p} value={p}>{p}</option>)}
                     </select>
                 </div>
 
