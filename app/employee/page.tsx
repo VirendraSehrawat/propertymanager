@@ -1137,7 +1137,11 @@ export default function EmployeeDashboard() {
                                     const rent = Number(inv.baseRent || 0);
                                     const elec = Number(inv.electricityCharge || 0);
                                     const total = Number(inv.totalAmount || 0) || (rent + elec);
-                                    const paid = Number(inv.amountPaid || 0);
+                                    // If invoice is fully paid, count the whole billed amount as collected
+                                    // even when amountPaid wasn't recorded (older/legacy invoices).
+                                    const paid = inv.status === "paid"
+                                        ? (Number(inv.amountPaid || 0) || total)
+                                        : Number(inv.amountPaid || 0);
                                     totalBilled += total;
                                     // Allocate paid amount rent-first, then electricity
                                     const pR = Math.min(paid, rent);
@@ -1247,6 +1251,44 @@ export default function EmployeeDashboard() {
                                                                                 <div className="text-right shrink-0">
                                                                                     <p className="font-bold text-red-700 text-sm">₹{remaining.toLocaleString()}</p>
                                                                                     {isPartial && <p className="text-[10px] text-gray-500">of ₹{total.toLocaleString()}</p>}
+                                                                                </div>
+                                                                            </div>
+                                                                        );
+                                                                    })}
+                                                            </div>
+                                                        </details>
+                                                    )}
+
+                                                    {/* Paid Details toggle */}
+                                                    {paidInvoices > 0 && (
+                                                        <details className="border border-green-200 rounded-lg">
+                                                            <summary className="px-3 py-2 text-xs font-bold text-green-700 cursor-pointer hover:bg-green-50">✅ Paid Details ({paidInvoices})</summary>
+                                                            <div className="max-h-72 overflow-y-auto divide-y divide-gray-100">
+                                                                {monthInvoices
+                                                                    .filter(inv => inv.status === "paid")
+                                                                    .sort((a, b) => (b.paidAt || b.createdAt || "").localeCompare(a.paidAt || a.createdAt || ""))
+                                                                    .map(inv => {
+                                                                        const rent = Number(inv.baseRent || 0);
+                                                                        const elec = Number(inv.electricityCharge || 0);
+                                                                        const total = Number(inv.totalAmount || 0) || (rent + elec);
+                                                                        const paidAmt = Number(inv.amountPaid || 0) || total;
+                                                                        const txn = inv.transactionId || "";
+                                                                        const [mode, ref] = txn === "CASH_COLLECTED" ? ["CASH", ""] : txn.includes(":") ? [txn.split(":")[0], txn.split(":").slice(1).join(":")] : ["", txn];
+                                                                        const paidOn = inv.paidAt ? new Date(inv.paidAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : "";
+                                                                        return (
+                                                                            <div key={inv.id} className="px-3 py-2 flex justify-between items-start gap-2">
+                                                                                <div className="min-w-0">
+                                                                                    <div className="flex items-center gap-2 flex-wrap">
+                                                                                        <span className="font-bold text-gray-900 text-sm">{inv.unitNumber}</span>
+                                                                                        <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-green-100 text-green-800">Paid</span>
+                                                                                        {mode && <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-gray-100 text-gray-700">{mode}</span>}
+                                                                                    </div>
+                                                                                    <p className="text-[10px] text-gray-500 truncate">{inv.tenantEmail || "—"}</p>
+                                                                                    <p className="text-[10px] text-gray-500">🏠 ₹{rent.toLocaleString()} · ⚡ ₹{elec.toLocaleString()}{paidOn ? ` · ${paidOn}` : ""}</p>
+                                                                                    {ref && <p className="text-[10px] text-gray-400 truncate">Ref: {ref}</p>}
+                                                                                </div>
+                                                                                <div className="text-right shrink-0">
+                                                                                    <p className="font-bold text-green-700 text-sm">₹{paidAmt.toLocaleString()}</p>
                                                                                 </div>
                                                                             </div>
                                                                         );
