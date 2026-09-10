@@ -98,13 +98,70 @@ backups/
     └── env.local.encrypted.gpg    ← secrets, GPG-encrypted
 ```
 
-### 4.1 Where the tree lives (3-2-1 rule)
+### 4.1 Where the tree lives — the operator's own storage
 
-- **3 copies**: (a) local disk on the operator's laptop, (b) Google Drive / OneDrive folder, (c) an S3 / R2 / Backblaze B2 bucket.
-- **2 different media**: laptop SSD + cloud object storage.
-- **1 off-site**: the S3-class bucket is in a different geography from the Firebase region.
+**No paid cloud infrastructure is provisioned.** Backups are written to storage the operator already owns:
 
-The backup script uploads to all three; a failure to reach any of them is treated as a hard error.
+1. **Primary — operator's laptop / desktop** at `~/PropertyManagerBackups/` (or any absolute path chosen once and recorded in `.env.local` as `BACKUP_ROOT=`). This is where the script writes.
+2. **Sync target — the operator's Google Drive** (personal or Workspace) folder `PropertyManagerBackups/`. Every backup is copied here immediately so it survives laptop loss / theft. Google Drive is chosen because:
+    - the operator already has a Google account (same one that owns Firebase),
+    - 15 GB free is plenty for years of JSON — a full monthly snapshot compressed is < 20 MB even at 10× current data volume,
+    - it is user-facing (folder is browseable in a web UI — no CLI needed for restore),
+    - sync is done with **rclone**, which is free, open-source, and does not require Google Workspace admin.
+3. **Optional third copy — external USB drive** (any spare disk). Once a month, plug it in and `rsync` the whole tree. This is the "the house/office burned down and Google locked me out" copy.
+
+Rule of thumb (3-2-1): **3** copies (laptop + Drive + USB), on **2** media types (SSD + Drive), with **1** off-site (Drive is off-site by definition; USB stored at a different address is the ideal third).
+
+The tree in section 4 lives identically at every location:
+
+```
+~/PropertyManagerBackups/            ← BACKUP_ROOT on laptop
+├── 2026-09/
+│   ├── FULL_2026-09-30_2330IST/
+│   └── INC_2026-09-07/  …
+├── 2026-10/
+├── adhoc/
+└── config/
+
+Google Drive → PropertyManagerBackups/…  ← identical structure, kept in sync by rclone
+USB drive    → /Volumes/BackupUSB/PropertyManagerBackups/…  ← periodic rsync
+```
+
+### 4.2 One-time setup (~10 min)
+
+```bash
+# 1. Pick a stable location on the operator's machine
+mkdir -p ~/PropertyManagerBackups
+echo "BACKUP_ROOT=$HOME/PropertyManagerBackups" >> .env.local
+
+# 2. Install rclone (one-time)
+brew install rclone            # macOS
+# curl https://rclone.org/install.sh | sudo bash   # Linux
+
+# 3. Connect rclone to the operator's Google Drive
+rclone config
+#   → n (new remote)
+#   → name: gdrive
+#   → storage: drive
+#   → client_id / secret: blank (uses rclone default) OR create own OAuth for higher quotas
+#   → scope: 1 (Full access) — needed so we can create the folder
+#   → root_folder_id: blank
+#   → advanced config: n
+#   → auto config: y  → browser opens → sign in → allow
+#   → team drive: n
+#   → Confirm.
+
+# 4. Create the top-level Drive folder
+rclone mkdir gdrive:PropertyManagerBackups
+
+# 5. Quick test
+echo "hello" > /tmp/hello.txt
+rclone copy /tmp/hello.txt gdrive:PropertyManagerBackups/
+rclone ls   gdrive:PropertyManagerBackups/
+rclone delete gdrive:PropertyManagerBackups/hello.txt
+```
+
+**Nothing to provision on Google Cloud, no billing to enable, no service-account IAM.** The rclone token lives in the operator's local `~/.config/rclone/rclone.conf` and is scoped to that one Drive folder.
 
 ---
 
@@ -156,13 +213,16 @@ npm run backup:full -- --month 2026-09
 #    g. Print a summary + total size
 
 # 5. Verify
-npm run verify-backup -- backups/2026-09/FULL_2026-09-30_2330IST
+npm run verify-backup -- $BACKUP_ROOT/2026-09/FULL_2026-09-30_2330IST
 
-# 6. Push to off-site storage
-rclone copy backups/2026-09/FULL_2026-09-30_2330IST remote-drive:property-manager/backups/2026-09/FULL_2026-09-30_2330IST -P
-aws s3 sync backups/2026-09/FULL_2026-09-30_2330IST s3://propertymanager-backups/2026-09/FULL_2026-09-30_2330IST
+# 6. Sync to the operator's Google Drive (off-site copy)
+rclone sync $BACKUP_ROOT/2026-09/FULL_2026-09-30_2330IST \
+    gdrive:PropertyManagerBackups/2026-09/FULL_2026-09-30_2330IST -P
 
 # 7. Confirm size + doc counts match the source in Firebase console → Firestore usage tab.
+
+# 8. (Optional, monthly) Plug in the external USB and mirror the whole tree
+rsync -av --delete $BACKUP_ROOT/ /Volumes/BackupUSB/PropertyManagerBackups/
 ```
 
 ### 6.1 Iterative / incremental (weekly)
@@ -207,13 +267,24 @@ This is the "the app is gone / a new Firebase project" scenario. Time budget: **
 
 ### 8.2 Choose the snapshot to restore
 
-Pick the **latest FULL** you trust:
+Pick the **latest FULL** you trust. It can come from any of your three copies — whichever you can reach fastest:
 
-```
-backups/2026-09/FULL_2026-09-30_2330IST/
+```bash
+# Option A — from the operator's laptop (fastest, if the laptop is intact)
+ls $BACKUP_ROOT/2026-09/
+
+# Option B — from Google Drive (if the laptop is gone)
+rclone ls gdrive:PropertyManagerBackups/2026-09/
+mkdir -p $BACKUP_ROOT/2026-09
+rclone copy gdrive:PropertyManagerBackups/2026-09/FULL_2026-09-30_2330IST \
+    $BACKUP_ROOT/2026-09/FULL_2026-09-30_2330IST -P
+
+# Option C — from the USB drive (offline / Google account locked)
+cp -R /Volumes/BackupUSB/PropertyManagerBackups/2026-09/FULL_2026-09-30_2330IST \
+    $BACKUP_ROOT/2026-09/
 ```
 
-If you also want the changes that happened after that full (e.g. a mid-October crash), you can layer any newer `INC_*` folders on top _in chronological order_ (restore is idempotent because it upserts by `id`).
+If you also want the changes that happened after that full (e.g. a mid-October crash), also pull any newer `INC_*` folders — restore is idempotent because it upserts by `id`, so layering them in chronological order is safe.
 
 ### 8.3 Restore Firestore + Auth
 
@@ -299,21 +370,23 @@ Take a fresh **full snapshot immediately** after a successful restore so the new
 **Every month end (5 min):**
 1. `git pull`
 2. `npm run backup:full -- --month YYYY-MM`
-3. `npm run verify-backup -- <the-folder-just-made>`
-4. Sync to off-site (rclone + aws s3 sync).
-5. Log the snapshot in `backups/LOG.md` (folder path + doc counts + operator).
+3. `npm run verify-backup -- $BACKUP_ROOT/YYYY-MM/<FULL-folder>`
+4. `rclone sync $BACKUP_ROOT/YYYY-MM/<FULL-folder> gdrive:PropertyManagerBackups/YYYY-MM/<FULL-folder> -P`
+5. (Once/month) Plug in USB → `rsync -av --delete $BACKUP_ROOT/ /Volumes/BackupUSB/PropertyManagerBackups/`
+6. Log the snapshot in `$BACKUP_ROOT/LOG.md` (folder path + doc counts + operator).
 
 **Every Sunday (2 min):**
 1. `npm run backup:inc -- --since <last Sun> --until <today>`
-2. Sync off-site.
+2. `rclone sync $BACKUP_ROOT/YYYY-MM/<INC-folder> gdrive:PropertyManagerBackups/YYYY-MM/<INC-folder> -P`
 
 **Restore (30 min):**
 1. Bring up empty Firebase project + copy rules.
-2. `GOOGLE_APPLICATION_CREDENTIALS=...RESTORE.json npm run restore -- <full-folder>`
-3. Layer incrementals if desired.
-4. Point Vercel env vars at new project + redeploy.
-5. Smoke test with admin / employee / tenant logins.
-6. Take a fresh full snapshot of the restored project.
+2. Fetch the snapshot from whichever copy is reachable: `rclone copy gdrive:PropertyManagerBackups/<YYYY-MM>/<FULL-folder> $BACKUP_ROOT/<YYYY-MM>/<FULL-folder> -P` (or `cp -R` from USB, or just use the laptop copy).
+3. `GOOGLE_APPLICATION_CREDENTIALS=...RESTORE.json npm run restore -- $BACKUP_ROOT/<YYYY-MM>/<FULL-folder>`
+4. Layer incrementals if desired (fetch each, then `npm run restore`).
+5. Point Vercel env vars at new project + redeploy.
+6. Smoke test with admin / employee / tenant logins.
+7. Take a fresh full snapshot of the restored project → sync to Drive + USB.
 
 ---
 
@@ -321,5 +394,5 @@ Take a fresh **full snapshot immediately** after a successful restore so the new
 
 - [ ] Wire the monthly full into a GitHub Actions cron (`.github/workflows/backup.yml`) so it runs even if the operator is on leave. Store secrets in Actions secrets.
 - [ ] Add PITR (Point-in-time recovery) on Firestore once the project moves to Blaze plan — this covers the "someone deleted a doc 3 hours ago" case without needing a new snapshot.
-- [ ] Encrypt off-site snapshots at rest (`age` or `gpg --symmetric`) so a leaked S3 key doesn't leak tenant IDs.
+- [ ] Encrypt sensitive fields at rest before upload (`age` or `gpg --symmetric`) so a leaked laptop / Drive share link doesn't leak tenant IDs.
 - [ ] Add an admin dashboard tile: "Last successful backup: 2 days ago" so we notice a stuck cron.
