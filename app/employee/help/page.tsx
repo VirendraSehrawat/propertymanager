@@ -145,7 +145,21 @@ export default function EmployeeHelpPage() {
                         <h2 className="text-lg font-bold text-indigo-800">💵 5. Collecting Payments</h2>
                     </div>
                     <div className="p-6 space-y-3 text-sm text-gray-700">
-                        <p>From <strong>Collections</strong> tab, tap <span className="bg-green-100 text-green-800 px-2 py-0.5 rounded text-xs font-bold">✓ Settle</span> on a pending invoice.</p>
+                        <p>From <strong>Collections</strong> tab, tap <span className="bg-green-100 text-green-800 px-2 py-0.5 rounded text-xs font-bold">✓ Settle</span> on a pending invoice. A modal opens with two big buttons at the top:</p>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                                <p className="font-bold text-green-800">Full ₹<em>remaining</em></p>
+                                <p className="text-xs mt-1 text-green-900">Closes the invoice. <code>status → paid</code>, <code>paidAt</code> is stamped. Use this 95% of the time.</p>
+                            </div>
+                            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                                <p className="font-bold text-amber-800">Partial…</p>
+                                <p className="text-xs mt-1 text-amber-900">Reveals an amount input + two shortcut chips: <span className="bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded text-[10px] font-bold">🏠 Rent only ₹X</span> <span className="bg-yellow-100 text-yellow-800 px-1.5 py-0.5 rounded text-[10px] font-bold">⚡ Elec only ₹Y</span>. Or type any custom amount.</p>
+                            </div>
+                        </div>
+                        <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3 text-indigo-900 text-xs">
+                            <p className="font-bold mb-1">Live allocation preview</p>
+                            <p>The modal shows how the amount will split between 🏠 Rent and ⚡ Electricity <em>before</em> you save, and whether the invoice will end up <span className="font-bold text-green-700">Fully Paid ✓</span> or leave <span className="font-bold text-amber-700">₹Z still due</span>.</p>
+                        </div>
                         <div className="overflow-x-auto">
                             <table className="w-full text-xs border border-gray-200 rounded">
                                 <thead className="bg-gray-50">
@@ -165,22 +179,46 @@ export default function EmployeeHelpPage() {
                         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-yellow-800 text-xs">
                             The app stores mode + reference as <code>MODE:REFERENCE</code> (e.g. <code>UPI:9812…</code>). This is how the Settled Collections detail view decodes it.
                         </div>
-                        <p className="text-xs"><strong>Payment note</strong> — optional free-text (e.g. &quot;partial ₹500 more due next visit&quot;) stored on the invoice.</p>
+                        <p className="text-xs"><strong>Payment note</strong> — optional free-text (e.g. &quot;paid to owner directly&quot;) stored on the invoice.</p>
                     </div>
                 </section>
 
                 {/* PARTIAL PAYMENTS */}
                 <section id="partial" className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden scroll-mt-20">
                     <div className="bg-amber-50 px-6 py-4 border-b border-amber-200">
-                        <h2 className="text-lg font-bold text-amber-800">🔁 6. Partial Payments & Balance Roll-over</h2>
+                        <h2 className="text-lg font-bold text-amber-800">🔁 6. Partial Payments (rent-only / elec-only / any split)</h2>
                     </div>
-                    <div className="p-6 space-y-2 text-sm text-gray-700">
+                    <div className="p-6 space-y-3 text-sm text-gray-700">
+                        <p>Use Partial whenever the tenant is <em>not</em> clearing the whole invoice today.</p>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+                            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                                <p className="font-bold text-blue-800">🏠 Rent only</p>
+                                <p className="text-blue-900 mt-1">Tap <span className="font-bold">Partial</span> → <span className="font-bold">🏠 Rent only ₹X</span> chip → Save.</p>
+                            </div>
+                            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                                <p className="font-bold text-yellow-800">⚡ Electricity only</p>
+                                <p className="text-yellow-900 mt-1">Tap <span className="font-bold">Partial</span> → <span className="font-bold">⚡ Elec only ₹Y</span> chip → Save.</p>
+                            </div>
+                            <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                                <p className="font-bold text-gray-800">Any custom amount</p>
+                                <p className="text-gray-900 mt-1">Tap <span className="font-bold">Partial</span> → type the amount → Save. Rent fills first, leftover goes to electricity.</p>
+                            </div>
+                        </div>
+                        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-amber-900 text-xs space-y-1">
+                            <p className="font-bold">Allocation rule (rent-first)</p>
+                            <p>Anything received above the still-due rent flows into electricity. This is why the shortcut chips and the live preview work: they always show the same split the app will save.</p>
+                        </div>
                         <ul className="list-disc pl-5 space-y-1">
-                            <li>Enter <strong>Amount Paid</strong> &lt; invoice total → invoice stays <strong>unpaid</strong> with a <span className="bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded text-xs font-bold">Partial</span> chip.</li>
-                            <li><code>amountPaid</code> accumulates the received amount.</li>
-                            <li>Unpaid balance <strong>rolls forward</strong> into next month&apos;s invoice as <code>carryForward</code>.</li>
-                            <li>The Home dashboard&apos;s <strong>⚠️ Previous Month Balance</strong> card lists every tenant still carrying dues.</li>
+                            <li>Invoice stays on the <strong>Pending Invoices</strong> list with an amber left border and a <span className="bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded text-xs font-bold">PARTIAL</span> badge.</li>
+                            <li>Big number on the row = <strong>remaining balance</strong>. Sub-text = &quot;Paid ₹X of ₹Y&quot;.</li>
+                            <li>Tap <span className="bg-green-100 text-green-800 px-2 py-0.5 rounded text-xs font-bold">✓ Settle</span> again next visit to record the next chunk. Repeat until fully paid.</li>
+                            <li>Each partial writes a <strong>separate ledger entry</strong> (<code>type: partial-payment</code>) — full audit trail preserved. The final settle writes <code>type: payment</code> and stamps <code>paidAt</code>.</li>
+                            <li>Admin&apos;s <strong>Per-Building Collections</strong> table splits partial <code>amountPaid</code> rent-first too — so a ₹1,500 electricity-only payment shows up under <strong>Collected Elec</strong> immediately, even while the invoice is still pending.</li>
                         </ul>
+                        <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-red-900 text-xs">
+                            <p className="font-bold">Do NOT edit the invoice to &quot;zero out&quot; the rent or electricity portion.</p>
+                            <p>The old workaround (Edit → set electricity to 0 → Settle) is no longer needed and breaks the audit trail. Always use <strong>Partial</strong> instead.</p>
+                        </div>
                     </div>
                 </section>
 
@@ -303,8 +341,20 @@ export default function EmployeeHelpPage() {
                                 a: "Open Meter tab. Record each reading — the app auto-generates the invoice (rent for upcoming month + electricity for last month). For bulk, ask the manager to use the admin Generate Invoices button.",
                             },
                             {
-                                q: "Tenant wants to pay only part of the rent.",
-                                a: "Settle with Amount Paid = partial amount. Invoice shows Partial; balance rolls forward to next month.",
+                                q: "Tenant wants to pay only rent (no electricity).",
+                                a: "Tap ✓ Settle → Partial → 🏠 Rent only ₹X chip → Save. Invoice keeps a PARTIAL badge; electricity portion still shows as due.",
+                            },
+                            {
+                                q: "Tenant wants to pay only electricity (no rent).",
+                                a: "Tap ✓ Settle → Partial → ⚡ Elec only ₹Y chip → Save.",
+                            },
+                            {
+                                q: "Tenant hands over an odd amount like ₹5,000.",
+                                a: "Tap ✓ Settle → Partial → type 5000 → Save. Rent fills first, leftover goes to electricity automatically. Live preview shows the split before you save.",
+                            },
+                            {
+                                q: "Tenant later pays the balance — how do I close the invoice?",
+                                a: "Reopen the same invoice from Pending, tap ✓ Settle → Full ₹remaining → Save. Status flips to Paid, paidAt is stamped.",
                             },
                             {
                                 q: "I recorded a wrong reading.",
