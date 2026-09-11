@@ -774,8 +774,16 @@ export default function AdminDashboard() {
                         const rent = Number(inv.baseRent || 0);
                         const elec = Number(inv.electricityCharge || 0);
                         r.invRent += rent; r.invElec += elec; r.invCount++;
-                        if (inv.status === "paid") { r.paidRent += rent; r.paidElec += elec; r.paidCount++; }
-                        else { r.pendRent += rent; r.pendElec += elec; r.pendCount++; }
+                        // Split amountPaid rent-first so partial payments show up correctly
+                        const paidTotal = inv.status === "paid"
+                            ? (Number(inv.amountPaid || 0) || rent + elec)
+                            : Number(inv.amountPaid || 0);
+                        const paidR = Math.min(paidTotal, rent);
+                        const paidE = Math.min(Math.max(0, paidTotal - rent), elec);
+                        r.paidRent += paidR; r.paidElec += paidE;
+                        r.pendRent += Math.max(0, rent - paidR);
+                        r.pendElec += Math.max(0, elec - paidE);
+                        if (inv.status === "paid") r.paidCount++; else r.pendCount++;
                     });
                     const list = Array.from(rows.values()).sort((a, b) => a.name.localeCompare(b.name));
                     const totals = list.reduce((t, r) => ({

@@ -28,6 +28,8 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
     const [settleMode, setSettleMode] = useState<PaymentMode>("cash");
     const [settleReference, setSettleReference] = useState("");
     const [settleNote, setSettleNote] = useState("");
+    const [settleKind, setSettleKind] = useState<"full" | "partial">("full");
+    const [settleReceived, setSettleReceived] = useState<string>("");
     const [editInvBaseRent, setEditInvBaseRent] = useState("");
     const [editInvElecRate, setEditInvElecRate] = useState("");
     const [editInvUnitsConsumed, setEditInvUnitsConsumed] = useState("");
@@ -90,37 +92,47 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
         setSettleMode("cash");
         setSettleReference("");
         setSettleNote("");
+        setSettleKind("full");
+        const remaining = Math.max(0, Number(inv.totalAmount || 0) - Number(inv.amountPaid || 0));
+        setSettleReceived(String(remaining));
     };
 
     const handleConfirmSettle = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!settleInvoice) return;
         const inv = settleInvoice;
+        const total = Number(inv.totalAmount || 0);
+        const prevPaid = Number(inv.amountPaid || 0);
+        const remaining = Math.max(0, total - prevPaid);
+        const received = settleKind === "full" ? remaining : Math.round(Number(settleReceived) || 0);
+        if (received <= 0) { alert("Enter an amount greater than zero."); return; }
+        if (received > remaining) { alert(`Amount received (₹${received}) exceeds remaining balance (₹${remaining}).`); return; }
+        const newAmountPaid = prevPaid + received;
+        const fullyPaid = newAmountPaid >= total - 0.5; // tolerate rounding
         setIsSettling(inv.id);
         try {
             const txnId = buildTransactionId(settleMode, settleReference);
             await updateDoc(doc(db, "invoices", inv.id), {
-                status: "paid",
-                paidAt: new Date().toISOString(),
+                amountPaid: newAmountPaid,
+                status: fullyPaid ? "paid" : "pending",
+                ...(fullyPaid ? { paidAt: new Date().toISOString() } : {}),
                 transactionId: txnId,
                 ...(settleNote.trim() ? { paymentNote: settleNote.trim() } : {}),
             });
-            const invoiceAmount = Number(inv.totalAmount || 0);
-            const amountPaid = Number(inv.amountPaid || invoiceAmount);
             await addDoc(collection(db, "ledger"), {
                 tenantEmail: inv.tenantEmail,
                 unitId: inv.unitId,
                 unitNumber: inv.unitNumber,
                 invoiceId: inv.id,
                 billingPeriod: inv.billingPeriod || "Ad-Hoc",
-                invoiceAmount,
-                amountPaid,
-                balance: amountPaid - invoiceAmount,
+                invoiceAmount: total,
+                amountPaid: received,           // this transaction only
+                balance: received - remaining,  // 0 if fully paid, negative if partial
                 transactionId: txnId,
                 paymentMode: settleMode,
                 paymentReference: settleReference.trim() || null,
                 paymentNote: settleNote.trim() || null,
-                type: "payment",
+                type: fullyPaid ? "payment" : "partial-payment",
                 settledBy: "employee",
                 createdAt: new Date().toISOString(),
             });
@@ -234,12 +246,17 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                             <p className="p-6 text-sm text-gray-500 text-center">{"\uD83C\uDF89"} No pending invoices!</p>
                         ) : filteredInvoices.map(inv => {
                                 const overdue = isOverdue(inv.billingPeriod);
+                                const total = Number(inv.totalAmount || 0);
+                                const paidSoFar = Number(inv.amountPaid || 0);
+                                const remaining = Math.max(0, total - paidSoFar);
+                                const isPartial = paidSoFar > 0 && paidSoFar < total;
                                 return (
-                                    <div key={inv.id} className={`px-5 py-4 flex justify-between items-center ${overdue ? "bg-red-50 hover:bg-red-100 border-l-4 border-l-red-400" : "hover:bg-gray-50"}`}>
+                                    <div key={inv.id} className={`px-5 py-4 flex justify-between items-center ${overdue ? "bg-red-50 hover:bg-red-100 border-l-4 border-l-red-400" : isPartial ? "bg-amber-50/40 hover:bg-amber-50 border-l-4 border-l-amber-400" : "hover:bg-gray-50"}`}>
                                         <div>
                                             <div className="flex items-center gap-2">
                                                 <p className="font-bold text-gray-900">{inv.unitNumber}</p>
                                                 {overdue && <span className="text-[9px] font-bold bg-red-200 text-red-800 px-1.5 py-0.5 rounded">OVERDUE</span>}
+                                                {isPartial && <span className="text-[9px] font-bold bg-amber-200 text-amber-800 px-1.5 py-0.5 rounded">PARTIAL</span>}
                                             </div>
                                             <p className="text-xs text-gray-500">{inv.tenantEmail}</p>
                                             <p className={`text-xs font-medium mt-0.5 ${overdue ? "text-red-600" : "text-indigo-600"}`}>{inv.billingPeriod}</p>
@@ -254,8 +271,12 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                                         </div>
                                         <div className="text-right flex flex-col items-end gap-2">
                                             <div>
-                                                <p className={`font-bold ${overdue ? "text-red-700" : "text-gray-900"}`}>{"\u20B9"}{Number(inv.totalAmount || 0).toLocaleString()}</p>
-                                                <p className="text-[10px] text-gray-400">Rent: {"\u20B9"}{inv.baseRent || 0} | Elec: {"\u20B9"}{inv.electricityCharge || 0}</p>
+                                                <p className={`font-bold ${overdue ? "text-red-700" : isPartial ? "text-amber-700" : "text-gray-900"}`}>{"\u20B9"}{remaining.toLocaleString()}</p>
+                                                {isPartial ? (
+                                                    <p className="text-[10px] text-amber-700">Paid ₹{paidSoFar.toLocaleString()} of ₹{total.toLocaleString()}</p>
+                                                ) : (
+                                                    <p className="text-[10px] text-gray-400">Rent: {"\u20B9"}{inv.baseRent || 0} | Elec: {"\u20B9"}{inv.electricityCharge || 0}</p>
+                                                )}
                                             </div>
                                             <div className="flex gap-1.5">
                                                 <button onClick={() => openEditInvoice(inv)} className="text-xs px-3 py-1.5 bg-blue-600 text-white rounded-md font-bold hover:bg-blue-700 transition">{"\u270F\uFE0F"} Edit</button>
@@ -417,14 +438,66 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                 </div>
             )}
 
-            {settleInvoice && (
+            {settleInvoice && (() => {
+                const total = Number(settleInvoice.totalAmount || 0);
+                const prevPaid = Number(settleInvoice.amountPaid || 0);
+                const remaining = Math.max(0, total - prevPaid);
+                const received = settleKind === "full" ? remaining : Math.round(Number(settleReceived) || 0);
+                const receivedValid = received > 0 && received <= remaining;
+                // rent-first allocation preview
+                const rent = Number(settleInvoice.baseRent || 0);
+                const elec = Number(settleInvoice.electricityCharge || 0);
+                const prevRent = Math.min(prevPaid, rent);
+                const prevElec = Math.max(0, prevPaid - rent);
+                const rentDue = Math.max(0, rent - prevRent);
+                const elecDue = Math.max(0, elec - prevElec);
+                const towardRent = Math.min(received, rentDue);
+                const towardElec = Math.min(Math.max(0, received - rentDue), elecDue);
+                return (
                 <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setSettleInvoice(null)}>
                     <div className="bg-white p-6 rounded-xl shadow-xl max-w-md w-full space-y-4" onClick={(e) => e.stopPropagation()}>
                         <div>
-                            <h3 className="text-lg font-bold text-gray-800">{"\u2713"} Mark as Paid</h3>
-                            <p className="text-xs text-gray-500 mt-0.5">{settleInvoice.unitNumber} {"\u2014"} {settleInvoice.billingPeriod} {"\u2014"} {"\u20B9"}{Number(settleInvoice.totalAmount || 0).toLocaleString()}</p>
+                            <h3 className="text-lg font-bold text-gray-800">{"\u2713"} Record Payment</h3>
+                            <p className="text-xs text-gray-500 mt-0.5">{settleInvoice.unitNumber} {"\u2014"} {settleInvoice.billingPeriod}</p>
+                            <div className="mt-2 flex justify-between text-xs bg-gray-50 border border-gray-200 rounded-md px-3 py-2">
+                                <span className="text-gray-500">Invoice ₹{total.toLocaleString()}</span>
+                                {prevPaid > 0 && <span className="text-amber-700 font-medium">Paid ₹{prevPaid.toLocaleString()}</span>}
+                                <span className="text-red-700 font-bold">Due ₹{remaining.toLocaleString()}</span>
+                            </div>
                         </div>
                         <form onSubmit={handleConfirmSettle} className="space-y-3">
+                            <div>
+                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Payment</label>
+                                <div className="grid grid-cols-2 gap-2">
+                                    <button type="button" onClick={() => { setSettleKind("full"); setSettleReceived(String(remaining)); }} className={`px-3 py-2.5 rounded-md text-xs font-bold border transition ${settleKind === "full" ? "bg-green-600 text-white border-green-700" : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"}`}>Full ₹{remaining.toLocaleString()}</button>
+                                    <button type="button" onClick={() => setSettleKind("partial")} className={`px-3 py-2.5 rounded-md text-xs font-bold border transition ${settleKind === "partial" ? "bg-amber-500 text-white border-amber-600" : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"}`}>Partial…</button>
+                                </div>
+                            </div>
+                            {settleKind === "partial" && (
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Amount Received (₹)</label>
+                                    <input
+                                        type="number"
+                                        value={settleReceived}
+                                        onChange={(e) => setSettleReceived(e.target.value)}
+                                        min={1}
+                                        max={remaining}
+                                        step={1}
+                                        placeholder={`Up to ${remaining}`}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                                        autoFocus
+                                    />
+                                    <div className="mt-2 flex gap-1.5 flex-wrap">
+                                        {rentDue > 0 && <button type="button" onClick={() => setSettleReceived(String(rentDue))} className="text-[11px] px-2 py-1 rounded bg-blue-50 border border-blue-200 text-blue-700 font-bold hover:bg-blue-100">Rent only ₹{rentDue.toLocaleString()}</button>}
+                                        {elecDue > 0 && <button type="button" onClick={() => setSettleReceived(String(elecDue))} className="text-[11px] px-2 py-1 rounded bg-yellow-50 border border-yellow-200 text-yellow-700 font-bold hover:bg-yellow-100">Elec only ₹{elecDue.toLocaleString()}</button>}
+                                    </div>
+                                </div>
+                            )}
+                            <div className="text-[11px] bg-gray-50 border border-gray-200 rounded-md px-3 py-2 space-y-0.5">
+                                <div className="flex justify-between"><span className="text-gray-500">Allocated to 🏠 Rent</span><span className="font-bold text-gray-800">₹{towardRent.toLocaleString()}{rentDue > 0 && ` / ₹${rentDue.toLocaleString()}`}</span></div>
+                                <div className="flex justify-between"><span className="text-gray-500">Allocated to ⚡ Electricity</span><span className="font-bold text-gray-800">₹{towardElec.toLocaleString()}{elecDue > 0 && ` / ₹${elecDue.toLocaleString()}`}</span></div>
+                                <div className="flex justify-between border-t border-gray-200 pt-1 mt-1"><span className="text-gray-600 font-medium">After this payment</span><span className={`font-bold ${received >= remaining ? "text-green-700" : "text-amber-700"}`}>{received >= remaining ? "Fully Paid ✓" : `₹${(remaining - received).toLocaleString()} still due`}</span></div>
+                            </div>
                             <div>
                                 <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Payment Mode</label>
                                 <div className="grid grid-cols-5 gap-1">
@@ -466,14 +539,15 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                             </div>
                             <div className="flex gap-2 pt-2">
                                 <button type="button" onClick={() => setSettleInvoice(null)} className="flex-1 py-2 border border-gray-300 rounded-md text-sm text-gray-600">Cancel</button>
-                                <button type="submit" disabled={isSettling === settleInvoice.id} className="flex-1 py-2 bg-green-600 text-white rounded-md text-sm font-bold hover:bg-green-700 disabled:bg-green-400">
-                                    {isSettling === settleInvoice.id ? "Settling..." : "\u2713 Confirm Paid"}
+                                <button type="submit" disabled={isSettling === settleInvoice.id || !receivedValid} className="flex-1 py-2 bg-green-600 text-white rounded-md text-sm font-bold hover:bg-green-700 disabled:bg-green-400">
+                                    {isSettling === settleInvoice.id ? "Saving..." : `\u2713 Save ₹${received.toLocaleString()}`}
                                 </button>
                             </div>
                         </form>
                     </div>
                 </div>
-            )}
+                );
+            })()}
         </>
     );
 }
