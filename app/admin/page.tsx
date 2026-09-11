@@ -751,6 +751,110 @@ export default function AdminDashboard() {
                     );
                 })()}
 
+                {/* PER-BUILDING COLLECTIONS (invoiced / pending / collected — rent + electricity) */}
+                {(() => {
+                    const [y, m] = globalMonth.split("-").map(Number);
+                    const monthLabel = new Date(y, m - 1, 1).toLocaleString("default", { month: "long", year: "numeric" });
+                    const norm = (bp: string | undefined) => (bp || "").replace(/\s*\(.+\)\s*$/, "").trim();
+                    const monthInvoices = allInvoicesForDashboard.filter(inv => norm(inv.billingPeriod) === monthLabel && !inv.isCustom);
+                    // Map unitId → buildingId via allUnits
+                    const unitBuilding = new Map<string, { id: string; name: string }>();
+                    allUnits.forEach((u: any) => {
+                        const b = buildings.find(bb => bb.id === u.buildingId);
+                        unitBuilding.set(u.id, { id: u.buildingId || "__unassigned__", name: b?.name || "Unassigned" });
+                    });
+                    type Row = { id: string; name: string; invRent: number; invElec: number; paidRent: number; paidElec: number; pendRent: number; pendElec: number; invCount: number; paidCount: number; pendCount: number };
+                    const rows = new Map<string, Row>();
+                    // Seed with every building so zero-activity buildings still show
+                    buildings.forEach(b => rows.set(b.id, { id: b.id, name: b.name, invRent: 0, invElec: 0, paidRent: 0, paidElec: 0, pendRent: 0, pendElec: 0, invCount: 0, paidCount: 0, pendCount: 0 }));
+                    monthInvoices.forEach(inv => {
+                        const bldg = unitBuilding.get(inv.unitId) || { id: "__unassigned__", name: "Unassigned" };
+                        if (!rows.has(bldg.id)) rows.set(bldg.id, { id: bldg.id, name: bldg.name, invRent: 0, invElec: 0, paidRent: 0, paidElec: 0, pendRent: 0, pendElec: 0, invCount: 0, paidCount: 0, pendCount: 0 });
+                        const r = rows.get(bldg.id)!;
+                        const rent = Number(inv.baseRent || 0);
+                        const elec = Number(inv.electricityCharge || 0);
+                        r.invRent += rent; r.invElec += elec; r.invCount++;
+                        if (inv.status === "paid") { r.paidRent += rent; r.paidElec += elec; r.paidCount++; }
+                        else { r.pendRent += rent; r.pendElec += elec; r.pendCount++; }
+                    });
+                    const list = Array.from(rows.values()).sort((a, b) => a.name.localeCompare(b.name));
+                    const totals = list.reduce((t, r) => ({
+                        invRent: t.invRent + r.invRent, invElec: t.invElec + r.invElec,
+                        paidRent: t.paidRent + r.paidRent, paidElec: t.paidElec + r.paidElec,
+                        pendRent: t.pendRent + r.pendRent, pendElec: t.pendElec + r.pendElec,
+                        invCount: t.invCount + r.invCount, paidCount: t.paidCount + r.paidCount, pendCount: t.pendCount + r.pendCount,
+                    }), { invRent: 0, invElec: 0, paidRent: 0, paidElec: 0, pendRent: 0, pendElec: 0, invCount: 0, paidCount: 0, pendCount: 0 });
+                    return (
+                        <div className="bg-white rounded-lg shadow-sm border border-purple-200 overflow-hidden">
+                            <div className="bg-purple-50 px-6 py-4 border-b border-purple-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+                                <div>
+                                    <h2 className="text-lg font-bold text-purple-800">🏢 Per-Building Collections — {monthLabel}</h2>
+                                    <p className="text-[11px] text-purple-600 mt-0.5">Standard invoices only (excludes late fees / custom invoices)</p>
+                                </div>
+                                <div className="text-right text-xs">
+                                    <p className="text-gray-600">Invoiced <span className="font-bold text-gray-900">₹{(totals.invRent + totals.invElec).toLocaleString()}</span> · Collected <span className="font-bold text-green-700">₹{(totals.paidRent + totals.paidElec).toLocaleString()}</span> · Pending <span className="font-bold text-red-700">₹{(totals.pendRent + totals.pendElec).toLocaleString()}</span></p>
+                                </div>
+                            </div>
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-xs">
+                                    <thead className="bg-gray-50 text-gray-600 border-b border-gray-200">
+                                        <tr>
+                                            <th className="text-left px-4 py-2 font-bold">Building</th>
+                                            <th className="text-right px-3 py-2 font-bold">Invoices</th>
+                                            <th className="text-right px-3 py-2 font-bold">🏠 Invoiced Rent</th>
+                                            <th className="text-right px-3 py-2 font-bold">⚡ Invoiced Elec</th>
+                                            <th className="text-right px-3 py-2 font-bold bg-green-50 text-green-800">🏠 Collected Rent</th>
+                                            <th className="text-right px-3 py-2 font-bold bg-green-50 text-green-800">⚡ Collected Elec</th>
+                                            <th className="text-right px-3 py-2 font-bold bg-red-50 text-red-800">🏠 Pending Rent</th>
+                                            <th className="text-right px-3 py-2 font-bold bg-red-50 text-red-800">⚡ Pending Elec</th>
+                                            <th className="text-right px-3 py-2 font-bold">% Collected</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-100">
+                                        {list.length === 0 ? (
+                                            <tr><td colSpan={9} className="px-4 py-6 text-center text-gray-500">No buildings yet.</td></tr>
+                                        ) : list.map(r => {
+                                            const inv = r.invRent + r.invElec;
+                                            const paid = r.paidRent + r.paidElec;
+                                            const pct = inv > 0 ? Math.round((paid / inv) * 100) : 0;
+                                            return (
+                                                <tr key={r.id} className="hover:bg-gray-50">
+                                                    <td className="px-4 py-2 font-bold text-gray-900">{r.name}</td>
+                                                    <td className="px-3 py-2 text-right text-gray-700">{r.invCount}<span className="text-[9px] text-gray-400"> ({r.paidCount}✓ / {r.pendCount}⏳)</span></td>
+                                                    <td className="px-3 py-2 text-right text-gray-900 font-medium">₹{r.invRent.toLocaleString()}</td>
+                                                    <td className="px-3 py-2 text-right text-gray-900 font-medium">₹{r.invElec.toLocaleString()}</td>
+                                                    <td className="px-3 py-2 text-right bg-green-50/40 text-green-700 font-bold">₹{r.paidRent.toLocaleString()}</td>
+                                                    <td className="px-3 py-2 text-right bg-green-50/40 text-green-700 font-bold">₹{r.paidElec.toLocaleString()}</td>
+                                                    <td className="px-3 py-2 text-right bg-red-50/40 text-red-700 font-bold">₹{r.pendRent.toLocaleString()}</td>
+                                                    <td className="px-3 py-2 text-right bg-red-50/40 text-red-700 font-bold">₹{r.pendElec.toLocaleString()}</td>
+                                                    <td className="px-3 py-2 text-right">
+                                                        <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${pct >= 90 ? "bg-green-100 text-green-800" : pct >= 60 ? "bg-amber-100 text-amber-800" : "bg-red-100 text-red-800"}`}>{pct}%</span>
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                    {list.length > 0 && (
+                                        <tfoot className="bg-purple-50 border-t border-purple-200">
+                                            <tr className="font-bold text-purple-900">
+                                                <td className="px-4 py-2">Total</td>
+                                                <td className="px-3 py-2 text-right">{totals.invCount}<span className="text-[9px] text-purple-600"> ({totals.paidCount}✓ / {totals.pendCount}⏳)</span></td>
+                                                <td className="px-3 py-2 text-right">₹{totals.invRent.toLocaleString()}</td>
+                                                <td className="px-3 py-2 text-right">₹{totals.invElec.toLocaleString()}</td>
+                                                <td className="px-3 py-2 text-right text-green-800">₹{totals.paidRent.toLocaleString()}</td>
+                                                <td className="px-3 py-2 text-right text-green-800">₹{totals.paidElec.toLocaleString()}</td>
+                                                <td className="px-3 py-2 text-right text-red-800">₹{totals.pendRent.toLocaleString()}</td>
+                                                <td className="px-3 py-2 text-right text-red-800">₹{totals.pendElec.toLocaleString()}</td>
+                                                <td className="px-3 py-2 text-right">{(totals.invRent + totals.invElec) > 0 ? Math.round(((totals.paidRent + totals.paidElec) / (totals.invRent + totals.invElec)) * 100) : 0}%</td>
+                                            </tr>
+                                        </tfoot>
+                                    )}
+                                </table>
+                            </div>
+                        </div>
+                    );
+                })()}
+
                 {/* DAILY LEDGER (Manager Books) */}
                 <div className="bg-white rounded-lg shadow-sm border border-teal-200 overflow-hidden">
                     <div className="bg-teal-50 px-6 py-4 border-b border-teal-200">
