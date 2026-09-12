@@ -379,12 +379,12 @@ export default function EmployeeDashboard() {
             batch.update(doc(db, "units", unit.id), { lastMeterReading: reading });
 
             await batch.commit();
-            const cfMsg = carryForward !== 0 ? `\nCarry Forward: ${carryForward > 0 ? '+' : ''}₹${carryForward}` : '';
+            const cfMsg = carryForward !== 0 ? `\n${carryForward > 0 ? "⚠️ Previous Balance Due" : "✓ Advance / Credit"}: ${carryForward > 0 ? "+" : "−"}₹${Math.abs(carryForward).toLocaleString()}` : '';
             const meterNote = meterChanged ? '\n⚠️ Meter was changed — units entered manually' : '';
             const manualNote = manualOverrideNote ? `\n📝 Manual units: ${manualOverrideNote}` : '';
             const rentP = computeRentPeriod(billingMonth, Number(unit.paymentDay) || undefined);
             const elecP = computeElectricityPeriod(billingMonth);
-            alert(`Invoice generated for ${unit.unitNumber}!${meterNote}${manualNote}\n\nRent (${rentP}): ₹${unit.baseRent || 0}\nElectricity (${elecP}): ${unitsConsumed} units × ₹${effectiveRate} = ₹${electricityCharge}${cfMsg}\nTotal: ₹${totalAmount}`);
+            alert(`Invoice generated for ${unit.unitNumber}!${meterNote}${manualNote}\n\n🏠 Rent (${rentP}): ₹${Number(unit.baseRent || 0).toLocaleString()}\n⚡ Electricity (${elecP}): ${unitsConsumed} units × ₹${effectiveRate} = ₹${electricityCharge.toLocaleString()}${cfMsg}\n─────────────\nTotal: ₹${totalAmount.toLocaleString()}`);
             setSelectedMeterUnit("");
             setCurrentReading("");
             setPreviousReadingOverride("");
@@ -1631,7 +1631,13 @@ export default function EmployeeDashboard() {
                                         : Math.max(0, Number(currentReading) - prev);
                                 const effectiveRate = Number(unit.electricityRate) > 0 ? Number(unit.electricityRate) : electricityRate;
                                 const elecCharge = consumed * effectiveRate;
-                                const total = Number(unit.baseRent || 0) + elecCharge;
+                                // Carry-forward from ledger: negative running balance = tenant owes; carryForward > 0 adds to invoice
+                                const runningBalance = allLedgerEntries
+                                    .filter((l: any) => (l.tenantEmail || "") === (unit.tenantEmail || ""))
+                                    .reduce((s: number, l: any) => s + Number(l.balance || 0), 0);
+                                const carryForward = -runningBalance;
+                                const rent = Number(unit.baseRent || 0);
+                                const total = Math.max(0, rent + elecCharge + carryForward);
                                 return (
                                     <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 space-y-2 text-sm">
                                         <p className="font-bold text-gray-800 text-base">Invoice Preview</p>
@@ -1652,9 +1658,22 @@ export default function EmployeeDashboard() {
                                             <div className="bg-orange-50 border border-orange-200 rounded p-2 text-xs text-orange-800">📝 Manual override: {manualUnitsConsumed} units — {manualUnitsReason || "No reason"}</div>
                                         )}
                                         <div className="flex justify-between"><span className="text-gray-600">Units Consumed:</span><span className="font-mono font-bold">{consumed}</span></div>
-                                        <div className="flex justify-between"><span className="text-gray-600">Electricity (×₹{effectiveRate}):</span><span className="font-mono">₹{elecCharge}</span></div>
-                                        <div className="flex justify-between"><span className="text-gray-600">Base Rent:</span><span className="font-mono">₹{unit.baseRent || 0}</span></div>
-                                        <div className="flex justify-between border-t border-gray-300 pt-2 mt-2"><span className="font-bold text-gray-900">Total Invoice:</span><span className="font-bold text-lg text-green-700">₹{total}</span></div>
+                                        <div className="border-t border-gray-200 pt-2 mt-2 space-y-1">
+                                            <div className="flex justify-between"><span className="text-gray-600">🏠 Base Rent:</span><span className="font-mono">₹{rent.toLocaleString()}</span></div>
+                                            <div className="flex justify-between"><span className="text-gray-600">⚡ Electricity (×₹{effectiveRate}):</span><span className="font-mono">₹{elecCharge.toLocaleString()}</span></div>
+                                            {carryForward !== 0 ? (
+                                                <div className={`flex justify-between ${carryForward > 0 ? "text-amber-800" : "text-emerald-700"}`}>
+                                                    <span className="font-medium">{carryForward > 0 ? "⚠️ Previous Balance Due:" : "✓ Advance / Credit:"}</span>
+                                                    <span className="font-mono font-bold">{carryForward > 0 ? "+" : "−"}₹{Math.abs(carryForward).toLocaleString()}</span>
+                                                </div>
+                                            ) : (
+                                                <div className="flex justify-between text-gray-400 text-xs"><span>Previous Balance:</span><span className="font-mono">—</span></div>
+                                            )}
+                                        </div>
+                                        <div className="flex justify-between border-t border-gray-300 pt-2 mt-2"><span className="font-bold text-gray-900">Total Invoice:</span><span className="font-bold text-lg text-green-700">₹{total.toLocaleString()}</span></div>
+                                        {carryForward > 0 && (
+                                            <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">Includes ₹{carryForward.toLocaleString()} carried forward from unpaid previous invoices.</p>
+                                        )}
                                     </div>
                                 );
                             })()}
