@@ -133,6 +133,42 @@ export interface LedgerEntry {
     createdAt: string;
 }
 
+/**
+ * A single row in the DailyLedger — a manager-recorded cash movement.
+ * Inflows and outflows share this schema; distinguish via `direction`.
+ * Deletions are soft — `deleted:true` is respected everywhere so historical
+ * totals remain immutable.
+ */
+export interface DailyLedgerEntry {
+    id: string;
+    /** YYYY-MM-DD */
+    date: string;
+    direction: "inflow" | "outflow";
+    category: string;
+    amount: number;
+    description?: string;
+    unitId?: string;
+    unitNumber?: string;
+    buildingId?: string;
+    buildingName?: string;
+    tenantName?: string;
+    tenantEmail?: string;
+    invoiceId?: string;
+    expenseId?: string;
+    paymentMode?: string;
+    paymentReference?: string | null;
+    workerName?: string;
+    hoursWorked?: number;
+    quantity?: number;
+    vendor?: string;
+    receiptUrl?: string;
+    note?: string | null;
+    createdBy?: string;
+    recordedBy?: string;
+    deleted?: boolean;
+    createdAt: string;
+}
+
 export interface Expense {
     id: string;
     amount: number;
@@ -219,6 +255,24 @@ export interface AppUser {
     email?: string;
     phone?: string;
     role: "admin" | "employee" | "tenant";
+    createdAt: string;
+}
+
+/**
+ * A tenant's application for a vacant unit. Created by the tenant, reviewed
+ * and approved/rejected by admin/employee.
+ */
+export interface Application {
+    id: string;
+    tenantEmail: string;
+    unitId: string;
+    unitNumber: string;
+    buildingId?: string;
+    securityDeposit?: number;
+    transactionId?: string;
+    idProofUrl?: string;
+    paymentProofUrl?: string;
+    status: "pending" | "approved" | "rejected";
     createdAt: string;
 }
 

@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
 import { useAuth } from "@/context/AuthContext";
@@ -9,6 +8,13 @@ import { collection, addDoc, onSnapshot, query, orderBy, where, doc, updateDoc, 
 import { auth, db } from "@/lib/firebase";
 import { useUploadWithProgress, UploadProgressBar } from "@/lib/useUpload";
 import { collectedSplit } from "@/lib/allocation";
+import { mapSnapshot } from "@/lib/firestore";
+import type {
+    LedgerEntry,
+    DailyLedgerEntry,
+    AppUser,
+    Unit,
+} from "@/types";
 import { DailyLedgerTab } from "@/components/employee";
 
 interface Building {
@@ -192,18 +198,18 @@ export default function AdminDashboard() {
     const [isExporting, setIsExporting] = useState(false);
 
     // --- Tenant Ledger State ---
-    const [allLedgerEntries, setAllLedgerEntries] = useState<any[]>([]);
+    const [allLedgerEntries, setAllLedgerEntries] = useState<LedgerEntry[]>([]);
     const [ledgerFilter, setLedgerFilter] = useState("");
-    const [editLedger, setEditLedger] = useState<any>(null);
+    const [editLedger, setEditLedger] = useState<LedgerEntry | null>(null);
     const [editLedgerAmount, setEditLedgerAmount] = useState("");
     const [editLedgerNote, setEditLedgerNote] = useState("");
 
     // --- User Management State ---
-    const [allUsers, setAllUsers] = useState<any[]>([]);
+    const [allUsers, setAllUsers] = useState<AppUser[]>([]);
 
     // --- Daily Ledger State ---
-    const [dailyLedgerEntries, setDailyLedgerEntries] = useState<any[]>([]);
-    const [allUnits, setAllUnits] = useState<any[]>([]);
+    const [dailyLedgerEntries, setDailyLedgerEntries] = useState<DailyLedgerEntry[]>([]);
+    const [allUnits, setAllUnits] = useState<Unit[]>([]);
 
     // --- Single Invoice Generation State ---
     const [isSingleInvModalOpen, setIsSingleInvModalOpen] = useState(false);
@@ -242,10 +248,10 @@ export default function AdminDashboard() {
         const unsubSettings = onSnapshot(doc(db, "settings", "payment"), (docSnap) => { if (docSnap.exists()) { setUpiId(docSnap.data().upiId || ""); setPayeeName(docSnap.data().payeeName || ""); } });
         const unsubAnnouncements = onSnapshot(collection(db, "announcements"), (snapshot) => { const annData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Announcement)); annData.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()); setAnnouncements(annData); });
         const unsubDocs = onSnapshot(collection(db, "documents"), (snapshot) => { const docData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as DocumentData)); docData.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()); setDocuments(docData); });
-        const unsubLedger = onSnapshot(collection(db, "ledger"), (snapshot) => { setAllLedgerEntries(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)).sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())); });
-        const unsubUsers = onSnapshot(collection(db, "users"), (snapshot) => { setAllUsers(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)).sort((a: any, b: any) => (a.email || "").localeCompare(b.email || ""))); });
-        const unsubDailyLedger = onSnapshot(collection(db, "dailyLedger"), (snapshot) => { setDailyLedgerEntries(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)).sort((a: any, b: any) => (b.date || "").localeCompare(a.date || ""))); });
-        const unsubAllUnits = onSnapshot(collection(db, "units"), (snapshot) => { setAllUnits(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any))); });
+        const unsubLedger = onSnapshot(collection(db, "ledger"), (snapshot) => { setAllLedgerEntries(mapSnapshot<LedgerEntry>(snapshot).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())); });
+        const unsubUsers = onSnapshot(collection(db, "users"), (snapshot) => { setAllUsers(mapSnapshot<AppUser>(snapshot).sort((a, b) => (a.email || "").localeCompare(b.email || ""))); });
+        const unsubDailyLedger = onSnapshot(collection(db, "dailyLedger"), (snapshot) => { setDailyLedgerEntries(mapSnapshot<DailyLedgerEntry>(snapshot).sort((a, b) => (b.date || "").localeCompare(a.date || ""))); });
+        const unsubAllUnits = onSnapshot(collection(db, "units"), (snapshot) => { setAllUnits(mapSnapshot<Unit>(snapshot)); });
 
         return () => { unsubBldgs(); unsubApps(); unsubAllInvoices(); unsubTickets(); unsubContacts(); unsubOccupied(); unsubExpenses(); unsubSettings(); unsubAnnouncements(); unsubDocs(); unsubLedger(); unsubUsers(); unsubDailyLedger(); unsubAllUnits(); };
     }, [role]);
@@ -560,7 +566,7 @@ export default function AdminDashboard() {
     const handleRejectInvoice = async (invId: string) => { if (!window.confirm("Reject this payment?")) return; try { await updateDoc(doc(db, "invoices", invId), { status: "unpaid", transactionId: "" }); } catch (error) { console.error(error); } };
 
     // --- Ledger Rectification (Admin only) ---
-    const handleEditLedgerOpen = (entry: any) => {
+    const handleEditLedgerOpen = (entry: LedgerEntry) => {
         setEditLedger(entry);
         setEditLedgerAmount(String(entry.amountPaid));
         setEditLedgerNote("");
@@ -583,7 +589,7 @@ export default function AdminDashboard() {
             setEditLedger(null);
         } catch (error) { console.error(error); alert("Failed to update ledger entry."); }
     };
-    const handleDeleteLedger = async (entry: any) => {
+    const handleDeleteLedger = async (entry: LedgerEntry) => {
         if (!window.confirm(`Delete ledger entry for ${entry.billingPeriod} (₹${entry.amountPaid} paid)? This cannot be undone.`)) return;
         try {
             await deleteDoc(doc(db, "ledger", entry.id));
@@ -714,7 +720,7 @@ export default function AdminDashboard() {
                         );
                     }
                     // Group: buildingId → day → { inflow, outflow, entries[] }
-                    type DayBucket = { inflow: number; outflow: number; entries: any[] };
+                    type DayBucket = { inflow: number; outflow: number; entries: DailyLedgerEntry[] };
                     type BldgBucket = { name: string; days: Map<string, DayBucket>; totalIn: number; totalOut: number };
                     const map = new Map<string, BldgBucket>();
                     monthEntries.forEach(e => {
@@ -813,7 +819,7 @@ export default function AdminDashboard() {
                     const monthInvoices = allInvoicesForDashboard.filter(inv => norm(inv.billingPeriod) === monthLabel && !inv.isCustom);
                     // Map unitId → buildingId via allUnits
                     const unitBuilding = new Map<string, { id: string; name: string }>();
-                    allUnits.forEach((u: any) => {
+                    allUnits.forEach((u) => {
                         const b = buildings.find(bb => bb.id === u.buildingId);
                         unitBuilding.set(u.id, { id: u.buildingId || "__unassigned__", name: b?.name || "Unassigned" });
                     });
@@ -1328,7 +1334,7 @@ export default function AdminDashboard() {
                                             <div className="flex items-center gap-2 shrink-0">
                                                 <select
                                                     value={u.role}
-                                                    onChange={(e) => handleChangeUserRole(u.id, u.email, e.target.value)}
+                                                    onChange={(e) => handleChangeUserRole(u.id, u.email || "", e.target.value)}
                                                     disabled={u.email === user?.email}
                                                     className="text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white disabled:opacity-50"
                                                 >
@@ -1337,7 +1343,7 @@ export default function AdminDashboard() {
                                                     <option value="tenant">Tenant</option>
                                                 </select>
                                                 {u.email !== user?.email && (
-                                                    <button onClick={() => handleDeleteUser(u.id, u.email)} className="text-gray-400 hover:text-red-500 text-xs" title="Remove user">🗑️</button>
+                                                    <button onClick={() => handleDeleteUser(u.id, u.email || "")} className="text-gray-400 hover:text-red-500 text-xs" title="Remove user">🗑️</button>
                                                 )}
                                             </div>
                                         </div>

@@ -26,6 +26,7 @@ interface DailyLedgerEntry {
     receiptUrl?: string;
     createdBy?: string;
     createdAt: string;
+    deleted?: boolean;
 }
 
 interface Building { id: string; name: string; }

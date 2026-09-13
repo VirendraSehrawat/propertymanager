@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
 import { useEffect, useState } from "react";
@@ -9,37 +8,49 @@ import { signOut } from "firebase/auth";
 import { auth, db } from "@/lib/firebase";
 import { collection, query, where, onSnapshot, doc, getDoc, addDoc, updateDoc } from "firebase/firestore";
 import { useUploadWithProgress, UploadProgressBar } from "@/lib/useUpload";
+import { mapSnapshot } from "@/lib/firestore";
+import type {
+    Announcement,
+    Application,
+    Building,
+    Invoice,
+    LedgerEntry,
+    MaintenanceTicket,
+    Unit,
+} from "@/types";
+
+type BuildingWithVacancies = Building & { availableUnits: Unit[] };
 
 export default function TenantDashboard() {
     const { user, role, loading } = useAuth();
     const router = useRouter();
 
-    const [unit, setUnit] = useState<any>(null);
+    const [unit, setUnit] = useState<(Unit & { id: string }) | null>(null);
     const [buildingName, setBuildingName] = useState<string>("");
     const [isFetchingUnit, setIsFetchingUnit] = useState(true);
 
     // --- NEW: Notice Board State ---
-    const [announcements, setAnnouncements] = useState<any[]>([]);
+    const [announcements, setAnnouncements] = useState<Announcement[]>([]);
 
     const [upiId, setUpiId] = useState("");
     const [payeeName, setPayeeName] = useState("");
 
-    const [buildings, setBuildings] = useState<any[]>([]);
-    const [vacantUnits, setVacantUnits] = useState<any[]>([]);
-    const [myApplications, setMyApplications] = useState<any[]>([]);
+    const [buildings, setBuildings] = useState<Building[]>([]);
+    const [vacantUnits, setVacantUnits] = useState<Unit[]>([]);
+    const [myApplications, setMyApplications] = useState<Application[]>([]);
 
-    const [myInvoices, setMyInvoices] = useState<any[]>([]);
+    const [myInvoices, setMyInvoices] = useState<Invoice[]>([]);
     const [isPayModalOpen, setIsPayModalOpen] = useState(false);
-    const [selectedInvoice, setSelectedInvoice] = useState<any>(null);
+    const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
     const [payTxnId, setPayTxnId] = useState("");
     const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
 
     // Ledger state
-    const [ledgerEntries, setLedgerEntries] = useState<any[]>([]);
+    const [ledgerEntries, setLedgerEntries] = useState<LedgerEntry[]>([]);
     const [payAmount, setPayAmount] = useState("");
     const [payScreenshot, setPayScreenshot] = useState<File | null>(null);
 
-    const [myTickets, setMyTickets] = useState<any[]>([]);
+    const [myTickets, setMyTickets] = useState<MaintenanceTicket[]>([]);
     const [isMaintModalOpen, setIsMaintModalOpen] = useState(false);
     const [maintCategory, setMaintCategory] = useState("Plumbing");
     const [maintDesc, setMaintDesc] = useState("");
@@ -47,14 +58,14 @@ export default function TenantDashboard() {
     const [isSubmittingMaint, setIsSubmittingMaint] = useState(false);
 
     const [isAppModalOpen, setIsAppModalOpen] = useState(false);
-    const [selectedUnit, setSelectedUnit] = useState<any>(null);
+    const [selectedUnit, setSelectedUnit] = useState<Unit | null>(null);
     const [idFile, setIdFile] = useState<File | null>(null);
     const [paymentFile, setPaymentFile] = useState<File | null>(null);
     const [appTxnId, setAppTxnId] = useState("");
     const [isSubmittingApp, setIsSubmittingApp] = useState(false);
 
     const [isUpdatePaymentModalOpen, setIsUpdatePaymentModalOpen] = useState(false);
-    const [selectedAppToUpdate, setSelectedAppToUpdate] = useState<any>(null);
+    const [selectedAppToUpdate, setSelectedAppToUpdate] = useState<Application | null>(null);
 
     const { uploadFile, uploadProgress, isUploading } = useUploadWithProgress();
 
@@ -70,11 +81,11 @@ export default function TenantDashboard() {
         const unsubUnit = onSnapshot(query(collection(db, "units"), where("tenantEmail", "==", emailLower)), async (snapshot) => {
             if (!snapshot.empty) {
                 const unitDoc = snapshot.docs[0];
-                const unitData = unitDoc.data();
-                setUnit({ id: unitDoc.id, ...unitData });
+                const unitData = unitDoc.data() as Unit;
+                setUnit({ ...unitData, id: unitDoc.id });
                 if (unitData.buildingId) {
                     const bldgSnap = await getDoc(doc(db, "buildings", unitData.buildingId));
-                    if (bldgSnap.exists()) setBuildingName(bldgSnap.data().name);
+                    if (bldgSnap.exists()) setBuildingName((bldgSnap.data() as Building).name);
                 }
             } else {
                 setUnit(null);
@@ -82,20 +93,52 @@ export default function TenantDashboard() {
             setIsFetchingUnit(false);
         });
 
-        const unsubBuildings = onSnapshot(collection(db, "buildings"), (snapshot) => { setBuildings(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any))); });
-        const unsubVacant = onSnapshot(query(collection(db, "units"), where("status", "==", "vacant")), (snapshot) => { setVacantUnits(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)).sort((a, b) => a.unitNumber.localeCompare(b.unitNumber, undefined, { numeric: true }))); });
-        const unsubApps = onSnapshot(query(collection(db, "applications"), where("tenantEmail", "==", emailLower)), (snapshot) => { setMyApplications(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any))); });
-        const unsubTickets = onSnapshot(query(collection(db, "maintenance"), where("tenantEmail", "==", emailLower)), (snapshot) => { setMyTickets(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())); });
-        const unsubInvoices = onSnapshot(query(collection(db, "invoices"), where("tenantEmail", "==", emailLower)), (snapshot) => { setMyInvoices(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())); });
-        const unsubLedger = onSnapshot(query(collection(db, "ledger"), where("tenantEmail", "==", emailLower)), (snapshot) => { setLedgerEntries(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)).sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())); });
+        const unsubBuildings = onSnapshot(collection(db, "buildings"), (snapshot) => {
+            setBuildings(mapSnapshot<Building>(snapshot));
+        });
+        const unsubVacant = onSnapshot(query(collection(db, "units"), where("status", "==", "vacant")), (snapshot) => {
+            setVacantUnits(
+                mapSnapshot<Unit>(snapshot).sort((a, b) =>
+                    (a.unitNumber || "").localeCompare(b.unitNumber || "", undefined, { numeric: true }),
+                ),
+            );
+        });
+        const unsubApps = onSnapshot(query(collection(db, "applications"), where("tenantEmail", "==", emailLower)), (snapshot) => {
+            setMyApplications(mapSnapshot<Application>(snapshot));
+        });
+        const unsubTickets = onSnapshot(query(collection(db, "maintenance"), where("tenantEmail", "==", emailLower)), (snapshot) => {
+            setMyTickets(
+                mapSnapshot<MaintenanceTicket>(snapshot).sort(
+                    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+                ),
+            );
+        });
+        const unsubInvoices = onSnapshot(query(collection(db, "invoices"), where("tenantEmail", "==", emailLower)), (snapshot) => {
+            setMyInvoices(
+                mapSnapshot<Invoice>(snapshot).sort(
+                    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+                ),
+            );
+        });
+        const unsubLedger = onSnapshot(query(collection(db, "ledger"), where("tenantEmail", "==", emailLower)), (snapshot) => {
+            setLedgerEntries(
+                mapSnapshot<LedgerEntry>(snapshot).sort(
+                    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+                ),
+            );
+        });
 
         const unsubSettings = onSnapshot(doc(db, "settings", "payment"), (docSnap) => {
-            if (docSnap.exists()) { setUpiId(docSnap.data().upiId || ""); setPayeeName(docSnap.data().payeeName || ""); }
+            if (docSnap.exists()) {
+                const data = docSnap.data() as { upiId?: string; payeeName?: string };
+                setUpiId(data.upiId || "");
+                setPayeeName(data.payeeName || "");
+            }
         });
 
         // --- NEW: Fetch Announcements ---
         const unsubAnnouncements = onSnapshot(collection(db, "announcements"), (snapshot) => {
-            const annData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
+            const annData = mapSnapshot<Announcement>(snapshot);
             annData.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
             setAnnouncements(annData);
         });
@@ -103,7 +146,9 @@ export default function TenantDashboard() {
         return () => { unsubUnit(); unsubVacant(); unsubApps(); unsubTickets(); unsubInvoices(); unsubLedger(); unsubBuildings(); unsubSettings(); unsubAnnouncements(); };
     }, [user?.email, role]);
 
-    const groupedVacantUnits = buildings.map(bldg => ({ ...bldg, availableUnits: vacantUnits.filter(u => u.buildingId === bldg.id) })).filter(bldg => bldg.availableUnits.length > 0);
+    const groupedVacantUnits: BuildingWithVacancies[] = buildings
+        .map((bldg) => ({ ...bldg, availableUnits: vacantUnits.filter((u) => u.buildingId === bldg.id) }))
+        .filter((bldg) => bldg.availableUnits.length > 0);
 
     const handleAppSubmit = async (e: React.FormEvent) => { e.preventDefault(); if (!user?.email || !selectedUnit || !idFile) { alert("ID Proof is required!"); return; } setIsSubmittingApp(true); try { const idUrl = await uploadFile(`applications/${user.uid}/id_${Date.now()}_${idFile.name}`, idFile); let payUrl = ""; if (paymentFile) { payUrl = await uploadFile(`applications/${user.uid}/payment_${Date.now()}_${paymentFile.name}`, paymentFile); } await addDoc(collection(db, "applications"), { tenantEmail: user.email.toLowerCase(), unitId: selectedUnit.id, unitNumber: selectedUnit.unitNumber, buildingId: selectedUnit.buildingId, securityDeposit: selectedUnit.baseRent || 8000, transactionId: appTxnId || "", idProofUrl: idUrl, paymentProofUrl: payUrl, status: "pending", createdAt: new Date().toISOString() }); setIsAppModalOpen(false); setSelectedUnit(null); setIdFile(null); setPaymentFile(null); setAppTxnId(""); } catch (error) { console.error(error); alert("Upload failed. Please try again."); } finally { setIsSubmittingApp(false); } };
     const handleUpdatePayment = async (e: React.FormEvent) => { e.preventDefault(); if (!selectedAppToUpdate || !paymentFile || !appTxnId) return; setIsSubmittingApp(true); try { const payUrl = await uploadFile(`applications/${user?.uid}/payment_${Date.now()}_${paymentFile.name}`, paymentFile); await updateDoc(doc(db, "applications", selectedAppToUpdate.id), { paymentProofUrl: payUrl, transactionId: appTxnId }); setIsUpdatePaymentModalOpen(false); setSelectedAppToUpdate(null); setPaymentFile(null); setAppTxnId(""); } catch (error) { console.error(error); alert("Payment upload failed."); } finally { setIsSubmittingApp(false); } };
@@ -196,7 +241,7 @@ export default function TenantDashboard() {
                                     <div key={bldg.id} className="space-y-4">
                                         <div className="border-b border-gray-200 pb-2"><h3 className="text-lg font-bold text-gray-900">{bldg.name}</h3><p className="text-sm text-gray-500">{bldg.address}</p></div>
                                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                            {bldg.availableUnits.map((vUnit: any) => {
+                                            {bldg.availableUnits.map((vUnit) => {
                                                 const existingApp = myApplications.find(app => app.unitId === vUnit.id);
                                                 return (
                                                     <div key={vUnit.id} className="bg-white border border-gray-200 rounded-lg p-5 flex flex-col justify-between shadow-sm">
