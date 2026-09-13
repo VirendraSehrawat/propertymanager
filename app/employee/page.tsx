@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
 import { useEffect, useState } from "react";
@@ -13,6 +12,19 @@ import { useUploadWithProgress, UploadProgressBar } from "@/lib/useUpload";
 import { calculateFundSummary, filterExpenses, buildSettlementUpdate } from "@/lib/expenses";
 import { computeRentPeriod, computeElectricityPeriod } from "@/lib/billingPeriods";
 import { computeCarryForward, composeInvoiceTotal } from "@/lib/allocation";
+import { mapSnapshot } from "@/lib/firestore";
+import type {
+    Allocation,
+    Building,
+    Checklist,
+    DailyLedgerEntry,
+    Expense,
+    InventoryItem,
+    Invoice,
+    LedgerEntry,
+    MaintenanceTicket,
+    Unit,
+} from "@/types";
 import { CollectionsTab, OccupancyTab, LedgerTab, InventoryTab, TicketsTab, DailyLedgerTab, MonthlyOverviewTab, MonthCollectionsCard } from "@/components/employee";
 import { TabButton } from "@/components/ui";
 
@@ -21,18 +33,18 @@ export default function EmployeeDashboard() {
     const router = useRouter();
     const { uploadFile, uploadProgress, isUploading } = useUploadWithProgress();
 
-    const [activeTickets, setActiveTickets] = useState<any[]>([]);
-    const [resolvedTickets, setResolvedTickets] = useState<any[]>([]);
+    const [activeTickets, setActiveTickets] = useState<MaintenanceTicket[]>([]);
+    const [resolvedTickets, setResolvedTickets] = useState<MaintenanceTicket[]>([]);
     const [activeTab, setActiveTab] = useState<"home" | "active" | "resolved" | "meter" | "collections" | "ledger" | "daily" | "monthly" | "units" | "occupancy" | "checklist" | "expenses" | "inventory">("home");
 
     const [isResolveModalOpen, setIsResolveModalOpen] = useState(false);
-    const [selectedTicket, setSelectedTicket] = useState<any>(null);
+    const [selectedTicket, setSelectedTicket] = useState<MaintenanceTicket | null>(null);
     const [resolutionNote, setResolutionNote] = useState("");
     const [resolutionFile, setResolutionFile] = useState<File | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
 
     // Meter Reading States
-    const [occupiedUnits, setOccupiedUnits] = useState<any[]>([]);
+    const [occupiedUnits, setOccupiedUnits] = useState<Unit[]>([]);
     const [selectedMeterUnit, setSelectedMeterUnit] = useState("");
     const [currentReading, setCurrentReading] = useState("");
     const [previousReadingOverride, setPreviousReadingOverride] = useState("");
@@ -48,7 +60,7 @@ export default function EmployeeDashboard() {
     const [electricityRate] = useState(12); // ₹12 per unit consumed
 
     // Collections States
-    const [allInvoices, setAllInvoices] = useState<any[]>([]);
+    const [allInvoices, setAllInvoices] = useState<Invoice[]>([]);
     const [isTodayCollectionsOpen, setIsTodayCollectionsOpen] = useState(false);
     const [homeMonth, setHomeMonth] = useState<string>(() => {
         const d = new Date();
@@ -57,7 +69,7 @@ export default function EmployeeDashboard() {
 
     // Tenant Profile States
     const [isTenantProfileOpen, setIsTenantProfileOpen] = useState(false);
-    const [profileUnit, setProfileUnit] = useState<any>(null);
+    const [profileUnit, setProfileUnit] = useState<Unit | null>(null);
     const [profileName, setProfileName] = useState("");
     const [profilePhone, setProfilePhone] = useState("");
     const [profileEmail, setProfileEmail] = useState("");
@@ -68,13 +80,13 @@ export default function EmployeeDashboard() {
     const [isUploadingDoc, setIsUploadingDoc] = useState(false);
 
     // Ledger state
-    const [allLedgerEntries, setAllLedgerEntries] = useState<any[]>([]);
+    const [allLedgerEntries, setAllLedgerEntries] = useState<LedgerEntry[]>([]);
 
     // Unit Management States
-    const [allUnits, setAllUnits] = useState<any[]>([]);
-    const [buildings, setBuildings] = useState<any[]>([]);
+    const [allUnits, setAllUnits] = useState<Unit[]>([]);
+    const [buildings, setBuildings] = useState<Building[]>([]);
     const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
-    const [assignUnit, setAssignUnit] = useState<any>(null);
+    const [assignUnit, setAssignUnit] = useState<Unit | null>(null);
     const [assignEmail, setAssignEmail] = useState("");
     const [assignName, setAssignName] = useState("");
     const [assignPhone, setAssignPhone] = useState("");
@@ -83,10 +95,10 @@ export default function EmployeeDashboard() {
     const [assignPaymentDay, setAssignPaymentDay] = useState("");
     const [assignSecurityDeposit, setAssignSecurityDeposit] = useState("");
     const [isEditUnitModalOpen, setIsEditUnitModalOpen] = useState(false);
-    const [editUnit, setEditUnit] = useState<any>(null);
+    const [editUnit, setEditUnit] = useState<Unit | null>(null);
     const [editUnitNumber, setEditUnitNumber] = useState("");
     const [editBaseRent, setEditBaseRent] = useState("");
-    const [unitDocUnit, setUnitDocUnit] = useState<any>(null);
+    const [unitDocUnit, setUnitDocUnit] = useState<Unit | null>(null);
     const [unitDocName, setUnitDocName] = useState("");
     const [unitDocFile, setUnitDocFile] = useState<File | null>(null);
     const [isUnitDocModalOpen, setIsUnitDocModalOpen] = useState(false);
@@ -94,7 +106,7 @@ export default function EmployeeDashboard() {
 
     // Transfer Tenant States
     const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
-    const [transferSourceUnit, setTransferSourceUnit] = useState<any>(null);
+    const [transferSourceUnit, setTransferSourceUnit] = useState<Unit | null>(null);
     const [transferDestUnit, setTransferDestUnit] = useState("");
     const [transferDate, setTransferDate] = useState(() => new Date().toISOString().split("T")[0]);
     const [transferInvoiceMode, setTransferInvoiceMode] = useState<"prorate" | "custom" | "none">("prorate");
@@ -116,18 +128,18 @@ export default function EmployeeDashboard() {
     const [checklistRooms, setChecklistRooms] = useState<{ room: string; condition: string; photo: File | null; photoUrl?: string; damages: string }[]>([{ room: "Living Room", condition: "good", photo: null, damages: "" }]);
     const [checklistNotes, setChecklistNotes] = useState("");
     const [isSubmittingChecklist, setIsSubmittingChecklist] = useState(false);
-    const [allChecklists, setAllChecklists] = useState<any[]>([]);
+    const [allChecklists, setAllChecklists] = useState<Checklist[]>([]);
     const [checklistDeduction, setChecklistDeduction] = useState("");
 
     // Multiple Tenants States
     const [isAddCoTenantOpen, setIsAddCoTenantOpen] = useState(false);
-    const [coTenantUnit, setCoTenantUnit] = useState<any>(null);
+    const [coTenantUnit, setCoTenantUnit] = useState<Unit | null>(null);
     const [coTenantName, setCoTenantName] = useState("");
     const [coTenantPhone, setCoTenantPhone] = useState("");
     const [coTenantEmail, setCoTenantEmail] = useState("");
 
     // Expense States
-    const [allExpenses, setAllExpenses] = useState<any[]>([]);
+    const [allExpenses, setAllExpenses] = useState<Expense[]>([]);
     const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
     const [expenseAmount, setExpenseAmount] = useState("");
     const [expenseCategory, setExpenseCategory] = useState("Maintenance");
@@ -138,7 +150,7 @@ export default function EmployeeDashboard() {
     const [isSubmittingExpense, setIsSubmittingExpense] = useState(false);
 
     // Allocation (Fund) States
-    const [allAllocations, setAllAllocations] = useState<any[]>([]);
+    const [allAllocations, setAllAllocations] = useState<Allocation[]>([]);
     const [isAllocationModalOpen, setIsAllocationModalOpen] = useState(false);
     const [allocAmount, setAllocAmount] = useState("");
     const [allocNote, setAllocNote] = useState("");
@@ -152,10 +164,10 @@ export default function EmployeeDashboard() {
     const [expenseSelectedMonth, setExpenseSelectedMonth] = useState<string>(new Date().toISOString().slice(0, 7));
 
     // Daily Ledger States
-    const [dailyLedgerEntries, setDailyLedgerEntries] = useState<any[]>([]);
+    const [dailyLedgerEntries, setDailyLedgerEntries] = useState<DailyLedgerEntry[]>([]);
 
     // Inventory States
-    const [allInventory, setAllInventory] = useState<any[]>([]);
+    const [allInventory, setAllInventory] = useState<InventoryItem[]>([]);
     const [isInventoryModalOpen, setIsInventoryModalOpen] = useState(false);
     const [invItemName, setInvItemName] = useState("");
     const [invItemQty, setInvItemQty] = useState("");
@@ -190,7 +202,7 @@ export default function EmployeeDashboard() {
         if (role !== "employee") return;
 
         const unsubTickets = onSnapshot(collection(db, "maintenance"), (snapshot) => {
-            const allTickets = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
+            const allTickets = mapSnapshot<MaintenanceTicket>(snapshot);
 
             // Sort newest first
             allTickets.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -200,43 +212,43 @@ export default function EmployeeDashboard() {
         });
 
         const unsubUnits = onSnapshot(query(collection(db, "units"), where("status", "==", "occupied")), (snapshot) => {
-            setOccupiedUnits(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)).sort((a, b) => a.unitNumber.localeCompare(b.unitNumber, undefined, { numeric: true })));
+            setOccupiedUnits(mapSnapshot<Unit>(snapshot).sort((a, b) => a.unitNumber.localeCompare(b.unitNumber, undefined, { numeric: true })));
         });
 
         const unsubInvoices = onSnapshot(collection(db, "invoices"), (snapshot) => {
-            setAllInvoices(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)));
+            setAllInvoices(mapSnapshot<Invoice>(snapshot));
         });
 
         const unsubLedger = onSnapshot(collection(db, "ledger"), (snapshot) => {
-            setAllLedgerEntries(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)).sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
+            setAllLedgerEntries(mapSnapshot<LedgerEntry>(snapshot).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
         });
 
         const unsubAllUnits = onSnapshot(collection(db, "units"), (snapshot) => {
-            setAllUnits(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)).sort((a: any, b: any) => a.unitNumber.localeCompare(b.unitNumber, undefined, { numeric: true })));
+            setAllUnits(mapSnapshot<Unit>(snapshot).sort((a, b) => a.unitNumber.localeCompare(b.unitNumber, undefined, { numeric: true })));
         });
 
         const unsubBuildings = onSnapshot(collection(db, "buildings"), (snapshot) => {
-            setBuildings(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)));
+            setBuildings(mapSnapshot<Building>(snapshot));
         });
 
         const unsubChecklists = onSnapshot(collection(db, "checklists"), (snapshot) => {
-            setAllChecklists(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)).sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
+            setAllChecklists(mapSnapshot<Checklist>(snapshot).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
         });
 
         const unsubExpenses = onSnapshot(collection(db, "expenses"), (snapshot) => {
-            setAllExpenses(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)).filter((e: any) => !e.deleted).sort((a: any, b: any) => new Date(b.date || b.createdAt).getTime() - new Date(a.date || a.createdAt).getTime()));
+            setAllExpenses(mapSnapshot<Expense>(snapshot).filter(e => !e.deleted).sort((a, b) => new Date(b.date || b.createdAt).getTime() - new Date(a.date || a.createdAt).getTime()));
         });
 
         const unsubInventory = onSnapshot(collection(db, "inventory"), (snapshot) => {
-            setAllInventory(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)).sort((a: any, b: any) => a.name?.localeCompare(b.name)));
+            setAllInventory(mapSnapshot<InventoryItem>(snapshot).sort((a, b) => (a.name || "").localeCompare(b.name || "")));
         });
 
         const unsubAllocations = onSnapshot(collection(db, "allocations"), (snapshot) => {
-            setAllAllocations(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)).sort((a: any, b: any) => new Date(b.date || b.createdAt).getTime() - new Date(a.date || a.createdAt).getTime()));
+            setAllAllocations(mapSnapshot<Allocation>(snapshot).sort((a, b) => new Date(b.date || b.createdAt).getTime() - new Date(a.date || a.createdAt).getTime()));
         });
 
         const unsubDailyLedger = onSnapshot(collection(db, "dailyLedger"), (snapshot) => {
-            setDailyLedgerEntries(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)).filter((e: any) => !e.deleted).sort((a: any, b: any) => (b.date || "").localeCompare(a.date || "")));
+            setDailyLedgerEntries(mapSnapshot<DailyLedgerEntry>(snapshot).filter(e => !e.deleted).sort((a, b) => (b.date || "").localeCompare(a.date || "")));
         });
 
         return () => { unsubTickets(); unsubUnits(); unsubInvoices(); unsubLedger(); unsubAllUnits(); unsubBuildings(); unsubChecklists(); unsubExpenses(); unsubInventory(); unsubAllocations(); unsubDailyLedger(); };
@@ -401,7 +413,7 @@ export default function EmployeeDashboard() {
         }
     };
 
-    const openTenantProfile = (unit: any) => {
+    const openTenantProfile = (unit: Unit) => {
         setProfileUnit(unit);
         setProfileName(unit.tenantName || "");
         setProfilePhone(unit.tenantPhone || "");
@@ -546,7 +558,7 @@ export default function EmployeeDashboard() {
     };
 
     // --- Transfer Tenant Handler ---
-    const openTransferModal = (unit: any) => {
+    const openTransferModal = (unit: Unit) => {
         setTransferSourceUnit(unit);
         setTransferDestUnit("");
         setTransferDate(new Date().toISOString().split("T")[0]);
@@ -576,7 +588,7 @@ export default function EmployeeDashboard() {
                 const invoiceId = `inv_${transferSourceUnit.id}_transfer_${transferDate}`;
 
                 let totalAmount: number;
-                let invoiceData: any = {
+                let invoiceData: Record<string, unknown> = {
                     unitId: transferSourceUnit.id,
                     unitNumber: transferSourceUnit.unitNumber,
                     tenantEmail: transferSourceUnit.tenantEmail || "",
@@ -737,11 +749,11 @@ export default function EmployeeDashboard() {
         } catch (error) { console.error(error); alert("Failed to add co-tenant."); }
     };
 
-    const handleRemoveCoTenant = async (unitId: string, coTenant: any) => {
+    const handleRemoveCoTenant = async (unitId: string, coTenant: { addedAt: string; name?: string; email?: string; phone?: string }) => {
         if (!window.confirm(`Remove co-tenant ${coTenant.name || coTenant.email || coTenant.phone}?`)) return;
         try {
             const unitDoc = allUnits.find(u => u.id === unitId);
-            const updatedCoTenants = (unitDoc?.coTenants || []).filter((ct: any) => ct.addedAt !== coTenant.addedAt);
+            const updatedCoTenants = (unitDoc?.coTenants || []).filter((ct) => ct.addedAt !== coTenant.addedAt);
             await updateDoc(doc(db, "units", unitId), { coTenants: updatedCoTenants });
         } catch (error) { console.error(error); alert("Failed to remove co-tenant."); }
     };
@@ -807,7 +819,7 @@ export default function EmployeeDashboard() {
     // Soft-delete an expense: the record is not removed, we just mark it as
     // deleted with a mandatory reason for the audit trail. If the expense has
     // a linked daily-ledger outflow entry, that mirror is soft-deleted too.
-    const handleSoftDeleteExpense = async (exp: any) => {
+    const handleSoftDeleteExpense = async (exp: Expense) => {
         if (exp.deleted) return;
         const reason = window.prompt(`Delete expense "${exp.description}" (₹${Number(exp.amount).toLocaleString()})?\n\nPlease provide a reason (required):`, "");
         if (reason === null) return; // cancelled
@@ -828,7 +840,7 @@ export default function EmployeeDashboard() {
     };
 
     // --- Allocation (Fund) Handlers ---
-    const openEditAllocation = (a: any) => {
+    const openEditAllocation = (a: Allocation) => {
         setEditingAllocationId(a.id);
         setAllocAmount(String(a.amount ?? ""));
         setAllocNote(a.note || "");
@@ -874,18 +886,18 @@ export default function EmployeeDashboard() {
         } catch (error) { console.error(error); alert("Failed to save allocation."); } finally { setIsSubmittingAllocation(false); }
     };
 
-    const handleDeleteAllocation = async (a: any) => {
+    const handleDeleteAllocation = async (a: Allocation) => {
         if (!window.confirm(`Delete allocation of ₹${Number(a.amount).toLocaleString()} (${a.note || "no note"})?\n\nThis will reduce the total allocated fund.`)) return;
         try {
             await deleteDoc(doc(db, "allocations", a.id));
         } catch (error) { console.error(error); alert("Failed to delete allocation."); }
     };
 
-    const handleToggleExpenseSettled = async (exp: any) => {
+    const handleToggleExpenseSettled = async (exp: Expense) => {
         const nextSettled = !exp.settled;
         if (nextSettled && !window.confirm(`Mark "${exp.description}" (₹${Number(exp.amount).toLocaleString()}) as settled? This will be deducted from the allocated amount.`)) return;
         try {
-            await updateDoc(doc(db, "expenses", exp.id), buildSettlementUpdate(exp.settled, user?.email || "", deleteField()) as any);
+            await updateDoc(doc(db, "expenses", exp.id), buildSettlementUpdate(exp.settled, user?.email || "", deleteField()) as Record<string, unknown>);
         } catch (error) { console.error(error); alert("Failed to update expense."); }
     };
 
@@ -1297,7 +1309,7 @@ export default function EmployeeDashboard() {
                             {/* Recent Activity Feed */}
                             {(() => {
                                 const activities: { icon: string; text: string; time: number }[] = [];
-                                allLedgerEntries.slice(0, 20).forEach(e => activities.push({ icon: "💵", text: `Payment ₹${e.amount} from ${e.tenantName || e.unitNumber || "tenant"}`, time: new Date(e.date || e.createdAt).getTime() }));
+                                allLedgerEntries.slice(0, 20).forEach(e => activities.push({ icon: "💵", text: `Payment ₹${e.amountPaid} from ${e.unitNumber || "tenant"}`, time: new Date(e.createdAt).getTime() }));
                                 resolvedTickets.slice(0, 10).forEach(t => activities.push({ icon: "✅", text: `Task resolved: ${t.unitNumber} - ${(t.description || "").slice(0, 30)}`, time: new Date(t.resolvedAt || t.createdAt).getTime() }));
                                 allExpenses.slice(0, 10).forEach(ex => activities.push({ icon: "🧾", text: `Expense: ${ex.description || ex.category || "item"} ₹${ex.amount}`, time: new Date(ex.date || ex.createdAt).getTime() }));
                                 activities.sort((a, b) => b.time - a.time);
@@ -1457,8 +1469,8 @@ export default function EmployeeDashboard() {
                                 const elecCharge = consumed * effectiveRate;
                                 // Carry-forward from ledger: negative running balance = tenant owes; carryForward > 0 adds to invoice
                                 const runningBalance = allLedgerEntries
-                                    .filter((l: any) => (l.tenantEmail || "") === (unit.tenantEmail || ""))
-                                    .reduce((s: number, l: any) => s + Number(l.balance || 0), 0);
+                                    .filter(l => (l.tenantEmail || "") === (unit.tenantEmail || ""))
+                                    .reduce((s: number, l) => s + Number(l.balance || 0), 0);
                                 const carryForward = computeCarryForward(runningBalance);
                                 const rent = Number(unit.baseRent || 0);
                                 const { total } = composeInvoiceTotal({ baseRent: rent, electricityCharge: elecCharge, carryForward });
@@ -1593,7 +1605,7 @@ export default function EmployeeDashboard() {
                                                                                     {unit.coTenants && unit.coTenants.length > 0 && (
                                                                                         <div className="mt-1 pl-2 border-l-2 border-indigo-200">
                                                                                             <p className="text-[10px] font-bold text-indigo-600 uppercase">Co-tenants ({unit.coTenants.length})</p>
-                                                                                            {unit.coTenants.map((ct: any, i: number) => (
+                                                                                            {unit.coTenants.map((ct, i: number) => (
                                                                                                 <div key={i} className="flex items-center gap-2.5 mt-1">
                                                                                                     <span className="text-[10px] text-gray-600">👤 {ct.name || ct.email || "—"}{ct.phone && !ct.email ? ` · 📞 ${ct.phone}` : ""}{ct.email ? ` · ${ct.email}` : ""}</span>
                                                                                                     <button onClick={() => handleRemoveCoTenant(unit.id, ct)} className="text-[10px] text-red-400 hover:text-red-600 ml-1">✕</button>
@@ -1622,7 +1634,7 @@ export default function EmployeeDashboard() {
                                                                         <div className="mt-2 pt-2 border-t border-gray-100">
                                                                             <p className="text-[10px] font-bold text-gray-500 uppercase mb-1">Documents</p>
                                                                             <div className="space-y-1.5">
-                                                                            {unit.documents.map((d: any, i: number) => (
+                                                                            {unit.documents.map((d, i: number) => (
                                                                                 <a key={i} href={d.url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline block py-0.5">📎 {d.name}</a>
                                                                             ))}
                                                                             </div>
@@ -1632,7 +1644,7 @@ export default function EmployeeDashboard() {
                                                                         <details className="mt-2 pt-2 border-t border-gray-100">
                                                                             <summary className="text-[10px] font-bold text-gray-500 uppercase cursor-pointer hover:text-gray-700">📜 Tenant History ({unit.tenantHistory.length})</summary>
                                                                             <div className="mt-1 space-y-1.5">
-                                                                                {[...unit.tenantHistory].reverse().map((h: any, i: number) => (
+                                                                                {[...unit.tenantHistory].reverse().map((h, i: number) => (
                                                                                     <div key={i} className="bg-gray-50 rounded p-1.5 text-[10px] text-gray-600">
                                                                                         <span className="font-semibold text-gray-800">{h.tenantName || h.tenantEmail || "Unknown"}</span>
                                                                                         {h.tenantPhone && <span> · 📞 {h.tenantPhone}</span>}
@@ -2073,7 +2085,7 @@ export default function EmployeeDashboard() {
                                         <p className="text-xs font-bold text-gray-500 uppercase mb-2">💬 Comments ({ticket.comments?.length || 0})</p>
                                         {ticket.comments && ticket.comments.length > 0 && (
                                             <div className="space-y-2 max-h-40 overflow-y-auto mb-3">
-                                                {ticket.comments.map((c: any, i: number) => (
+                                                {ticket.comments.map((c, i: number) => (
                                                     <div key={i} className="bg-gray-50 border border-gray-100 rounded p-2 text-xs">
                                                         <p className="text-gray-800">{c.text}</p>
                                                         <p className="text-gray-400 mt-0.5">{c.author} · {new Date(c.timestamp).toLocaleString()}</p>
@@ -2239,7 +2251,7 @@ export default function EmployeeDashboard() {
                             <h3 className="text-sm font-bold text-gray-800 mb-2">📄 Documents</h3>
                             {profileUnit.documents && profileUnit.documents.length > 0 ? (
                                 <ul className="space-y-1 max-h-28 overflow-y-auto mb-3">
-                                    {profileUnit.documents.map((d: any, i: number) => (
+                                    {profileUnit.documents.map((d, i: number) => (
                                         <li key={i}><a href={d.url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">📄 {d.name}</a></li>
                                     ))}
                                 </ul>
@@ -2258,7 +2270,7 @@ export default function EmployeeDashboard() {
                             <h3 className="text-sm font-bold text-gray-800 mb-2">📝 Notes</h3>
                             <div className="max-h-32 overflow-y-auto space-y-2 mb-3">
                                 {profileUnit.notes && profileUnit.notes.length > 0 ? (
-                                    profileUnit.notes.map((n: any, i: number) => (
+                                    profileUnit.notes.map((n, i: number) => (
                                         <div key={i} className="bg-yellow-50 border border-yellow-200 rounded p-2 text-xs">
                                             <p className="text-gray-800">{n.text}</p>
                                             <p className="text-gray-400 mt-1">{n.author} • {new Date(n.createdAt).toLocaleDateString()}</p>
@@ -2324,7 +2336,7 @@ export default function EmployeeDashboard() {
                                                 </div>
                                                 <div className="text-right shrink-0">
                                                     <p className="font-bold text-green-700 text-base">₹{Number(inv.totalAmount || 0).toLocaleString()}</p>
-                                                    {(inv.baseRent > 0 || inv.electricityCharge > 0) && (
+                                                    {(inv.baseRent > 0 || (inv.electricityCharge || 0) > 0) && (
                                                         <p className="text-[10px] text-gray-500 mt-0.5">Rent ₹{Number(inv.baseRent || 0).toLocaleString()} · Elec ₹{Number(inv.electricityCharge || 0).toLocaleString()}</p>
                                                     )}
                                                 </div>
@@ -2436,7 +2448,7 @@ export default function EmployeeDashboard() {
                         {coTenantUnit.coTenants && coTenantUnit.coTenants.length > 0 && (
                             <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3">
                                 <p className="text-[10px] font-bold text-indigo-600 uppercase mb-1">Current Co-tenants</p>
-                                {coTenantUnit.coTenants.map((ct: any, i: number) => (
+                                {coTenantUnit.coTenants.map((ct, i: number) => (
                                     <p key={i} className="text-xs text-gray-700">• {ct.name || ct.email} {ct.phone ? `(${ct.phone})` : ""}</p>
                                 ))}
                             </div>

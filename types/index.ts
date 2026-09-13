@@ -30,6 +30,8 @@ export interface Unit {
     emergencyContact?: string;
     leaseStart?: string;
     leaseEnd?: string;
+    /** Per-unit electricity rate override (₹/unit); falls back to global default when unset. */
+    electricityRate?: number;
 }
 
 export interface CoTenant {
@@ -88,6 +90,7 @@ export interface Invoice {
     amountPaid?: number;
     paidAt?: string;
     paymentScreenshotUrl?: string;
+    paymentNote?: string;
     createdAt: string;
 }
 
@@ -103,6 +106,9 @@ export interface MaintenanceTicket {
     status: "pending" | "in-progress" | "resolved";
     photoUrl?: string;
     resolutionPhotoUrl?: string;
+    resolutionNote?: string;
+    resolvedAt?: string;
+    resolvedBy?: string;
     comments: TicketComment[];
     createdAt: string;
 }
@@ -183,6 +189,12 @@ export interface Expense {
     settled?: boolean;
     settledAt?: string;
     settledBy?: string;
+    deleted?: boolean;
+    deletedAt?: string;
+    deletedBy?: string;
+    /** When an admin logs an expense, it's mirrored to dailyLedger and this
+     * field cross-links the two documents so soft-delete can cascade. */
+    dailyLedgerId?: string;
 }
 
 export interface Allocation {
