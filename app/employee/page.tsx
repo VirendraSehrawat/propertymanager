@@ -12,6 +12,7 @@ import { collection, onSnapshot, doc, updateDoc, arrayUnion, query, where, write
 import { useUploadWithProgress, UploadProgressBar } from "@/lib/useUpload";
 import { calculateFundSummary, filterExpenses, buildSettlementUpdate } from "@/lib/expenses";
 import { computeRentPeriod, computeElectricityPeriod } from "@/lib/billingPeriods";
+import { computeCarryForward, composeInvoiceTotal } from "@/lib/allocation";
 import { CollectionsTab, OccupancyTab, LedgerTab, InventoryTab, TicketsTab, DailyLedgerTab, MonthlyOverviewTab } from "@/components/employee";
 import { TabButton } from "@/components/ui";
 
@@ -348,9 +349,9 @@ export default function EmployeeDashboard() {
             // Fetch tenant ledger balance (carry-forward)
             const ledgerSnap = await getDocs(query(collection(db, "ledger"), where("tenantEmail", "==", unit.tenantEmail)));
             const runningBalance = ledgerSnap.docs.reduce((sum, d) => sum + Number(d.data().balance || 0), 0);
-            const carryForward = -runningBalance;
-            const baseTotal = Number(unit.baseRent || 0) + electricityCharge;
-            const totalAmount = Math.max(0, baseTotal + carryForward);
+            const carryForward = computeCarryForward(runningBalance);
+            const baseRent = Number(unit.baseRent || 0);
+            const { total: totalAmount } = composeInvoiceTotal({ baseRent, electricityCharge, carryForward });
 
             const batch = writeBatch(db);
 
@@ -1635,9 +1636,9 @@ export default function EmployeeDashboard() {
                                 const runningBalance = allLedgerEntries
                                     .filter((l: any) => (l.tenantEmail || "") === (unit.tenantEmail || ""))
                                     .reduce((s: number, l: any) => s + Number(l.balance || 0), 0);
-                                const carryForward = -runningBalance;
+                                const carryForward = computeCarryForward(runningBalance);
                                 const rent = Number(unit.baseRent || 0);
-                                const total = Math.max(0, rent + elecCharge + carryForward);
+                                const { total } = composeInvoiceTotal({ baseRent: rent, electricityCharge: elecCharge, carryForward });
                                 return (
                                     <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 space-y-2 text-sm">
                                         <p className="font-bold text-gray-800 text-base">Invoice Preview</p>

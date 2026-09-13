@@ -6,6 +6,11 @@ import { doc, updateDoc, addDoc, getDocs, collection, query, where, deleteField 
 import { db } from "@/lib/firebase";
 import type { Invoice, Unit } from "@/types";
 import { buildTransactionId, type PaymentMode } from "@/lib/payments";
+import {
+    allocatePartialPayment,
+    composeInvoiceTotal,
+    computeCarryForward,
+} from "@/lib/allocation";
 
 interface CollectionsTabProps {
     allInvoices: Invoice[];
@@ -101,21 +106,25 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
         e.preventDefault();
         if (!settleInvoice) return;
         const inv = settleInvoice;
-        const total = Number(inv.totalAmount || 0);
-        const prevPaid = Number(inv.amountPaid || 0);
-        const remaining = Math.max(0, total - prevPaid);
-        const received = settleKind === "full" ? remaining : Math.round(Number(settleReceived) || 0);
+        const receivedInput = settleKind === "full"
+            ? Math.max(0, Number(inv.totalAmount || 0) - Number(inv.amountPaid || 0))
+            : Math.round(Number(settleReceived) || 0);
+        const alloc = allocatePartialPayment(receivedInput, {
+            totalAmount: Number(inv.totalAmount || 0),
+            amountPaid: Number(inv.amountPaid || 0),
+            baseRent: Number(inv.baseRent || 0),
+            electricityCharge: Number(inv.electricityCharge || 0),
+        });
+        const received = receivedInput; // for user-facing checks
         if (received <= 0) { alert("Enter an amount greater than zero."); return; }
-        if (received > remaining) { alert(`Amount received (₹${received}) exceeds remaining balance (₹${remaining}).`); return; }
-        const newAmountPaid = prevPaid + received;
-        const fullyPaid = newAmountPaid >= total - 0.5; // tolerate rounding
+        if (received > alloc.remaining) { alert(`Amount received (₹${received}) exceeds remaining balance (₹${alloc.remaining}).`); return; }
         setIsSettling(inv.id);
         try {
             const txnId = buildTransactionId(settleMode, settleReference);
             await updateDoc(doc(db, "invoices", inv.id), {
-                amountPaid: newAmountPaid,
-                status: fullyPaid ? "paid" : "pending",
-                ...(fullyPaid ? { paidAt: new Date().toISOString() } : {}),
+                amountPaid: alloc.newAmountPaid,
+                status: alloc.status,
+                ...(alloc.fullyPaid ? { paidAt: new Date().toISOString() } : {}),
                 transactionId: txnId,
                 ...(settleNote.trim() ? { paymentNote: settleNote.trim() } : {}),
             });
@@ -125,14 +134,14 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                 unitNumber: inv.unitNumber,
                 invoiceId: inv.id,
                 billingPeriod: inv.billingPeriod || "Ad-Hoc",
-                invoiceAmount: total,
+                invoiceAmount: Number(inv.totalAmount || 0),
                 amountPaid: received,           // this transaction only
-                balance: received - remaining,  // 0 if fully paid, negative if partial
+                balance: received - alloc.remaining,  // 0 if fully paid, negative if partial
                 transactionId: txnId,
                 paymentMode: settleMode,
                 paymentReference: settleReference.trim() || null,
                 paymentNote: settleNote.trim() || null,
-                type: fullyPaid ? "payment" : "partial-payment",
+                type: alloc.fullyPaid ? "payment" : "partial-payment",
                 settledBy: "employee",
                 createdAt: new Date().toISOString(),
             });
@@ -170,8 +179,8 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
 
             const ledgerSnap = await getDocs(query(collection(db, "ledger"), where("tenantEmail", "==", editInvoice.tenantEmail)));
             const runningBalance = ledgerSnap.docs.reduce((sum: number, d: any) => sum + Number(d.data().balance || 0), 0);
-            const carryForward = -runningBalance;
-            const totalAmount = Math.max(0, baseRent + electricityCharge + carryForward);
+            const carryForward = computeCarryForward(runningBalance);
+            const { total: totalAmount } = composeInvoiceTotal({ baseRent, electricityCharge, carryForward });
 
             await updateDoc(doc(db, "invoices", editInvoice.id), {
                 baseRent,
@@ -444,15 +453,14 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                 const remaining = Math.max(0, total - prevPaid);
                 const received = settleKind === "full" ? remaining : Math.round(Number(settleReceived) || 0);
                 const receivedValid = received > 0 && received <= remaining;
-                // rent-first allocation preview
-                const rent = Number(settleInvoice.baseRent || 0);
-                const elec = Number(settleInvoice.electricityCharge || 0);
-                const prevRent = Math.min(prevPaid, rent);
-                const prevElec = Math.max(0, prevPaid - rent);
-                const rentDue = Math.max(0, rent - prevRent);
-                const elecDue = Math.max(0, elec - prevElec);
-                const towardRent = Math.min(received, rentDue);
-                const towardElec = Math.min(Math.max(0, received - rentDue), elecDue);
+                // rent-first allocation preview (shared helper)
+                const preview = allocatePartialPayment(received, {
+                    totalAmount: total,
+                    amountPaid: prevPaid,
+                    baseRent: Number(settleInvoice.baseRent || 0),
+                    electricityCharge: Number(settleInvoice.electricityCharge || 0),
+                });
+                const { rentDueBefore: rentDue, elecDueBefore: elecDue, towardRent, towardElectricity: towardElec } = preview;
                 return (
                 <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setSettleInvoice(null)}>
                     <div className="bg-white p-6 rounded-xl shadow-xl max-w-md w-full space-y-4" onClick={(e) => e.stopPropagation()}>

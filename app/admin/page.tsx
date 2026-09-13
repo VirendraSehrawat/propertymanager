@@ -8,6 +8,7 @@ import { signOut } from "firebase/auth";
 import { collection, addDoc, onSnapshot, query, orderBy, where, doc, updateDoc, setDoc, getDocs, writeBatch, deleteDoc, getDoc, deleteField } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
 import { useUploadWithProgress, UploadProgressBar } from "@/lib/useUpload";
+import { collectedSplit } from "@/lib/allocation";
 import { DailyLedgerTab } from "@/components/employee";
 
 interface Building {
@@ -827,12 +828,14 @@ export default function AdminDashboard() {
                         const rent = Number(inv.baseRent || 0);
                         const elec = Number(inv.electricityCharge || 0);
                         r.invRent += rent; r.invElec += elec; r.invCount++;
-                        // Split amountPaid rent-first so partial payments show up correctly
-                        const paidTotal = inv.status === "paid"
-                            ? (Number(inv.amountPaid || 0) || rent + elec)
-                            : Number(inv.amountPaid || 0);
-                        const paidR = Math.min(paidTotal, rent);
-                        const paidE = Math.min(Math.max(0, paidTotal - rent), elec);
+                        // Shared rent-first split (heals legacy paid invoices with missing amountPaid)
+                        const { collectedRent: paidR, collectedElectricity: paidE } = collectedSplit({
+                            status: inv.status,
+                            amountPaid: inv.amountPaid,
+                            baseRent: rent,
+                            electricityCharge: elec,
+                            totalAmount: Number(inv.totalAmount || 0) || rent + elec,
+                        });
                         r.paidRent += paidR; r.paidElec += paidE;
                         r.pendRent += Math.max(0, rent - paidR);
                         r.pendElec += Math.max(0, elec - paidE);
