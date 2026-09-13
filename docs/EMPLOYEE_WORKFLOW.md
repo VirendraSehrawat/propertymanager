@@ -131,6 +131,102 @@ Employee uses this to reconcile cash at end of day/month.
 
 ## 4. Related Workflows the Employee May Do
 
+### Collecting rent — full, partial, and multi-day payments
+
+The **Collections** tab is where the employee records money handed over by tenants.
+It supports the common real-world case where a tenant pays the same month's rent
+in **multiple instalments on different days** (e.g. ₹3,000 on the 5th by UPI, then
+₹1,500 on the 12th in cash, then the balance on the 20th).
+
+#### A. Opening the Collections tab
+
+1. Employee taps **Collections**.
+2. Each pending invoice shows a card with unit, tenant, month, total due, and one
+   of two action buttons on the right:
+   - 🟢 **✓ Settle** — invoice has zero payments so far.
+   - 🟠 **➕ Add Payment** — invoice already has one or more partial payments
+     against it. The amber colour is the visual cue: *"this is a follow-up
+     payment, not a fresh one."*
+3. A **PARTIAL** badge on the card confirms the invoice has been part-paid.
+
+#### B. Recording a full payment (single-shot case)
+
+1. Tap 🟢 **✓ Settle** on the invoice.
+2. The **Record Payment** modal opens with **Full ₹`<remaining>`** pre-selected.
+3. Pick payment mode (Cash / UPI / Bank).
+4. Enter reference (UPI txn id / bank ref) if applicable, and an optional note.
+5. Tap **Confirm**.
+
+Result:
+- Invoice `status` → `paid`, `amountPaid` = `totalAmount`, `paidAt` = now.
+- One row added to `ledger` with `type: "payment"`, cross-linked via `invoiceId`.
+
+#### C. Recording the *first* partial payment
+
+Use this when the tenant hands over less than the full due.
+
+1. Tap 🟢 **✓ Settle**.
+2. In the modal, tap **Partial…** (or just start typing — the field is pre-filled
+   with the full due; overwrite it with the smaller amount received).
+3. Enter mode + reference + note.
+4. Tap **Confirm**.
+
+Result:
+- Invoice stays in the pending list with `status: "partial"`, `amountPaid` set to
+  the received amount, and a **PARTIAL** badge shown on the card.
+- One row added to `ledger` with `type: "partial-payment"`.
+- The Settle button on the card flips to 🟠 **➕ Add Payment** for the next visit.
+
+#### D. Recording a *follow-up* partial payment (same invoice, different day)
+
+This is the multi-day scenario. Nothing new to create — you keep hitting the
+same invoice.
+
+1. Find the invoice in the Collections list — it shows the amber **➕ Add
+   Payment** button and a **PARTIAL** badge.
+2. Tap 🟠 **➕ Add Payment**.
+3. The modal opens with:
+   - **Partial** mode **auto-selected** (no need to tap it again).
+   - A **Prior payments on this invoice** strip listing every earlier
+     instalment with date, mode, reference, and amount — so you can verify
+     what has already been collected before typing the new amount:
+     ```
+     Prior payments on this invoice
+     5 Sep · UPI · TXN-2341        ₹3,000
+     12 Sep · CASH                 ₹1,500
+     ```
+   - A summary line showing `Invoice ₹X · Paid ₹Y · Due ₹Z`.
+4. Enter the new amount received (e.g. `1700` for the remaining balance),
+   mode, reference, note.
+5. Tap **Confirm**.
+
+Result:
+- `amountPaid` is **added to** (not overwritten by) the previous total — the
+  math is handled by `allocatePartialPayment` in `lib/allocation.ts`, which
+  reads the invoice's current `amountPaid` and adds the new receipt.
+- If the new total covers `totalAmount`, the invoice flips to `status: "paid"`
+  and moves out of the pending list.
+- Otherwise it stays as `partial` and the card is still available for the next
+  visit — repeat this step as many times as needed.
+- Each instalment creates its own `ledger` row, so the daily ledger and
+  Ledger tab correctly reflect the day the cash actually came in — not the
+  day the invoice was raised or the day it was finally settled.
+
+#### E. Tips
+
+- **Keep the amount honest.** Enter exactly what the tenant handed over on that
+  day. Do not "round up" to close the invoice — the app will happily accept
+  a third or fourth partial payment.
+- **Reference field.** For UPI/bank, paste the txn id every time. It shows up
+  in the *Prior payments* strip on the next visit, which is invaluable for
+  reconciling with the bank statement.
+- **Auto-settle from Daily Ledger.** If you enter a Deposit on the **📓 Daily**
+  tab that matches a unit's outstanding invoice, the app will auto-settle it
+  and write the same `ledger` row automatically — the Collections tab and the
+  Daily tab are two doors into the same underlying logic.
+
+---
+
 ### Monthly meter reading (once a month per unit)
 
 1. Employee opens **Meter** tab.
