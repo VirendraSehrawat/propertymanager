@@ -31,15 +31,20 @@ work. Each section lists concrete follow-ups in priority order.
 
 **Pure-function tests: 22 → 51 (all green).**
 
-### Still pending
-- [ ] Wire `allocatePartialPayment` into `components/employee/CollectionsTab.tsx`
-      (currently duplicates the math in `handleConfirmSettle` and the modal
-      preview IIFE).
-- [ ] Wire `collectedSplit` into `app/employee/page.tsx` Home tab tiles and
-      `app/admin/page.tsx` Per-Building Collections table.
-- [ ] Wire `computeCarryForward` + `composeInvoiceTotal` into the meter
-      preview (~line 1626) and `handleGenerateMeterInvoice` (~line 350) in
+### Wired into the UI (pass 2)
+
+- [x] `allocatePartialPayment` used by `CollectionsTab.tsx` in both
+      `handleConfirmSettle` and the settle-modal preview IIFE.
+- [x] `computeCarryForward` + `composeInvoiceTotal` used by `handleSaveInvoice`
+      (invoice edit) in `CollectionsTab.tsx`.
+- [x] `computeCarryForward` + `composeInvoiceTotal` used by both
+      `handleGenerateMeterInvoice` and the meter-tab live preview in
       `app/employee/page.tsx`.
+- [x] `collectedSplit` used by the Per-Building Collections table row
+      aggregation in `app/admin/page.tsx`.
+
+### Still pending
+
 - [ ] Add integration test for the lump-sum flow through the Daily Ledger
       inflow (once we teach that flow to iterate — currently manual per
       MANAGER_ACTIONS Section 6).
@@ -59,12 +64,10 @@ The `any` in `app/tenant/page.tsx` / `app/admin/page.tsx` / `app/employee/page.t
 is almost entirely **Firestore snapshot casting**, not missing types.
 
 ### Plan
-1. Add `lib/firestore.ts` helper:
-   ```ts
-   export function mapDoc<T>(snap: QueryDocumentSnapshot): T & {id: string} {
-     return { id: snap.id, ...(snap.data() as T) };
-   }
-   ```
+
+1. Add `lib/firestore.ts` helper: **✅ done** — exports `mapDoc<T>()` and
+   `mapSnapshot<T>()` that centralize the single unavoidable `any` cast
+   coming out of Firestore's `snap.data()`.
 2. In each page, replace patterns like
    ```ts
    const rows = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
@@ -88,8 +91,8 @@ Estimated churn: ~30 replacements per page, mechanical.
 ### Current sizes
 | File | Lines | Notes |
 |------|------:|-------|
-| `app/employee/page.tsx` | ~2,874 | 6 tabs, 3 modals, all fetching in one `useEffect` |
-| `app/admin/page.tsx`    | ~1,483 | KPIs + per-building tables + expense flow |
+| `app/employee/page.tsx` | ~2,717 | 6 tabs, 3 modals, all fetching in one `useEffect` (was 2,895 before `MonthCollectionsCard` extraction) |
+| `app/admin/page.tsx`    | ~1,539 | KPIs + per-building tables + expense flow |
 | `app/tenant/page.tsx`   | ~450   | ok for now |
 
 ### Target module layout
@@ -121,8 +124,13 @@ components/admin/
 ```
 
 ### Ordering
+
 1. **Extract `MonthCollectionsCard`** first (proof of pattern, no state
-   escapes — pure prop-in card).
+   escapes — pure prop-in card). **✅ done** —
+   `components/employee/MonthCollectionsCard.tsx` (~362 lines).
+   `app/employee/page.tsx` shrank by 178 lines. Uses `collectedSplit`
+   internally, so the Home tab card and the Admin Per-Building table now
+   share identical rent-first math.
 2. Extract the three modals next (they own local form state, so they
    isolate cleanly).
 3. Extract per-tab bodies. Do them one at a time and deploy between each so
