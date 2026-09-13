@@ -4,7 +4,7 @@
 import { useState } from "react";
 import { doc, updateDoc, addDoc, getDocs, collection, query, where, deleteField } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import type { Invoice, Unit } from "@/types";
+import type { Invoice, LedgerEntry, Unit } from "@/types";
 import { buildTransactionId, type PaymentMode } from "@/lib/payments";
 import {
     allocatePartialPayment,
@@ -17,9 +17,11 @@ interface CollectionsTabProps {
     occupiedUnits: Unit[];
     electricityRate: number;
     openTenantProfile: (unit: Unit) => void;
+    /** All ledger entries — used to show payment history for a partial invoice inside the settle modal. */
+    allLedgerEntries?: LedgerEntry[];
 }
 
-export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, openTenantProfile }: CollectionsTabProps) {
+export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, openTenantProfile, allLedgerEntries = [] }: CollectionsTabProps) {
     // Default: current month label like "September 2026" (matches Invoice.billingPeriod format)
     const currentMonthLabel = new Date().toLocaleString("default", { month: "long", year: "numeric" });
     const [collectionFilter, setCollectionFilter] = useState<string>(currentMonthLabel);
@@ -97,8 +99,11 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
         setSettleMode("cash");
         setSettleReference("");
         setSettleNote("");
-        setSettleKind("full");
         const remaining = Math.max(0, Number(inv.totalAmount || 0) - Number(inv.amountPaid || 0));
+        const prevPaid = Number(inv.amountPaid || 0);
+        // If we already collected something, this is a follow-up payment — default to partial mode
+        // so the amount input is editable up front. Otherwise stay on Full for the fast happy path.
+        setSettleKind(prevPaid > 0 ? "partial" : "full");
         setSettleReceived(String(remaining));
     };
 
@@ -269,11 +274,11 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                                             </div>
                                             <p className="text-xs text-gray-500">{inv.tenantEmail}</p>
                                             <p className={`text-xs font-medium mt-0.5 ${overdue ? "text-red-600" : "text-indigo-600"}`}>{inv.billingPeriod}</p>
-                                            {((inv as any).rentPeriod || (inv as any).electricityPeriod) && (
+                                            {(inv.rentPeriod || inv.electricityPeriod) && (
                                                 <p className="text-[10px] text-gray-500 mt-0.5">
-                                                    {(inv as any).rentPeriod && <>🏠 <span className="font-medium">{(inv as any).rentPeriod}</span></>}
-                                                    {(inv as any).rentPeriod && (inv as any).electricityPeriod && " · "}
-                                                    {(inv as any).electricityPeriod && <>⚡ <span className="font-medium">{(inv as any).electricityPeriod}</span></>}
+                                                    {inv.rentPeriod && <>🏠 <span className="font-medium">{inv.rentPeriod}</span></>}
+                                                    {inv.rentPeriod && inv.electricityPeriod && " · "}
+                                                    {inv.electricityPeriod && <>⚡ <span className="font-medium">{inv.electricityPeriod}</span></>}
                                                 </p>
                                             )}
                                             <button onClick={() => { const unit = occupiedUnits.find(u => u.id === inv.unitId); if (unit) openTenantProfile(unit); }} className="text-[10px] text-indigo-600 hover:underline mt-1">View Profile {"\u2192"}</button>
@@ -289,8 +294,8 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                                             </div>
                                             <div className="flex gap-1.5">
                                                 <button onClick={() => openEditInvoice(inv)} className="text-xs px-3 py-1.5 bg-blue-600 text-white rounded-md font-bold hover:bg-blue-700 transition">{"\u270F\uFE0F"} Edit</button>
-                                                <button onClick={() => openSettleModal(inv)} disabled={isSettling === inv.id} className="text-xs px-3 py-1.5 bg-green-600 text-white rounded-md font-bold hover:bg-green-700 disabled:bg-green-400 transition">
-                                                    {isSettling === inv.id ? "..." : "\u2713 Settle"}
+                                                <button onClick={() => openSettleModal(inv)} disabled={isSettling === inv.id} className={`text-xs px-3 py-1.5 rounded-md font-bold transition text-white disabled:opacity-60 ${isPartial ? "bg-amber-600 hover:bg-amber-700" : "bg-green-600 hover:bg-green-700"}`}>
+                                                    {isSettling === inv.id ? "..." : isPartial ? "\u2795 Add Payment" : "\u2713 Settle"}
                                                 </button>
                                             </div>
                                         </div>
@@ -472,6 +477,28 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                                 {prevPaid > 0 && <span className="text-amber-700 font-medium">Paid ₹{prevPaid.toLocaleString()}</span>}
                                 <span className="text-red-700 font-bold">Due ₹{remaining.toLocaleString()}</span>
                             </div>
+                            {(() => {
+                                const priorPayments = allLedgerEntries
+                                    .filter((l) => l.invoiceId === settleInvoice.id)
+                                    .sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")));
+                                if (priorPayments.length === 0) return null;
+                                return (
+                                    <div className="mt-2 bg-amber-50 border border-amber-200 rounded-md p-2 space-y-1">
+                                        <p className="text-[10px] font-bold text-amber-800 uppercase tracking-wide">Prior payments on this invoice</p>
+                                        {priorPayments.map((p) => (
+                                            <div key={p.id} className="flex justify-between items-center text-[11px]">
+                                                <span className="text-gray-700">
+                                                    {p.createdAt ? new Date(p.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : "\u2014"}
+                                                    {" \u00b7 "}
+                                                    <span className="uppercase font-mono">{p.paymentMode || "cash"}</span>
+                                                    {p.paymentReference ? ` \u00b7 ${p.paymentReference}` : ""}
+                                                </span>
+                                                <span className="font-bold text-amber-800">₹{Number(p.amountPaid || 0).toLocaleString()}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                );
+                            })()}
                         </div>
                         <form onSubmit={handleConfirmSettle} className="space-y-3">
                             <div>

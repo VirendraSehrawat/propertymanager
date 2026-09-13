@@ -1339,7 +1339,7 @@ export default function EmployeeDashboard() {
 
                 {/* COLLECTIONS TAB */}
                 {activeTab === "collections" && (
-                    <CollectionsTab allInvoices={allInvoices} occupiedUnits={occupiedUnits} electricityRate={electricityRate} openTenantProfile={openTenantProfile} />
+                    <CollectionsTab allInvoices={allInvoices} occupiedUnits={occupiedUnits} electricityRate={electricityRate} openTenantProfile={openTenantProfile} allLedgerEntries={allLedgerEntries} />
                 )}
 
                 {/* METER READING TAB */}
