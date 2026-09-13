@@ -12,7 +12,7 @@ import { collection, onSnapshot, doc, updateDoc, arrayUnion, query, where, write
 import { useUploadWithProgress, UploadProgressBar } from "@/lib/useUpload";
 import { calculateFundSummary, filterExpenses, buildSettlementUpdate } from "@/lib/expenses";
 import { computeRentPeriod, computeElectricityPeriod } from "@/lib/billingPeriods";
-import { CollectionsTab, OccupancyTab, LedgerTab, ExpensesTab, InventoryTab, TicketsTab, DailyLedgerTab, MonthlyOverviewTab } from "@/components/employee";
+import { CollectionsTab, OccupancyTab, LedgerTab, InventoryTab, TicketsTab, DailyLedgerTab, MonthlyOverviewTab } from "@/components/employee";
 import { TabButton } from "@/components/ui";
 
 export default function EmployeeDashboard() {

@@ -369,7 +369,60 @@ export default function AdminDashboard() {
     const handleDeleteNotice = async (id: string) => { if (window.confirm("Remove this announcement from tenant boards?")) { await deleteDoc(doc(db, "announcements", id)); } };
     const handleSaveSettings = async (e: React.FormEvent) => { e.preventDefault(); setIsSubmittingSettings(true); try { await setDoc(doc(db, "settings", "payment"), { upiId, payeeName }, { merge: true }); alert("Payment settings updated successfully!"); } catch (error) { console.error(error); alert("Failed to save settings."); } finally { setIsSubmittingSettings(false); } };
     const handleCreateCustomInvoice = async (e: React.FormEvent) => { e.preventDefault(); if (!customInvUnit || !customInvAmount || !customInvTitle) return; setIsSubmittingCustomInv(true); try { const selectedUnit = occupiedUnits.find(u => u.id === customInvUnit); if (!selectedUnit) return; await addDoc(collection(db, "invoices"), { unitId: selectedUnit.id, unitNumber: selectedUnit.unitNumber, tenantEmail: selectedUnit.tenantEmail, totalAmount: Number(customInvAmount), billingPeriod: customInvTitle, isCustom: true, status: "unpaid", transactionId: "", createdAt: new Date().toISOString() }); setIsCustomInvModalOpen(false); setCustomInvUnit(""); setCustomInvAmount(""); setCustomInvTitle(""); } catch (error) { console.error(error); alert("Failed to create invoice."); } finally { setIsSubmittingCustomInv(false); } };
-    const handleAddExpense = async (e: React.FormEvent) => { e.preventDefault(); if (!expenseAmount || !expenseDesc) return; setIsSubmittingExpense(true); try { await addDoc(collection(db, "expenses"), { amount: Number(expenseAmount), category: expenseCategory, description: expenseDesc, date: expenseDate || new Date().toISOString().split('T')[0], createdAt: new Date().toISOString() }); setIsExpenseModalOpen(false); setExpenseAmount(""); setExpenseDesc(""); setExpenseCategory("Maintenance"); setExpenseDate(""); } catch (error) { console.error(error); } finally { setIsSubmittingExpense(false); } };
+    const handleAddExpense = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!expenseAmount || !expenseDesc) return;
+        setIsSubmittingExpense(true);
+        try {
+            const amt = Number(expenseAmount);
+            const dateStr = expenseDate || new Date().toISOString().split('T')[0];
+            const nowIso = new Date().toISOString();
+            // 1) Write the expense first
+            const expenseRef = await addDoc(collection(db, "expenses"), {
+                amount: amt,
+                category: expenseCategory,
+                description: expenseDesc,
+                date: dateStr,
+                buildingId: "",
+                buildingName: "General",
+                createdBy: user?.email || "admin",
+                createdAt: nowIso,
+            });
+            // 2) Mirror to dailyLedger as an outflow so admin's Daily Transactions
+            // by Building and the employee Daily Ledger tab stay in sync.
+            // Cross-link with expenseId ↔ dailyLedgerId so soft-delete cascades.
+            try {
+                const ledgerRef = await addDoc(collection(db, "dailyLedger"), {
+                    direction: "outflow",
+                    category: (expenseCategory || "other").toLowerCase(),
+                    date: dateStr,
+                    buildingId: "",
+                    buildingName: "General",
+                    unitId: "",
+                    unitNumber: "",
+                    tenantName: "",
+                    amount: amt,
+                    description: expenseDesc,
+                    expenseId: expenseRef.id,
+                    source: "admin-expense",
+                    createdBy: user?.email || "admin",
+                    createdAt: nowIso,
+                });
+                await updateDoc(doc(db, "expenses", expenseRef.id), { dailyLedgerId: ledgerRef.id, source: "admin-expense" });
+            } catch (mirrorErr) {
+                console.warn("Daily-ledger mirror write failed", mirrorErr);
+            }
+            setIsExpenseModalOpen(false);
+            setExpenseAmount("");
+            setExpenseDesc("");
+            setExpenseCategory("Maintenance");
+            setExpenseDate("");
+        } catch (error) {
+            console.error(error);
+        } finally {
+            setIsSubmittingExpense(false);
+        }
+    };
     const handleDeleteExpense = async (id: string) => { if (window.confirm("Delete this expense record?")) { await deleteDoc(doc(db, "expenses", id)); } };
     const handleUpdateLease = async (e: React.FormEvent) => { e.preventDefault(); if (!selectedUnitForLease) return; setIsUpdatingLease(true); try { await updateDoc(doc(db, "units", selectedUnitForLease.id), { tenantPhone, emergencyContact, leaseStart, leaseEnd }); setIsLeaseModalOpen(false); } catch (error) { console.error(error); } finally { setIsUpdatingLease(false); } };
     const getLeaseStatus = (endDate?: string) => { if (!endDate) return { label: "Setup Lease", color: "bg-gray-100 text-gray-600" }; const daysLeft = Math.ceil((new Date(endDate).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24)); if (daysLeft < 0) return { label: "Expired", color: "bg-red-100 text-red-800" }; if (daysLeft <= 60) return { label: `Expires in ${daysLeft} days`, color: "bg-orange-100 text-orange-800" }; return { label: "Active", color: "bg-green-100 text-green-800" }; };
