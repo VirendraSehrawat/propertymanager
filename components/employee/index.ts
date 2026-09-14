@@ -6,5 +6,6 @@ export { MonthlyOverviewTab } from "./MonthlyOverviewTab";
 export { InventoryTab } from "./InventoryTab";
 export { TicketsTab } from "./TicketsTab";
 export { MeterTab } from "./MeterTab";
+export { ExpensesTab } from "./ExpensesTab";
 export { MonthCollectionsCard } from "./MonthCollectionsCard";
 export { SettlePaymentModal } from "./modals/SettlePaymentModal";
