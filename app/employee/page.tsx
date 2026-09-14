@@ -19,9 +19,10 @@ import type {
     Invoice,
     LedgerEntry,
     MaintenanceTicket,
+    MasterInvoice,
     Unit,
 } from "@/types";
-import { CollectionsTab, OccupancyTab, LedgerTab, TicketsTab, MeterTab, ExpensesTab, InventoryTab, DailyLedgerTab, MonthlyOverviewTab, MonthCollectionsCard, HomeTab } from "@/components/employee";
+import { CollectionsTab, OccupancyTab, LedgerTab, TicketsTab, MeterTab, ExpensesTab, InventoryTab, DailyLedgerTab, MonthlyOverviewTab, HomeTab } from "@/components/employee";
 import { TabButton } from "@/components/ui";
 
 export default function EmployeeDashboard() {
@@ -59,6 +60,9 @@ export default function EmployeeDashboard() {
 
     // Ledger state
     const [allLedgerEntries, setAllLedgerEntries] = useState<LedgerEntry[]>([]);
+
+    // Master invoices (corporate billing wrappers)
+    const [masterInvoices, setMasterInvoices] = useState<MasterInvoice[]>([]);
 
     // Unit Management States
     const [allUnits, setAllUnits] = useState<Unit[]>([]);
@@ -160,6 +164,10 @@ export default function EmployeeDashboard() {
             setAllInvoices(mapSnapshot<Invoice>(snapshot));
         });
 
+        const unsubMasterInvoices = onSnapshot(collection(db, "masterInvoices"), (snapshot) => {
+            setMasterInvoices(mapSnapshot<MasterInvoice>(snapshot));
+        });
+
         const unsubLedger = onSnapshot(collection(db, "ledger"), (snapshot) => {
             setAllLedgerEntries(mapSnapshot<LedgerEntry>(snapshot).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
         });
@@ -192,7 +200,7 @@ export default function EmployeeDashboard() {
             setDailyLedgerEntries(mapSnapshot<DailyLedgerEntry>(snapshot).filter(e => !e.deleted).sort((a, b) => (b.date || "").localeCompare(a.date || "")));
         });
 
-        return () => { unsubTickets(); unsubUnits(); unsubInvoices(); unsubLedger(); unsubAllUnits(); unsubBuildings(); unsubChecklists(); unsubExpenses(); unsubInventory(); unsubAllocations(); unsubDailyLedger(); };
+        return () => { unsubTickets(); unsubUnits(); unsubInvoices(); unsubMasterInvoices(); unsubLedger(); unsubAllUnits(); unsubBuildings(); unsubChecklists(); unsubExpenses(); unsubInventory(); unsubAllocations(); unsubDailyLedger(); };
     }, [role]);
 
     const handleLogout = async () => {
@@ -654,7 +662,7 @@ export default function EmployeeDashboard() {
 
                 {/* COLLECTIONS TAB */}
                 {activeTab === "collections" && (
-                    <CollectionsTab allInvoices={allInvoices} occupiedUnits={occupiedUnits} electricityRate={electricityRate} openTenantProfile={openTenantProfile} allLedgerEntries={allLedgerEntries} />
+                    <CollectionsTab allInvoices={allInvoices} occupiedUnits={occupiedUnits} electricityRate={electricityRate} openTenantProfile={openTenantProfile} allLedgerEntries={allLedgerEntries} masterInvoices={masterInvoices} userEmail={user?.email || "employee"} />
                 )}
 
                 {/* METER READING TAB */}

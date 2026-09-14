@@ -2,16 +2,18 @@
 "use client";
 
 import { useState } from "react";
-import { doc, updateDoc, addDoc, getDocs, collection, query, where, deleteField } from "firebase/firestore";
+import { doc, updateDoc, addDoc, getDocs, collection, query, where, deleteField, writeBatch } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import type { Invoice, LedgerEntry, Unit } from "@/types";
+import type { Invoice, LedgerEntry, MasterInvoice, Unit } from "@/types";
 import { buildTransactionId } from "@/lib/payments";
 import {
     allocatePartialPayment,
     composeInvoiceTotal,
     computeCarryForward,
 } from "@/lib/allocation";
+import { allocateMasterPayment } from "@/lib/masterAllocation";
 import { SettlePaymentModal, type SettlePaymentSubmit } from "./modals/SettlePaymentModal";
+import { SettleMasterInvoiceModal, type SettleMasterSubmit } from "./modals/SettleMasterInvoiceModal";
 
 interface CollectionsTabProps {
     allInvoices: Invoice[];
@@ -20,9 +22,15 @@ interface CollectionsTabProps {
     openTenantProfile: (unit: Unit) => void;
     /** All ledger entries — used to show payment history for a partial invoice inside the settle modal. */
     allLedgerEntries?: LedgerEntry[];
+    /** All master invoices — corporate billing wrappers. When present, grouped
+     *  children are hidden from the per-unit list and shown as one row per
+     *  master. See `docs/CORPORATE_TENANT_BILLING.md`. */
+    masterInvoices?: MasterInvoice[];
+    /** Email of the collecting employee — recorded on ledger + master settlement writes. */
+    userEmail?: string;
 }
 
-export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, openTenantProfile, allLedgerEntries = [] }: CollectionsTabProps) {
+export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, openTenantProfile, allLedgerEntries = [], masterInvoices = [], userEmail = "employee" }: CollectionsTabProps) {
     // Default: current month label like "September 2026" (matches Invoice.billingPeriod format)
     const currentMonthLabel = new Date().toLocaleString("default", { month: "long", year: "numeric" });
     const [collectionFilter, setCollectionFilter] = useState<string>(currentMonthLabel);
@@ -30,6 +38,10 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
 
     const [isEditInvoiceOpen, setIsEditInvoiceOpen] = useState(false);
     const [editInvoice, setEditInvoice] = useState<any>(null);
+
+    // Master-invoice settle modal state
+    const [settleMaster, setSettleMaster] = useState<MasterInvoice | null>(null);
+    const [isSettlingMaster, setIsSettlingMaster] = useState(false);
 
     // Settle modal (mark as paid with reference). All form state lives inside the modal component.
     const [settleInvoice, setSettleInvoice] = useState<Invoice | null>(null);
@@ -50,6 +62,8 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
 
     const pendingInvoices = allInvoices
         .filter(inv => inv.status === "unpaid" || inv.status === "pending")
+        // Grouped children are settled through the master invoice, not here.
+        .filter(inv => !inv.masterInvoiceId)
         .slice()
         .sort((a, b) => String(a.unitNumber || "").localeCompare(String(b.unitNumber || ""), undefined, { numeric: true, sensitivity: "base" }));
     // Settled collections (paid invoices) sorted by paidAt desc → newest first.
@@ -198,6 +212,97 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
         }
     };
 
+    // ------------------------------------------------------------------
+    // Corporate master-invoice settlement (see docs/CORPORATE_TENANT_BILLING.md §4.3)
+    // ------------------------------------------------------------------
+    const openMasterInvoices = masterInvoices
+        .filter(m => m.status === "unpaid" || m.status === "partial")
+        .slice()
+        .sort((a, b) => (a.billingPeriod || "").localeCompare(b.billingPeriod || ""));
+
+    async function handleMasterSettle(m: MasterInvoice, payload: SettleMasterSubmit) {
+        setIsSettlingMaster(true);
+        try {
+            const children = allInvoices.filter(inv => m.childInvoiceIds.includes(inv.id));
+            const result = allocateMasterPayment(payload.received, m, children);
+            if (result.appliedTotal <= 0) throw new Error("Payment amount must be greater than zero.");
+
+            const txnId = buildTransactionId(payload.mode, payload.reference);
+            const nowIso = new Date().toISOString();
+            const batch = writeBatch(db);
+
+            // Update master
+            batch.update(doc(db, "masterInvoices", m.id), {
+                amountPaid: result.newMasterAmountPaid,
+                status: result.masterStatus,
+                paidAt: result.masterStatus === "paid" ? nowIso : m.paidAt || null,
+                transactionId: txnId,
+                paymentMode: payload.mode,
+                paymentReference: payload.reference || null,
+                paymentNote: payload.note || null,
+            });
+
+            // Update each child + write ledger row per child
+            for (const alloc of result.perChild) {
+                if (alloc.appliedNow <= 0) continue;
+                batch.update(doc(db, "invoices", alloc.invoiceId), {
+                    amountPaid: alloc.newAmountPaid,
+                    status: alloc.status,
+                    paidAt: alloc.status === "paid" ? nowIso : null,
+                    transactionId: txnId,
+                    paymentMode: payload.mode,
+                    paymentReference: payload.reference || null,
+                });
+            }
+            await batch.commit();
+
+            // Post-commit: one dailyLedger row (total), N ledgerEntries rows (per child)
+            for (const alloc of result.perChild) {
+                if (alloc.appliedNow <= 0) continue;
+                const child = children.find(c => c.id === alloc.invoiceId)!;
+                await addDoc(collection(db, "ledgerEntries"), {
+                    tenantEmail: child.tenantEmail,
+                    unitId: child.unitId,
+                    unitNumber: child.unitNumber,
+                    invoiceId: child.id,
+                    masterInvoiceId: m.id,
+                    billingPeriod: child.billingPeriod,
+                    invoiceAmount: child.totalAmount,
+                    amountPaid: alloc.appliedNow,
+                    balance: Math.max(0, Number(child.totalAmount || 0) - alloc.newAmountPaid),
+                    transactionId: txnId,
+                    type: "master-payment",
+                    paymentMode: payload.mode,
+                    paymentReference: payload.reference || null,
+                    settledBy: userEmail,
+                    createdAt: nowIso,
+                });
+            }
+            // Single dailyLedger inflow representing the real cash movement
+            await addDoc(collection(db, "dailyLedger"), {
+                date: nowIso.slice(0, 10),
+                direction: "inflow",
+                category: "Rent (Master)",
+                amount: result.appliedTotal,
+                description: `${m.tenantName} · ${m.billingPeriod} · ${result.perChild.filter(c => c.appliedNow > 0).map(c => c.unitNumber).join(", ")}`,
+                tenantName: m.tenantName,
+                invoiceId: m.id,
+                paymentMode: payload.mode,
+                paymentReference: payload.reference || null,
+                note: payload.note || null,
+                recordedBy: userEmail,
+                createdBy: userEmail,
+                createdAt: nowIso,
+            });
+
+            setSettleMaster(null);
+        } catch (e) {
+            alert(e instanceof Error ? e.message : String(e));
+        } finally {
+            setIsSettlingMaster(false);
+        }
+    }
+
     return (
         <>
             <div className="space-y-4">
@@ -232,6 +337,42 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                         </div>
                         <p className="font-bold text-red-800">{"\u20B9"}{overdueAmount.toLocaleString()}</p>
                     </button>
+                )}
+
+                {openMasterInvoices.length > 0 && (
+                    <div className="bg-white rounded-xl shadow-sm border border-indigo-200 overflow-hidden">
+                        <div className="bg-indigo-50 px-5 py-3 border-b border-indigo-200 flex justify-between items-center">
+                            <div>
+                                <h3 className="text-sm font-bold text-indigo-800">🏢 Master invoices (corporate)</h3>
+                                <p className="text-[10px] text-indigo-600 mt-0.5">One payment settles all rooms</p>
+                            </div>
+                            <span className="text-xs font-bold bg-indigo-200 text-indigo-800 px-2 py-1 rounded-full">{openMasterInvoices.length}</span>
+                        </div>
+                        <div className="divide-y divide-gray-100">
+                            {openMasterInvoices.map(m => {
+                                const remaining = Math.max(0, Number(m.totalAmount || 0) - Number(m.amountPaid || 0));
+                                const isPartial = m.status === "partial";
+                                return (
+                                    <div key={m.id} className={`px-5 py-3 flex justify-between items-center ${isPartial ? "bg-amber-50/40" : ""}`}>
+                                        <div className="min-w-0">
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                                <p className="font-bold text-gray-900 text-sm">{m.tenantName}</p>
+                                                {isPartial && <span className="text-[9px] font-bold bg-amber-200 text-amber-800 px-1.5 py-0.5 rounded">PARTIAL</span>}
+                                            </div>
+                                            <p className="text-[11px] text-gray-500 mt-0.5">{m.id} · {m.billingPeriod} · {m.childInvoiceIds.length} unit{m.childInvoiceIds.length !== 1 ? "s" : ""}</p>
+                                        </div>
+                                        <div className="flex items-center gap-3 shrink-0">
+                                            <div className="text-right">
+                                                <p className="text-sm font-bold text-gray-900">₹{remaining.toLocaleString()}</p>
+                                                <p className="text-[10px] text-gray-400">of ₹{Number(m.totalAmount || 0).toLocaleString()}</p>
+                                            </div>
+                                            <button onClick={() => setSettleMaster(m)} className="text-xs font-bold bg-indigo-600 text-white px-3 py-1.5 rounded-lg hover:bg-indigo-700">Settle</button>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
                 )}
 
                 <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
@@ -444,6 +585,17 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                     isSubmitting={isSettling === settleInvoice.id}
                     onCancel={() => setSettleInvoice(null)}
                     onSubmit={handleConfirmSettle}
+                />
+            )}
+
+            {settleMaster && (
+                <SettleMasterInvoiceModal
+                    key={settleMaster.id}
+                    master={settleMaster}
+                    childInvoices={allInvoices.filter(inv => settleMaster.childInvoiceIds.includes(inv.id))}
+                    isSubmitting={isSettlingMaster}
+                    onCancel={() => setSettleMaster(null)}
+                    onSubmit={(payload) => handleMasterSettle(settleMaster, payload)}
                 />
             )}
         </>

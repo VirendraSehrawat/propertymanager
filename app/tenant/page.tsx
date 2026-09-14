@@ -286,7 +286,9 @@ export default function TenantDashboard() {
                                                 )}
                                             </div>
 
-                                            {invoice.status === 'unpaid' ? <button onClick={() => { setSelectedInvoice(invoice); setIsPayModalOpen(true); }} className="px-6 py-3 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 w-full lg:w-auto shadow-sm">Pay ₹{invoice.totalAmount} Now</button> : invoice.status === 'pending' ? <span className="px-6 py-3 bg-orange-50 border border-orange-200 text-orange-800 rounded-md text-sm font-medium w-full lg:w-auto text-center">Verification Pending</span> : <span className="px-6 py-3 bg-green-50 border border-green-200 text-green-800 rounded-md text-sm font-medium w-full lg:w-auto text-center">Payment Verified ✅</span>}
+                                            {invoice.masterInvoiceId ? (
+                                                <span className="px-6 py-3 bg-indigo-50 border border-indigo-200 text-indigo-800 rounded-md text-sm font-medium w-full lg:w-auto text-center">🏢 Rolled into master invoice — see billing contact</span>
+                                            ) : invoice.status === 'unpaid' ? <button onClick={() => { setSelectedInvoice(invoice); setIsPayModalOpen(true); }} className="px-6 py-3 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 w-full lg:w-auto shadow-sm">Pay ₹{invoice.totalAmount} Now</button> : invoice.status === 'pending' ? <span className="px-6 py-3 bg-orange-50 border border-orange-200 text-orange-800 rounded-md text-sm font-medium w-full lg:w-auto text-center">Verification Pending</span> : <span className="px-6 py-3 bg-green-50 border border-green-200 text-green-800 rounded-md text-sm font-medium w-full lg:w-auto text-center">Payment Verified ✅</span>}
                                         </div>
                                     ))}
                                 </div>

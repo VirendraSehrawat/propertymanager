@@ -10,3 +10,4 @@ export { ExpensesTab } from "./ExpensesTab";
 export { MonthCollectionsCard } from "./MonthCollectionsCard";
 export { HomeTab } from "./HomeTab";
 export { SettlePaymentModal } from "./modals/SettlePaymentModal";
+export { SettleMasterInvoiceModal } from "./modals/SettleMasterInvoiceModal";

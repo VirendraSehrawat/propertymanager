@@ -2,6 +2,7 @@
 
 import { useAuth } from "@/context/AuthContext";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { signOut } from "firebase/auth";
 import { collection, addDoc, onSnapshot, query, orderBy, where, doc, updateDoc, setDoc, getDocs, writeBatch, deleteDoc, getDoc, deleteField } from "firebase/firestore";
@@ -625,6 +626,7 @@ export default function AdminDashboard() {
             <nav className="bg-white shadow-sm px-6 py-4 flex justify-between items-center border-b border-gray-200 sticky top-0 z-10">
                 <h1 className="text-xl font-bold text-gray-800">Admin Portal</h1>
                 <div className="flex items-center gap-4">
+                    <Link href="/admin/tenants" className="text-sm px-3 py-2 bg-indigo-50 text-indigo-700 rounded-md hover:bg-indigo-100 transition font-bold">Tenants</Link>
                     <span className="text-sm text-gray-600 hidden sm:block">{user.email}</span>
                     <button onClick={handleLogout} className="text-sm px-4 py-2 bg-red-50 text-red-600 rounded-md hover:bg-red-100 transition">Logout</button>
                 </div>
