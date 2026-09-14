@@ -131,6 +131,8 @@ export interface LedgerEntry {
     balance: number;
     transactionId: string;
     type: string;
+    paymentMode?: string;
+    paymentReference?: string | null;
     settledBy?: string;
     correctedAt?: string;
     correctionNote?: string;

@@ -133,6 +133,14 @@ components/admin/
    share identical rent-first math.
 2. Extract the three modals next (they own local form state, so they
    isolate cleanly).
+   - [x] `SettlePaymentModal` — `components/employee/modals/SettlePaymentModal.tsx`
+         (183 lines). Owns all settle-form state locally; parent
+         `CollectionsTab.tsx` now only passes the invoice + a save callback.
+         `CollectionsTab.tsx` shrank 589 → 451 lines (−138). Also added
+         `paymentMode`/`paymentReference` to the `LedgerEntry` type (they
+         were being written but not declared).
+   - [ ] `NewTicketModal`
+   - [ ] `MeterReadingModal`
 3. Extract per-tab bodies. Do them one at a time and deploy between each so
    any regression is bisectable.
 
@@ -147,7 +155,7 @@ components/admin/
 ---
 
 ## 4. Housekeeping
-- Silence Vitest CJS deprecation: rename `vitest.config.ts` → `vitest.config.mts`
-  or set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` in the `test` script.
-- Add `npm run test:unit` (skips emulator) as a fast pre-commit check.
-- Add GitHub Action running `test:unit` on every push.
+- [x] Silence Vitest CJS deprecation — renamed `vitest.config.ts` → `vitest.config.mts`.
+- [x] Added `npm run test:unit` (skips emulator) as a fast pre-commit check.
+- [x] Added GitHub Action `.github/workflows/test.yml` running `typecheck` +
+      `test:unit` on every push + PR to `main`.

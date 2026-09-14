@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "npx firebase emulators:exec --only firestore 'npx vitest run'",
-    "test:unit": "VITE_CONFIG_NATIVE_IGNORE_WARNING=true npx vitest run __tests__/allocation.test.ts __tests__/lumpsum.test.ts __tests__/payments.test.ts",
+    "test:unit": "npx vitest run __tests__/allocation.test.ts __tests__/lumpsum.test.ts __tests__/payments.test.ts",
     "typecheck": "tsc --noEmit",
     "deploy:vercel": "npx vercel --prod"
   },

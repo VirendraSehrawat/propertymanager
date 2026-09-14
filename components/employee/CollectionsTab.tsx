@@ -5,12 +5,13 @@ import { useState } from "react";
 import { doc, updateDoc, addDoc, getDocs, collection, query, where, deleteField } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import type { Invoice, LedgerEntry, Unit } from "@/types";
-import { buildTransactionId, type PaymentMode } from "@/lib/payments";
+import { buildTransactionId } from "@/lib/payments";
 import {
     allocatePartialPayment,
     composeInvoiceTotal,
     computeCarryForward,
 } from "@/lib/allocation";
+import { SettlePaymentModal, type SettlePaymentSubmit } from "./modals/SettlePaymentModal";
 
 interface CollectionsTabProps {
     allInvoices: Invoice[];
@@ -30,13 +31,8 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
     const [isEditInvoiceOpen, setIsEditInvoiceOpen] = useState(false);
     const [editInvoice, setEditInvoice] = useState<any>(null);
 
-    // Settle modal (mark as paid with reference)
+    // Settle modal (mark as paid with reference). All form state lives inside the modal component.
     const [settleInvoice, setSettleInvoice] = useState<Invoice | null>(null);
-    const [settleMode, setSettleMode] = useState<PaymentMode>("cash");
-    const [settleReference, setSettleReference] = useState("");
-    const [settleNote, setSettleNote] = useState("");
-    const [settleKind, setSettleKind] = useState<"full" | "partial">("full");
-    const [settleReceived, setSettleReceived] = useState<string>("");
     const [editInvBaseRent, setEditInvBaseRent] = useState("");
     const [editInvElecRate, setEditInvElecRate] = useState("");
     const [editInvUnitsConsumed, setEditInvUnitsConsumed] = useState("");
@@ -96,24 +92,12 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
 
     const openSettleModal = (inv: Invoice) => {
         setSettleInvoice(inv);
-        setSettleMode("cash");
-        setSettleReference("");
-        setSettleNote("");
-        const remaining = Math.max(0, Number(inv.totalAmount || 0) - Number(inv.amountPaid || 0));
-        const prevPaid = Number(inv.amountPaid || 0);
-        // If we already collected something, this is a follow-up payment — default to partial mode
-        // so the amount input is editable up front. Otherwise stay on Full for the fast happy path.
-        setSettleKind(prevPaid > 0 ? "partial" : "full");
-        setSettleReceived(String(remaining));
     };
 
-    const handleConfirmSettle = async (e: React.FormEvent) => {
-        e.preventDefault();
+    const handleConfirmSettle = async (payload: SettlePaymentSubmit) => {
         if (!settleInvoice) return;
         const inv = settleInvoice;
-        const receivedInput = settleKind === "full"
-            ? Math.max(0, Number(inv.totalAmount || 0) - Number(inv.amountPaid || 0))
-            : Math.round(Number(settleReceived) || 0);
+        const { received: receivedInput, mode, reference, note } = payload;
         const alloc = allocatePartialPayment(receivedInput, {
             totalAmount: Number(inv.totalAmount || 0),
             amountPaid: Number(inv.amountPaid || 0),
@@ -125,13 +109,13 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
         if (received > alloc.remaining) { alert(`Amount received (₹${received}) exceeds remaining balance (₹${alloc.remaining}).`); return; }
         setIsSettling(inv.id);
         try {
-            const txnId = buildTransactionId(settleMode, settleReference);
+            const txnId = buildTransactionId(mode, reference);
             await updateDoc(doc(db, "invoices", inv.id), {
                 amountPaid: alloc.newAmountPaid,
                 status: alloc.status,
                 ...(alloc.fullyPaid ? { paidAt: new Date().toISOString() } : {}),
                 transactionId: txnId,
-                ...(settleNote.trim() ? { paymentNote: settleNote.trim() } : {}),
+                ...(note.trim() ? { paymentNote: note.trim() } : {}),
             });
             await addDoc(collection(db, "ledger"), {
                 tenantEmail: inv.tenantEmail,
@@ -143,9 +127,9 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                 amountPaid: received,           // this transaction only
                 balance: received - alloc.remaining,  // 0 if fully paid, negative if partial
                 transactionId: txnId,
-                paymentMode: settleMode,
-                paymentReference: settleReference.trim() || null,
-                paymentNote: settleNote.trim() || null,
+                paymentMode: mode,
+                paymentReference: reference.trim() || null,
+                paymentNote: note.trim() || null,
                 type: alloc.fullyPaid ? "payment" : "partial-payment",
                 settledBy: "employee",
                 createdAt: new Date().toISOString(),
@@ -452,137 +436,16 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                 </div>
             )}
 
-            {settleInvoice && (() => {
-                const total = Number(settleInvoice.totalAmount || 0);
-                const prevPaid = Number(settleInvoice.amountPaid || 0);
-                const remaining = Math.max(0, total - prevPaid);
-                const received = settleKind === "full" ? remaining : Math.round(Number(settleReceived) || 0);
-                const receivedValid = received > 0 && received <= remaining;
-                // rent-first allocation preview (shared helper)
-                const preview = allocatePartialPayment(received, {
-                    totalAmount: total,
-                    amountPaid: prevPaid,
-                    baseRent: Number(settleInvoice.baseRent || 0),
-                    electricityCharge: Number(settleInvoice.electricityCharge || 0),
-                });
-                const { rentDueBefore: rentDue, elecDueBefore: elecDue, towardRent, towardElectricity: towardElec } = preview;
-                return (
-                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setSettleInvoice(null)}>
-                    <div className="bg-white p-6 rounded-xl shadow-xl max-w-md w-full space-y-4" onClick={(e) => e.stopPropagation()}>
-                        <div>
-                            <h3 className="text-lg font-bold text-gray-800">{"\u2713"} Record Payment</h3>
-                            <p className="text-xs text-gray-500 mt-0.5">{settleInvoice.unitNumber} {"\u2014"} {settleInvoice.billingPeriod}</p>
-                            <div className="mt-2 flex justify-between text-xs bg-gray-50 border border-gray-200 rounded-md px-3 py-2">
-                                <span className="text-gray-500">Invoice ₹{total.toLocaleString()}</span>
-                                {prevPaid > 0 && <span className="text-amber-700 font-medium">Paid ₹{prevPaid.toLocaleString()}</span>}
-                                <span className="text-red-700 font-bold">Due ₹{remaining.toLocaleString()}</span>
-                            </div>
-                            {(() => {
-                                const priorPayments = allLedgerEntries
-                                    .filter((l) => l.invoiceId === settleInvoice.id)
-                                    .sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")));
-                                if (priorPayments.length === 0) return null;
-                                return (
-                                    <div className="mt-2 bg-amber-50 border border-amber-200 rounded-md p-2 space-y-1">
-                                        <p className="text-[10px] font-bold text-amber-800 uppercase tracking-wide">Prior payments on this invoice</p>
-                                        {priorPayments.map((p) => (
-                                            <div key={p.id} className="flex justify-between items-center text-[11px]">
-                                                <span className="text-gray-700">
-                                                    {p.createdAt ? new Date(p.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : "\u2014"}
-                                                    {" \u00b7 "}
-                                                    <span className="uppercase font-mono">{p.paymentMode || "cash"}</span>
-                                                    {p.paymentReference ? ` \u00b7 ${p.paymentReference}` : ""}
-                                                </span>
-                                                <span className="font-bold text-amber-800">₹{Number(p.amountPaid || 0).toLocaleString()}</span>
-                                            </div>
-                                        ))}
-                                    </div>
-                                );
-                            })()}
-                        </div>
-                        <form onSubmit={handleConfirmSettle} className="space-y-3">
-                            <div>
-                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Payment</label>
-                                <div className="grid grid-cols-2 gap-2">
-                                    <button type="button" onClick={() => { setSettleKind("full"); setSettleReceived(String(remaining)); }} className={`px-3 py-2.5 rounded-md text-xs font-bold border transition ${settleKind === "full" ? "bg-green-600 text-white border-green-700" : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"}`}>Full ₹{remaining.toLocaleString()}</button>
-                                    <button type="button" onClick={() => setSettleKind("partial")} className={`px-3 py-2.5 rounded-md text-xs font-bold border transition ${settleKind === "partial" ? "bg-amber-500 text-white border-amber-600" : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"}`}>Partial…</button>
-                                </div>
-                            </div>
-                            {settleKind === "partial" && (
-                                <div>
-                                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Amount Received (₹)</label>
-                                    <input
-                                        type="number"
-                                        value={settleReceived}
-                                        onChange={(e) => setSettleReceived(e.target.value)}
-                                        min={1}
-                                        max={remaining}
-                                        step={1}
-                                        placeholder={`Up to ${remaining}`}
-                                        className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
-                                        autoFocus
-                                    />
-                                    <div className="mt-2 flex gap-1.5 flex-wrap">
-                                        {rentDue > 0 && <button type="button" onClick={() => setSettleReceived(String(rentDue))} className="text-[11px] px-2 py-1 rounded bg-blue-50 border border-blue-200 text-blue-700 font-bold hover:bg-blue-100">Rent only ₹{rentDue.toLocaleString()}</button>}
-                                        {elecDue > 0 && <button type="button" onClick={() => setSettleReceived(String(elecDue))} className="text-[11px] px-2 py-1 rounded bg-yellow-50 border border-yellow-200 text-yellow-700 font-bold hover:bg-yellow-100">Elec only ₹{elecDue.toLocaleString()}</button>}
-                                    </div>
-                                </div>
-                            )}
-                            <div className="text-[11px] bg-gray-50 border border-gray-200 rounded-md px-3 py-2 space-y-0.5">
-                                <div className="flex justify-between"><span className="text-gray-500">Allocated to 🏠 Rent</span><span className="font-bold text-gray-800">₹{towardRent.toLocaleString()}{rentDue > 0 && ` / ₹${rentDue.toLocaleString()}`}</span></div>
-                                <div className="flex justify-between"><span className="text-gray-500">Allocated to ⚡ Electricity</span><span className="font-bold text-gray-800">₹{towardElec.toLocaleString()}{elecDue > 0 && ` / ₹${elecDue.toLocaleString()}`}</span></div>
-                                <div className="flex justify-between border-t border-gray-200 pt-1 mt-1"><span className="text-gray-600 font-medium">After this payment</span><span className={`font-bold ${received >= remaining ? "text-green-700" : "text-amber-700"}`}>{received >= remaining ? "Fully Paid ✓" : `₹${(remaining - received).toLocaleString()} still due`}</span></div>
-                            </div>
-                            <div>
-                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Payment Mode</label>
-                                <div className="grid grid-cols-5 gap-1">
-                                    {(["cash", "upi", "bank", "cheque", "other"] as const satisfies readonly PaymentMode[]).map(m => (
-                                        <button
-                                            key={m}
-                                            type="button"
-                                            onClick={() => setSettleMode(m)}
-                                            className={`px-2 py-2 rounded-md text-xs font-bold border transition ${settleMode === m ? "bg-green-600 text-white border-green-700" : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50"}`}
-                                        >
-                                            {m.toUpperCase()}
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-                            {settleMode !== "cash" && (
-                                <div>
-                                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
-                                        {settleMode === "upi" ? "UPI Txn ID" : settleMode === "bank" ? "Bank Ref No." : settleMode === "cheque" ? "Cheque No." : "Reference"}
-                                    </label>
-                                    <input
-                                        type="text"
-                                        value={settleReference}
-                                        onChange={(e) => setSettleReference(e.target.value)}
-                                        placeholder={settleMode === "upi" ? "e.g. 4XXXXXX8291" : settleMode === "cheque" ? "e.g. 000123" : "Reference / transaction id"}
-                                        className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
-                                    />
-                                </div>
-                            )}
-                            <div>
-                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Note (optional)</label>
-                                <input
-                                    type="text"
-                                    value={settleNote}
-                                    onChange={(e) => setSettleNote(e.target.value)}
-                                    placeholder="e.g. paid to owner directly"
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
-                                />
-                            </div>
-                            <div className="flex gap-2 pt-2">
-                                <button type="button" onClick={() => setSettleInvoice(null)} className="flex-1 py-2 border border-gray-300 rounded-md text-sm text-gray-600">Cancel</button>
-                                <button type="submit" disabled={isSettling === settleInvoice.id || !receivedValid} className="flex-1 py-2 bg-green-600 text-white rounded-md text-sm font-bold hover:bg-green-700 disabled:bg-green-400">
-                                    {isSettling === settleInvoice.id ? "Saving..." : `\u2713 Save ₹${received.toLocaleString()}`}
-                                </button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-                );
-            })()}
+            {settleInvoice && (
+                <SettlePaymentModal
+                    key={settleInvoice.id}
+                    invoice={settleInvoice}
+                    allLedgerEntries={allLedgerEntries}
+                    isSubmitting={isSettling === settleInvoice.id}
+                    onCancel={() => setSettleInvoice(null)}
+                    onSubmit={handleConfirmSettle}
+                />
+            )}
         </>
     );
 }
