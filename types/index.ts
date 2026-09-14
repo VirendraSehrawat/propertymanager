@@ -32,6 +32,10 @@ export interface Unit {
     leaseEnd?: string;
     /** Per-unit electricity rate override (₹/unit); falls back to global default when unset. */
     electricityRate?: number;
+    /** When set, the unit is leased under a corporate `Tenant` doc — invoices
+     *  generated for this unit will be rolled up into that tenant's monthly
+     *  `MasterInvoice`. See `docs/CORPORATE_TENANT_BILLING.md`. */
+    tenantId?: string;
 }
 
 export interface CoTenant {
@@ -91,6 +95,9 @@ export interface Invoice {
     paidAt?: string;
     paymentScreenshotUrl?: string;
     paymentNote?: string;
+    /** When set, this invoice is rolled up into a corporate `MasterInvoice`.
+     *  Payment flows through the master; per-unit settlement is disabled. */
+    masterInvoiceId?: string;
     createdAt: string;
 }
 
@@ -291,3 +298,97 @@ export interface Application {
 }
 
 export type EmployeeTab = "active" | "resolved" | "meter" | "collections" | "ledger" | "units" | "occupancy" | "checklist" | "expenses" | "inventory";
+
+/**
+ * Corporate (multi-unit) tenant billing — see
+ * `docs/CORPORATE_TENANT_BILLING.md`.
+ *
+ * A `Tenant` is a first-class billable party. Retail tenants (one household,
+ * one flat) may keep using the unit-embedded tenant fields; corporate tenants
+ * (one company, N rooms) require a `Tenant` doc so multiple `Unit`s can share
+ * a single billing identity.
+ */
+export interface Tenant {
+    id: string;
+    kind: "retail" | "corporate";
+    /** Display name — company legal name for corporate, occupant name for retail. */
+    name: string;
+    gstin?: string;
+    pan?: string;
+    billingContact: {
+        name: string;
+        email: string;
+        phone: string;
+    };
+    accountsContact?: { name: string; email: string; phone?: string };
+    billingAddress?: string;
+    /** Units currently assigned to this tenant; mirrors `Unit.tenantId`. */
+    unitIds: string[];
+    /** "consolidated" → one master invoice/month; "per-unit" → legacy flow. */
+    billingMode: "per-unit" | "consolidated";
+    /** Payment allocation strategy for master invoices. */
+    paymentAllocationStrategy?: "rent-first-then-electricity" | "pro-rata";
+    /** Day of month the master invoice is generated. */
+    billingDayOfMonth?: number;
+    notes?: string;
+    createdAt: string;
+    createdBy?: string;
+    archivedAt?: string;
+}
+
+/**
+ * A rolled-up monthly bill covering multiple per-unit `Invoice` documents.
+ * The child invoices remain the source of truth for meter readings and per-
+ * unit ledger entries; the master invoice is a billing wrapper that aggregates
+ * their totals and takes one payment.
+ */
+export interface MasterInvoice {
+    id: string;
+    tenantId: string;
+    tenantName: string;
+    /** e.g. "September 2026" */
+    billingPeriod: string;
+    childInvoiceIds: string[];
+    /** Denormalised snapshot of each child at generation time. */
+    lines: MasterInvoiceLine[];
+    subtotalRent: number;
+    subtotalElectricity: number;
+    subtotalCarryForward: number;
+    adjustments?: { label: string; amount: number }[];
+    totalAmount: number;
+    amountPaid: number;
+    status: "unpaid" | "partial" | "paid" | "void";
+    paidAt?: string;
+    transactionId?: string;
+    paymentMode?: string;
+    paymentReference?: string | null;
+    paymentScreenshotUrl?: string;
+    paymentNote?: string;
+    /** GST-style invoice number, e.g. "MI/2026-27/00042". */
+    invoiceNumber?: string;
+    pdfUrl?: string;
+    /** ID of a master invoice this one supersedes (void + re-issue chain). */
+    supersedes?: string;
+    createdBy?: string;
+    createdAt: string;
+    voidedAt?: string;
+    voidedBy?: string;
+    voidReason?: string;
+}
+
+export interface MasterInvoiceLine {
+    invoiceId: string;
+    unitId: string;
+    unitNumber: string;
+    baseRent: number;
+    previousReading?: number;
+    currentReading?: number;
+    electricityConsumed?: number;
+    electricityRate?: number;
+    electricityCharge: number;
+    carryForward: number;
+    /** Meter irregularity flags copied from the child invoice for PDF rendering. */
+    meterChanged?: boolean;
+    manualUnitsReason?: string;
+    lineTotal: number;
+}
