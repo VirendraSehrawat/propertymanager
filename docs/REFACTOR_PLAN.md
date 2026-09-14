@@ -152,6 +152,15 @@ components/admin/
          `activeTab === "active" || activeTab === "resolved"`.
 3. Extract per-tab bodies. Do them one at a time and deploy between each so
    any regression is bisectable.
+   - [x] `MeterTab` — `components/employee/MeterTab.tsx` (310 lines). Owns
+         all meter-form state (`selectedMeterUnit`, `currentReading`,
+         `previousReadingOverride`, `meterChanged`, `manualUnitsConsumed`,
+         `manualUnitsReason`, `newMeterReading`, `billingMonth`,
+         `isGeneratingInvoice`) plus the whole invoice-generation batch.
+         Parent passes `occupiedUnits`, `allLedgerEntries`,
+         `electricityRate`. `app/employee/page.tsx` shrank
+         **2389 → 2098 lines (−291)**. Cumulative page shrinkage
+         since refactor started: **2895 → 2098 = −797 lines (~27%)**.
 
 ### Rules while extracting
 - No new Firestore reads inside child components — parent still owns the
