@@ -139,8 +139,17 @@ components/admin/
          `CollectionsTab.tsx` shrank 589 → 451 lines (−138). Also added
          `paymentMode`/`paymentReference` to the `LedgerEntry` type (they
          were being written but not declared).
-   - [ ] `NewTicketModal`
-   - [ ] `MeterReadingModal`
+   - [x] `ResolveTicketModal` + `ReportIssueModal` — never actually needed
+         standalone extraction. The already-existing
+         `components/employee/TicketsTab.tsx` (282 lines) fully owned both
+         modals + comment flow, but was **imported and unused** in
+         `app/employee/page.tsx` while ~180 lines of duplicated inline JSX
+         + 5 handlers + 8 useState slots lived in the page. Wired the
+         component in and deleted the dupes. `app/employee/page.tsx` shrank
+         **2717 → 2389 lines (−328)**. Also fixed a bug: ticket list used
+         to render on Home / Daily / Monthly tabs because the visibility
+         guard was a negation of the tab denylist; now gated on
+         `activeTab === "active" || activeTab === "resolved"`.
 3. Extract per-tab bodies. Do them one at a time and deploy between each so
    any regression is bisectable.
 
