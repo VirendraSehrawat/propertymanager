@@ -159,8 +159,31 @@ components/admin/
          `isGeneratingInvoice`) plus the whole invoice-generation batch.
          Parent passes `occupiedUnits`, `allLedgerEntries`,
          `electricityRate`. `app/employee/page.tsx` shrank
-         **2389 → 2098 lines (−291)**. Cumulative page shrinkage
-         since refactor started: **2895 → 2098 = −797 lines (~27%)**.
+         **2389 → 2098 lines (−291)**.
+   - [x] `InventoryTab` — same "extracted but never wired" pattern as
+         `TicketsTab`. Component (`components/employee/InventoryTab.tsx`,
+         135 lines) already owned the tab + Add-Item modal + qty +/−
+         handlers. Wired in, deleted 9 useState slots + 2 handlers + the
+         inline modal. `app/employee/page.tsx` shrank
+         **2098 → 1972 lines (−126)** — first time under 2000.
+   - [x] `ExpensesTab` — `components/employee/ExpensesTab.tsx` (458
+         lines). Owns 13 useState slots + 7 handlers (dual-write to
+         `expenses` + `dailyLedger` with cross-linked IDs, cascading
+         soft-delete, fund summary card, view/filter toggles, both
+         modals). Parent passes 4 props: `allExpenses`, `allAllocations`,
+         `buildings`, `userEmail`. `app/employee/page.tsx` shrank
+         **1972 → 1555 lines (−417)** — biggest single-commit win yet.
+   - [x] `HomeTab` — greeting, 4 KPI tiles, `MonthCollectionsCard`,
+         previous-month balance list, quick-action grid, overdue
+         invoices, meters-pending, active-tasks preview, and recent
+         activity feed. Parent passes 12 props (8 typed collections +
+         `homeMonth`/`setHomeMonth` + `onNavigate`/`onOpenTodayCollections`/
+         `openTenantProfile`). Zero Firestore writes — pure display.
+         `app/employee/page.tsx` shrank **1555 → 1297 lines (−258)**.
+   - [ ] `UnitsTab` — buildings tree + tenant search (~140 lines).
+   - [ ] `ChecklistTab` (~100 lines).
+
+**Cumulative page shrinkage since refactor started: 2895 → 1297 = −1598 lines (~55%).**
 
 ### Rules while extracting
 - No new Firestore reads inside child components — parent still owns the

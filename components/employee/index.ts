@@ -8,4 +8,5 @@ export { TicketsTab } from "./TicketsTab";
 export { MeterTab } from "./MeterTab";
 export { ExpensesTab } from "./ExpensesTab";
 export { MonthCollectionsCard } from "./MonthCollectionsCard";
+export { HomeTab } from "./HomeTab";
 export { SettlePaymentModal } from "./modals/SettlePaymentModal";
