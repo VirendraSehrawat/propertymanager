@@ -53,6 +53,53 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
     const [editInvBillingMonth, setEditInvBillingMonth] = useState("");
     const [isSavingInvoice, setIsSavingInvoice] = useState(false);
 
+    // Write-off (mark uncollectible — tenant absconded etc.)
+    const [writingOff, setWritingOff] = useState("");
+
+    async function handleWriteOff(inv: Invoice) {
+        const reason = window.prompt(
+            `Mark invoice ${inv.unitNumber} · ${inv.billingPeriod} as UNCOLLECTIBLE?\n\n` +
+            `This will remove it from pending collections without recording a payment.\n\n` +
+            `Reason (e.g. "Tenant absconded on 5 Sep"):`
+        );
+        if (!reason || !reason.trim()) return;
+        setWritingOff(inv.id);
+        try {
+            await updateDoc(doc(db, "invoices", inv.id), {
+                status: "written-off",
+                writtenOff: true,
+                writtenOffAt: new Date().toISOString(),
+                writtenOffBy: userEmail,
+                writtenOffReason: reason.trim(),
+            });
+        } catch (e) {
+            alert(e instanceof Error ? e.message : String(e));
+        } finally {
+            setWritingOff("");
+        }
+    }
+
+    async function handleReopenWriteOff(inv: Invoice) {
+        if (!confirm(`Reopen invoice ${inv.unitNumber} · ${inv.billingPeriod}? It will return to pending collections.`)) return;
+        setWritingOff(inv.id);
+        try {
+            const priorPaid = Number(inv.amountPaid || 0);
+            const total = Number(inv.totalAmount || 0);
+            const nextStatus = priorPaid <= 0 ? "unpaid" : priorPaid >= total ? "paid" : "pending";
+            await updateDoc(doc(db, "invoices", inv.id), {
+                status: nextStatus,
+                writtenOff: deleteField(),
+                writtenOffAt: deleteField(),
+                writtenOffBy: deleteField(),
+                writtenOffReason: deleteField(),
+            });
+        } catch (e) {
+            alert(e instanceof Error ? e.message : String(e));
+        } finally {
+            setWritingOff("");
+        }
+    }
+
     const isOverdue = (billingPeriod?: string) => {
         if (!billingPeriod) return false;
         const now = new Date();
@@ -108,6 +155,14 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
     const unpaidInvoices = filteredInvoices.filter(inv => !isPartialInvoice(inv));
     const partialCollectedSoFar = partialInvoices.reduce((s, inv) => s + Number(inv.amountPaid || 0), 0);
     const partialRemainingDue = partialInvoices.reduce((s, inv) => s + Math.max(0, Number(inv.totalAmount || 0) - Number(inv.amountPaid || 0)), 0);
+
+    // Written-off (uncollectible — tenant absconded etc.). Respects the active month filter.
+    const writtenOffInvoices = allInvoices
+        .filter(inv => inv.status === "written-off")
+        .filter(inv => collectionFilter === "all" || collectionFilter === "overdue" || norm(inv.billingPeriod) === collectionFilter)
+        .slice()
+        .sort((a, b) => (b.writtenOffAt || b.createdAt || "").localeCompare(a.writtenOffAt || a.createdAt || ""));
+    const writtenOffTotal = writtenOffInvoices.reduce((s, inv) => s + Math.max(0, Number(inv.totalAmount || 0) - Number(inv.amountPaid || 0)), 0);
     const totalPendingRent = filteredInvoices.reduce((sum, inv) => sum + Number(inv.baseRent || 0), 0);
     const totalPendingElec = filteredInvoices.reduce((sum, inv) => sum + Number(inv.electricityCharge || 0), 0);
 
@@ -417,10 +472,13 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                                                 <p className={`font-bold ${overdue ? "text-red-700" : "text-amber-700"}`}>{"\u20B9"}{remaining.toLocaleString()}</p>
                                                 <p className="text-[10px] text-amber-700">Paid ₹{paidSoFar.toLocaleString()} of ₹{total.toLocaleString()}</p>
                                             </div>
-                                            <div className="flex gap-1.5">
+                                            <div className="flex gap-1.5 flex-wrap justify-end">
                                                 <button onClick={() => openEditInvoice(inv)} className="text-xs px-3 py-1.5 bg-blue-600 text-white rounded-md font-bold hover:bg-blue-700 transition">{"\u270F\uFE0F"} Edit</button>
                                                 <button onClick={() => openSettleModal(inv)} disabled={isSettling === inv.id} className="text-xs px-3 py-1.5 bg-amber-600 hover:bg-amber-700 rounded-md font-bold transition text-white disabled:opacity-60">
                                                     {isSettling === inv.id ? "..." : "\u2795 Add Payment"}
+                                                </button>
+                                                <button onClick={() => handleWriteOff(inv)} disabled={writingOff === inv.id} className="text-xs px-2 py-1.5 bg-gray-100 text-gray-600 border border-gray-300 rounded-md font-bold hover:bg-gray-200 transition disabled:opacity-60" title="Mark uncollectible (tenant absconded)">
+                                                    {writingOff === inv.id ? "..." : "🚫"}
                                                 </button>
                                             </div>
                                         </div>
@@ -473,10 +531,13 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                                                     <p className="text-[10px] text-gray-400">Rent: {"\u20B9"}{inv.baseRent || 0} | Elec: {"\u20B9"}{inv.electricityCharge || 0}</p>
                                                 )}
                                             </div>
-                                            <div className="flex gap-1.5">
+                                            <div className="flex gap-1.5 flex-wrap justify-end">
                                                 <button onClick={() => openEditInvoice(inv)} className="text-xs px-3 py-1.5 bg-blue-600 text-white rounded-md font-bold hover:bg-blue-700 transition">{"\u270F\uFE0F"} Edit</button>
                                                 <button onClick={() => openSettleModal(inv)} disabled={isSettling === inv.id} className={`text-xs px-3 py-1.5 rounded-md font-bold transition text-white disabled:opacity-60 ${isPartial ? "bg-amber-600 hover:bg-amber-700" : "bg-green-600 hover:bg-green-700"}`}>
                                                     {isSettling === inv.id ? "..." : isPartial ? "\u2795 Add Payment" : "\u2713 Settle"}
+                                                </button>
+                                                <button onClick={() => handleWriteOff(inv)} disabled={writingOff === inv.id} className="text-xs px-2 py-1.5 bg-gray-100 text-gray-600 border border-gray-300 rounded-md font-bold hover:bg-gray-200 transition disabled:opacity-60" title="Mark uncollectible (tenant absconded)">
+                                                    {writingOff === inv.id ? "..." : "🚫"}
                                                 </button>
                                             </div>
                                         </div>
@@ -486,6 +547,48 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                         }
                     </div>
                 </div>
+
+                {writtenOffInvoices.length > 0 && (
+                    <div className="bg-white rounded-xl shadow-sm border border-gray-300 overflow-hidden">
+                        <div className="bg-gray-100 px-5 py-3 border-b border-gray-200 flex justify-between items-center gap-3">
+                            <div className="min-w-0">
+                                <h3 className="text-sm font-bold text-gray-700">🚫 Written Off (uncollectible)</h3>
+                                <p className="text-[10px] text-gray-500 mt-0.5">₹{writtenOffTotal.toLocaleString()} removed from pending collections</p>
+                            </div>
+                            <span className="text-xs font-bold bg-gray-200 text-gray-700 px-2 py-1 rounded-full shrink-0">{writtenOffInvoices.length}</span>
+                        </div>
+                        <div className="divide-y divide-gray-100 max-h-72 overflow-y-auto">
+                            {writtenOffInvoices.map(inv => {
+                                const total = Number(inv.totalAmount || 0);
+                                const paidSoFar = Number(inv.amountPaid || 0);
+                                const remaining = Math.max(0, total - paidSoFar);
+                                return (
+                                    <div key={inv.id} className="px-5 py-3 flex justify-between items-center bg-gray-50/40">
+                                        <div className="min-w-0">
+                                            <div className="flex items-center gap-2">
+                                                <p className="font-bold text-gray-700 line-through">{inv.unitNumber}</p>
+                                                <span className="text-[9px] font-bold bg-gray-300 text-gray-700 px-1.5 py-0.5 rounded">WRITTEN OFF</span>
+                                            </div>
+                                            <p className="text-xs text-gray-500">{inv.tenantEmail} · {inv.billingPeriod}</p>
+                                            {inv.writtenOffReason && (
+                                                <p className="text-[10px] text-gray-600 mt-0.5 italic">&ldquo;{inv.writtenOffReason}&rdquo;</p>
+                                            )}
+                                            {inv.writtenOffAt && (
+                                                <p className="text-[10px] text-gray-400 mt-0.5">by {inv.writtenOffBy || "—"} on {new Date(inv.writtenOffAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}</p>
+                                            )}
+                                        </div>
+                                        <div className="text-right flex flex-col items-end gap-1.5 shrink-0">
+                                            <p className="text-sm font-bold text-gray-500 line-through">₹{remaining.toLocaleString()}</p>
+                                            <button onClick={() => handleReopenWriteOff(inv)} disabled={writingOff === inv.id} className="text-[10px] px-2 py-1 bg-white border border-gray-300 rounded text-gray-600 font-bold hover:bg-gray-50 transition disabled:opacity-60">
+                                                {writingOff === inv.id ? "..." : "↩ Reopen"}
+                                            </button>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                )}
 
                 {/* SETTLED COLLECTIONS — detail view, newest first */}
                 <div className="bg-white rounded-xl shadow-sm border border-green-200 overflow-hidden">

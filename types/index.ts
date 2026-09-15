@@ -73,7 +73,7 @@ export interface Invoice {
     unitId: string;
     unitNumber: string;
     tenantEmail: string;
-    status: "unpaid" | "pending" | "paid";
+    status: "unpaid" | "pending" | "paid" | "written-off";
     totalAmount: number;
     billingPeriod: string;
     /** Human-readable date range the rent covers, e.g. "8 Sep 2026 – 8 Oct 2026". */
@@ -95,6 +95,13 @@ export interface Invoice {
     paidAt?: string;
     paymentScreenshotUrl?: string;
     paymentNote?: string;
+    /** Bookkeeping fields set when an invoice is marked uncollectible
+     *  (tenant absconded / cannot be recovered). Preserves the audit
+     *  trail without polluting pending collections. */
+    writtenOff?: boolean;
+    writtenOffAt?: string;
+    writtenOffBy?: string;
+    writtenOffReason?: string;
     /** When set, this invoice is rolled up into a corporate `MasterInvoice`.
      *  Payment flows through the master; per-unit settlement is disabled. */
     masterInvoiceId?: string;
