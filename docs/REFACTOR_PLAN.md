@@ -181,9 +181,16 @@ components/admin/
          `openTenantProfile`). Zero Firestore writes — pure display.
          `app/employee/page.tsx` shrank **1555 → 1297 lines (−258)**.
    - [ ] `UnitsTab` — buildings tree + tenant search (~140 lines).
-   - [ ] `ChecklistTab` (~100 lines).
+   - [x] `ChecklistTab` — `components/employee/ChecklistTab.tsx` (169
+         lines). Owns 6 useState slots + 3 handlers + the
+         `useUploadWithProgress` hook + the `checklists` addDoc write.
+         Parent passes 5 props: `allUnits`, `occupiedUnits`, `buildings`,
+         `allChecklists`, `userEmail` (parent still owns the
+         `checklists` `onSnapshot`). `app/employee/page.tsx` shrank
+         **1322 → 1170 lines (−152)**. Also removed now-unused
+         `getBuildingName` helper and `addDoc` import from the page.
 
-**Cumulative page shrinkage since refactor started: 2895 → 1297 = −1598 lines (~55%).**
+**Cumulative page shrinkage since refactor started: 2895 → 1170 = −1725 lines (~60%).**
 
 ### Rules while extracting
 - No new Firestore reads inside child components — parent still owns the
