@@ -98,6 +98,16 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
         : collectionFilter === "overdue"
         ? pendingInvoices.filter(inv => isOverdue(inv.billingPeriod))
         : pendingInvoices.filter(inv => norm(inv.billingPeriod) === collectionFilter);
+    // Split pending into partial (has some amountPaid) vs unpaid (nothing collected yet)
+    const isPartialInvoice = (inv: Invoice) => {
+        const total = Number(inv.totalAmount || 0);
+        const paid = Number(inv.amountPaid || 0);
+        return paid > 0 && paid < total;
+    };
+    const partialInvoices = filteredInvoices.filter(isPartialInvoice);
+    const unpaidInvoices = filteredInvoices.filter(inv => !isPartialInvoice(inv));
+    const partialCollectedSoFar = partialInvoices.reduce((s, inv) => s + Number(inv.amountPaid || 0), 0);
+    const partialRemainingDue = partialInvoices.reduce((s, inv) => s + Math.max(0, Number(inv.totalAmount || 0) - Number(inv.amountPaid || 0)), 0);
     const totalPendingRent = filteredInvoices.reduce((sum, inv) => sum + Number(inv.baseRent || 0), 0);
     const totalPendingElec = filteredInvoices.reduce((sum, inv) => sum + Number(inv.electricityCharge || 0), 0);
 
@@ -375,15 +385,61 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                     </div>
                 )}
 
+                {partialInvoices.length > 0 && (
+                    <div className="bg-white rounded-xl shadow-sm border border-amber-300 overflow-hidden">
+                        <div className="bg-amber-50 px-5 py-3 border-b border-amber-200 flex justify-between items-center gap-3">
+                            <div className="min-w-0">
+                                <h3 className="text-sm font-bold text-amber-800">💰 Partial Payments</h3>
+                                <p className="text-[10px] text-amber-700 mt-0.5">Collected ₹{partialCollectedSoFar.toLocaleString()} · ₹{partialRemainingDue.toLocaleString()} still due</p>
+                            </div>
+                            <span className="text-xs font-bold bg-amber-200 text-amber-800 px-2 py-1 rounded-full shrink-0">{partialInvoices.length}</span>
+                        </div>
+                        <div className="divide-y divide-gray-100 max-h-96 overflow-y-auto">
+                            {partialInvoices.map(inv => {
+                                const overdue = isOverdue(inv.billingPeriod);
+                                const total = Number(inv.totalAmount || 0);
+                                const paidSoFar = Number(inv.amountPaid || 0);
+                                const remaining = Math.max(0, total - paidSoFar);
+                                return (
+                                    <div key={inv.id} className={`px-5 py-4 flex justify-between items-center ${overdue ? "bg-red-50/60 hover:bg-red-100 border-l-4 border-l-red-400" : "bg-amber-50/40 hover:bg-amber-50 border-l-4 border-l-amber-400"}`}>
+                                        <div>
+                                            <div className="flex items-center gap-2">
+                                                <p className="font-bold text-gray-900">{inv.unitNumber}</p>
+                                                {overdue && <span className="text-[9px] font-bold bg-red-200 text-red-800 px-1.5 py-0.5 rounded">OVERDUE</span>}
+                                                <span className="text-[9px] font-bold bg-amber-200 text-amber-800 px-1.5 py-0.5 rounded">PARTIAL</span>
+                                            </div>
+                                            <p className="text-xs text-gray-500">{inv.tenantEmail}</p>
+                                            <p className={`text-xs font-medium mt-0.5 ${overdue ? "text-red-600" : "text-indigo-600"}`}>{inv.billingPeriod}</p>
+                                            <button onClick={() => { const unit = occupiedUnits.find(u => u.id === inv.unitId); if (unit) openTenantProfile(unit); }} className="text-[10px] text-indigo-600 hover:underline mt-1">View Profile {"\u2192"}</button>
+                                        </div>
+                                        <div className="text-right flex flex-col items-end gap-2">
+                                            <div>
+                                                <p className={`font-bold ${overdue ? "text-red-700" : "text-amber-700"}`}>{"\u20B9"}{remaining.toLocaleString()}</p>
+                                                <p className="text-[10px] text-amber-700">Paid ₹{paidSoFar.toLocaleString()} of ₹{total.toLocaleString()}</p>
+                                            </div>
+                                            <div className="flex gap-1.5">
+                                                <button onClick={() => openEditInvoice(inv)} className="text-xs px-3 py-1.5 bg-blue-600 text-white rounded-md font-bold hover:bg-blue-700 transition">{"\u270F\uFE0F"} Edit</button>
+                                                <button onClick={() => openSettleModal(inv)} disabled={isSettling === inv.id} className="text-xs px-3 py-1.5 bg-amber-600 hover:bg-amber-700 rounded-md font-bold transition text-white disabled:opacity-60">
+                                                    {isSettling === inv.id ? "..." : "\u2795 Add Payment"}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                )}
+
                 <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                     <div className="bg-gray-50 px-5 py-3 border-b border-gray-200 flex justify-between items-center">
-                        <h3 className="text-sm font-bold text-gray-800">Pending Invoices</h3>
-                        <span className="text-xs font-bold bg-red-100 text-red-700 px-2 py-1 rounded-full">{filteredInvoices.length} pending</span>
+                        <h3 className="text-sm font-bold text-gray-800">Unpaid Invoices</h3>
+                        <span className="text-xs font-bold bg-red-100 text-red-700 px-2 py-1 rounded-full">{unpaidInvoices.length} unpaid</span>
                     </div>
                     <div className="divide-y divide-gray-100 max-h-96 overflow-y-auto">
-                        {filteredInvoices.length === 0 ? (
-                            <p className="p-6 text-sm text-gray-500 text-center">{"\uD83C\uDF89"} No pending invoices!</p>
-                        ) : filteredInvoices.map(inv => {
+                        {unpaidInvoices.length === 0 ? (
+                            <p className="p-6 text-sm text-gray-500 text-center">{partialInvoices.length > 0 ? "No fully-unpaid invoices — everything remaining is partial 👆" : "\uD83C\uDF89 No pending invoices!"}</p>
+                        ) : unpaidInvoices.map(inv => {
                                 const overdue = isOverdue(inv.billingPeriod);
                                 const total = Number(inv.totalAmount || 0);
                                 const paidSoFar = Number(inv.amountPaid || 0);
