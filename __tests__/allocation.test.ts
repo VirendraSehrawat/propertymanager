@@ -4,6 +4,7 @@ import {
     collectedSplit,
     computeCarryForward,
     composeInvoiceTotal,
+    carryForwardFromInvoices,
 } from "@/lib/allocation";
 
 describe("allocatePartialPayment (rent-first)", () => {
@@ -203,5 +204,66 @@ describe("composeInvoiceTotal", () => {
             carryForward: -20000,
         });
         expect(r.total).toBe(0);
+    });
+});
+
+describe("carryForwardFromInvoices", () => {
+    it("sums remaining on unpaid + pending invoices", () => {
+        const cf = carryForwardFromInvoices([
+            { id: "a", status: "unpaid", totalAmount: 5000, amountPaid: 0 },
+            { id: "b", status: "pending", totalAmount: 3000, amountPaid: 1000 },
+        ]);
+        expect(cf).toBe(7000);
+    });
+
+    it("ignores paid and written-off invoices", () => {
+        const cf = carryForwardFromInvoices([
+            { id: "a", status: "paid", totalAmount: 5000, amountPaid: 5000 },
+            { id: "b", status: "written-off", totalAmount: 4000, amountPaid: 0 },
+            { id: "c", status: "unpaid", totalAmount: 2000, amountPaid: 0 },
+        ]);
+        expect(cf).toBe(2000);
+    });
+
+    it("excludes the invoice being generated / edited", () => {
+        const cf = carryForwardFromInvoices(
+            [
+                { id: "self", status: "unpaid", totalAmount: 10000, amountPaid: 0 },
+                { id: "old", status: "unpaid", totalAmount: 2988, amountPaid: 0 },
+            ],
+            { excludeInvoiceId: "self" },
+        );
+        expect(cf).toBe(2988);
+    });
+
+    it("SA-406 regression: prior partial 2988 rolls forward exactly once", () => {
+        // Reproduces the reported bug scenario.
+        // A prior electricity invoice of 2988 was fully unpaid, and this
+        // month's rent+elec invoice should show carryForward = 2988 only
+        // (not 2988 + 2988).
+        const cf = carryForwardFromInvoices(
+            [
+                { id: "prior", status: "unpaid", totalAmount: 2988, amountPaid: 0 },
+                { id: "current", status: "unpaid", totalAmount: 10488, amountPaid: 0 },
+            ],
+            { excludeInvoiceId: "current" },
+        );
+        expect(cf).toBe(2988);
+        const composed = composeInvoiceTotal({ baseRent: 7500, electricityCharge: 2988, carryForward: cf });
+        expect(composed.total).toBe(7500 + 2988 + 2988); // owed = current rent+elec + prior 2988
+    });
+
+    it("returns 0 when nothing is outstanding", () => {
+        expect(carryForwardFromInvoices([])).toBe(0);
+        expect(
+            carryForwardFromInvoices([{ id: "a", status: "paid", totalAmount: 5000, amountPaid: 5000 }]),
+        ).toBe(0);
+    });
+
+    it("clamps per-invoice due at zero (overpaid rows contribute nothing)", () => {
+        const cf = carryForwardFromInvoices([
+            { id: "a", status: "unpaid", totalAmount: 5000, amountPaid: 6000 },
+        ]);
+        expect(cf).toBe(0);
     });
 });

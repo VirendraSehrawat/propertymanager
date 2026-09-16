@@ -2,14 +2,14 @@
 "use client";
 
 import { useState } from "react";
-import { doc, updateDoc, addDoc, getDocs, collection, query, where, deleteField, writeBatch } from "firebase/firestore";
+import { doc, updateDoc, addDoc, collection, deleteField, writeBatch } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import type { Invoice, LedgerEntry, MasterInvoice, Unit } from "@/types";
 import { buildTransactionId } from "@/lib/payments";
 import {
     allocatePartialPayment,
     composeInvoiceTotal,
-    computeCarryForward,
+    carryForwardFromInvoices,
 } from "@/lib/allocation";
 import { allocateMasterPayment } from "@/lib/masterAllocation";
 import { SettlePaymentModal, type SettlePaymentSubmit } from "./modals/SettlePaymentModal";
@@ -266,9 +266,10 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
             const currReading = Number(editInvCurrReading);
             const electricityCharge = units * rate;
 
-            const ledgerSnap = await getDocs(query(collection(db, "ledger"), where("tenantEmail", "==", editInvoice.tenantEmail)));
-            const runningBalance = ledgerSnap.docs.reduce((sum: number, d: any) => sum + Number(d.data().balance || 0), 0);
-            const carryForward = computeCarryForward(runningBalance);
+            const carryForward = carryForwardFromInvoices(
+                allInvoices.filter(i => (i.tenantEmail || "") === (editInvoice.tenantEmail || "")),
+                { excludeInvoiceId: editInvoice.id },
+            );
             const { total: totalAmount } = composeInvoiceTotal({ baseRent, electricityCharge, carryForward });
 
             await updateDoc(doc(db, "invoices", editInvoice.id), {

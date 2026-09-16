@@ -614,7 +614,7 @@ export default function EmployeeDashboard() {
 
                 {/* METER READING TAB */}
                 {activeTab === "meter" && (
-                    <MeterTab occupiedUnits={occupiedUnits} allLedgerEntries={allLedgerEntries} electricityRate={electricityRate} />
+                    <MeterTab occupiedUnits={occupiedUnits} allInvoices={allInvoices} electricityRate={electricityRate} />
                 )}
 
                 {/* LEDGER TAB */}

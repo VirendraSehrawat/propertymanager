@@ -163,6 +163,54 @@ export function computeCarryForward(runningBalance: number): number {
 }
 
 /**
+ * Compute carry-forward directly from a tenant's outstanding invoices.
+ *
+ * This is the invoice-driven replacement for `computeCarryForward` (which
+ * derives carry-forward from the ledger balance). Deriving it from the
+ * ledger double-counts partial invoices — the same debt sits both in the
+ * open invoice AND as a negative ledger balance, so the next monthly
+ * invoice pulled `carryForward` on top of a pending amount that was
+ * already visible on its own row.
+ *
+ * Rules:
+ *   - Only "unpaid" / "pending" invoices contribute.
+ *   - "paid" and "written-off" are excluded.
+ *   - Optionally exclude one invoice by id (the one being generated /
+ *     edited right now — we don't want it to reference itself).
+ *   - Advance credit (a paid invoice with `amountPaid > totalAmount`)
+ *     is not captured here; that lives on the ledger. Callers that need
+ *     to apply credit can subtract it separately, but the common case
+ *     — outstanding debt from prior partials — is fully covered.
+ *
+ *   carryForward = Σ (totalAmount − amountPaid)   for open invoices
+ */
+export interface CarryForwardInvoice {
+    id: string;
+    status?: string;
+    totalAmount?: number;
+    amountPaid?: number;
+}
+
+export function carryForwardFromInvoices(
+    invoices: CarryForwardInvoice[],
+    opts: { excludeInvoiceId?: string } = {},
+): number {
+    const { excludeInvoiceId } = opts;
+    let owed = 0;
+    for (const inv of invoices) {
+        if (!inv) continue;
+        if (excludeInvoiceId && inv.id === excludeInvoiceId) continue;
+        const status = inv.status || "unpaid";
+        if (status !== "unpaid" && status !== "pending") continue;
+        const total = Number(inv.totalAmount || 0);
+        const paid = Number(inv.amountPaid || 0);
+        const due = Math.max(0, total - paid);
+        owed += due;
+    }
+    return Math.round(owed);
+}
+
+/**
  * Compose the final total for a new monthly invoice.
  *
  *   total = max(0, rent + electricity + carryForward)

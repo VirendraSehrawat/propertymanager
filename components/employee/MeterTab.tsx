@@ -1,15 +1,15 @@
 "use client";
 
 import { useState } from "react";
-import { doc, getDoc, getDocs, query, where, collection, writeBatch, deleteField } from "firebase/firestore";
+import { doc, getDoc, writeBatch, deleteField } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { computeRentPeriod, computeElectricityPeriod } from "@/lib/billingPeriods";
-import { computeCarryForward, composeInvoiceTotal } from "@/lib/allocation";
-import type { Unit, LedgerEntry } from "@/types";
+import { carryForwardFromInvoices, composeInvoiceTotal } from "@/lib/allocation";
+import type { Unit, Invoice } from "@/types";
 
 interface MeterTabProps {
     occupiedUnits: Unit[];
-    allLedgerEntries: LedgerEntry[];
+    allInvoices: Invoice[];
     electricityRate: number;
 }
 
@@ -23,7 +23,7 @@ interface MeterTabProps {
  * `units` and `ledger`; this component only performs one-shot reads on
  * submit and a batched write.
  */
-export function MeterTab({ occupiedUnits, allLedgerEntries, electricityRate }: MeterTabProps) {
+export function MeterTab({ occupiedUnits, allInvoices, electricityRate }: MeterTabProps) {
     const [selectedMeterUnit, setSelectedMeterUnit] = useState("");
     const [currentReading, setCurrentReading] = useState("");
     const [previousReadingOverride, setPreviousReadingOverride] = useState("");
@@ -83,9 +83,10 @@ export function MeterTab({ occupiedUnits, allLedgerEntries, electricityRate }: M
             const effectiveRate = Number(unit.electricityRate) > 0 ? Number(unit.electricityRate) : electricityRate;
             const electricityCharge = unitsConsumed * effectiveRate;
 
-            const ledgerSnap = await getDocs(query(collection(db, "ledger"), where("tenantEmail", "==", unit.tenantEmail)));
-            const runningBalance = ledgerSnap.docs.reduce((sum, d) => sum + Number(d.data().balance || 0), 0);
-            const carryForward = computeCarryForward(runningBalance);
+            const carryForward = carryForwardFromInvoices(
+                allInvoices.filter((i) => (i.tenantEmail || "") === (unit.tenantEmail || "")),
+                { excludeInvoiceId: invoiceId },
+            );
             const baseRent = Number(unit.baseRent || 0);
             const { total: totalAmount } = composeInvoiceTotal({ baseRent, electricityCharge, carryForward });
 
@@ -255,10 +256,12 @@ export function MeterTab({ occupiedUnits, allLedgerEntries, electricityRate }: M
                             : Math.max(0, Number(currentReading) - prev);
                     const effectiveRate = Number(selectedUnit.electricityRate) > 0 ? Number(selectedUnit.electricityRate) : electricityRate;
                     const elecCharge = consumed * effectiveRate;
-                    const runningBalance = allLedgerEntries
-                        .filter((l) => (l.tenantEmail || "") === (selectedUnit.tenantEmail || ""))
-                        .reduce((s: number, l) => s + Number(l.balance || 0), 0);
-                    const carryForward = computeCarryForward(runningBalance);
+                    const [pYear, pMonth] = billingMonth.split("-");
+                    const previewInvoiceId = `inv_${selectedUnit.id}_${pMonth}_${pYear}`;
+                    const carryForward = carryForwardFromInvoices(
+                        allInvoices.filter((i) => (i.tenantEmail || "") === (selectedUnit.tenantEmail || "")),
+                        { excludeInvoiceId: previewInvoiceId },
+                    );
                     const rent = Number(selectedUnit.baseRent || 0);
                     const { total } = composeInvoiceTotal({ baseRent: rent, electricityCharge: elecCharge, carryForward });
                     return (

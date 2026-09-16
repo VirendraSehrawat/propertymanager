@@ -8,7 +8,7 @@ import { signOut } from "firebase/auth";
 import { collection, addDoc, onSnapshot, query, orderBy, where, doc, updateDoc, setDoc, getDocs, writeBatch, deleteDoc, getDoc, deleteField } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
 import { useUploadWithProgress, UploadProgressBar } from "@/lib/useUpload";
-import { collectedSplit } from "@/lib/allocation";
+import { collectedSplit, carryForwardFromInvoices } from "@/lib/allocation";
 import { mapSnapshot } from "@/lib/firestore";
 import type {
     LedgerEntry,
@@ -486,10 +486,12 @@ export default function AdminDashboard() {
             const electricityCharge = needsMeter ? unitsConsumed * electricityRate : 0;
             const baseRentApplied = singleInvChargeType === "electricity" ? 0 : Number(unit.baseRent || 0);
 
-            // Fetch carry-forward
-            const ledgerSnap = await getDocs(query(collection(db, "ledger"), where("tenantEmail", "==", unit.tenantEmail)));
-            const runningBalance = ledgerSnap.docs.reduce((sum, d) => sum + Number(d.data().balance || 0), 0);
-            const carryForward = -runningBalance;
+            // Fetch carry-forward from other outstanding invoices for this tenant.
+            // (Excludes the invoice we're about to write so it doesn't reference itself.)
+            const carryForward = carryForwardFromInvoices(
+                allInvoicesForDashboard.filter(i => (i.tenantEmail || "") === (unit.tenantEmail || "")),
+                { excludeInvoiceId: invoiceId },
+            );
             const baseTotal = baseRentApplied + electricityCharge;
             const totalAmount = Math.max(0, baseTotal + carryForward);
 
