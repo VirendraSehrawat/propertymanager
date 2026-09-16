@@ -113,9 +113,8 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
         .filter(inv => !inv.masterInvoiceId)
         .slice()
         .sort((a, b) => String(a.unitNumber || "").localeCompare(String(b.unitNumber || ""), undefined, { numeric: true, sensitivity: "base" }));
-    // Settled collections stream: paid invoices + partially-paid invoices,
-    // sorted by most recent activity date (paidAt / last ledger entry / createdAt).
-    // Partial rows carry `_effectiveDate` so day-grouping works uniformly.
+    // Settled collections stream: only fully paid invoices.
+    // Partials render in the Pending / Unpaid section (amber row + Add Payment).
     const lastLedgerAtByInvoice = new Map<string, string>();
     for (const le of allLedgerEntries) {
         if (!le.invoiceId) continue;
@@ -126,22 +125,11 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
     }
     type SettledRow = Invoice & { _effectiveDate: string; _isPartial: boolean };
     const settledInvoices: SettledRow[] = allInvoices
-        .filter(inv => {
-            if (inv.status === "paid") return true;
-            if (inv.status === "unpaid" || inv.status === "pending") {
-                const total = Number(inv.totalAmount || 0);
-                const paid = Number(inv.amountPaid || 0);
-                return paid > 0 && paid < total;
-            }
-            return false;
-        })
+        .filter(inv => inv.status === "paid")
         .map(inv => {
-            const _isPartial = inv.status !== "paid";
             const ledgerAt = lastLedgerAtByInvoice.get(inv.id);
-            const _effectiveDate = _isPartial
-                ? (ledgerAt || inv.createdAt || "")
-                : (inv.paidAt || ledgerAt || inv.createdAt || "");
-            return { ...inv, _effectiveDate, _isPartial };
+            const _effectiveDate = inv.paidAt || ledgerAt || inv.createdAt || "";
+            return { ...inv, _effectiveDate, _isPartial: false };
         })
         .sort((a, b) => b._effectiveDate.localeCompare(a._effectiveDate));
     const [settledLimit, setSettledLimit] = useState(20);
@@ -168,14 +156,16 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
         : collectionFilter === "overdue"
         ? pendingInvoices.filter(inv => isOverdue(inv.billingPeriod))
         : pendingInvoices.filter(inv => norm(inv.billingPeriod) === collectionFilter);
-    // Split pending into partial (has some amountPaid) vs unpaid (nothing collected yet)
+    // Pending / Unpaid section renders ALL open invoices (both fully unpaid
+    // and partially paid). Partial rows get an amber row + "Add Payment" CTA
+    // via `isPartial` inside the row body — see the render below.
     const isPartialInvoice = (inv: Invoice) => {
         const total = Number(inv.totalAmount || 0);
         const paid = Number(inv.amountPaid || 0);
         return paid > 0 && paid < total;
     };
     const partialInvoices = filteredInvoices.filter(isPartialInvoice);
-    const unpaidInvoices = filteredInvoices.filter(inv => !isPartialInvoice(inv));
+    const unpaidInvoices = filteredInvoices;
 
     // Written-off (uncollectible — tenant absconded etc.). Respects the active month filter.
     const writtenOffInvoices = allInvoices
@@ -464,12 +454,12 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
 
                 <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                     <div className="bg-gray-50 px-5 py-3 border-b border-gray-200 flex justify-between items-center">
-                        <h3 className="text-sm font-bold text-gray-800">Unpaid Invoices</h3>
-                        <span className="text-xs font-bold bg-red-100 text-red-700 px-2 py-1 rounded-full">{unpaidInvoices.length} unpaid</span>
+                        <h3 className="text-sm font-bold text-gray-800">Pending Invoices</h3>
+                        <span className="text-xs font-bold bg-red-100 text-red-700 px-2 py-1 rounded-full">{unpaidInvoices.length} pending{partialInvoices.length > 0 ? ` · ${partialInvoices.length} partial` : ""}</span>
                     </div>
                     <div className="divide-y divide-gray-100 max-h-96 overflow-y-auto">
                         {unpaidInvoices.length === 0 ? (
-                            <p className="p-6 text-sm text-gray-500 text-center">{partialInvoices.length > 0 ? "No fully-unpaid invoices — everything remaining is partial 👆" : "\uD83C\uDF89 No pending invoices!"}</p>
+                            <p className="p-6 text-sm text-gray-500 text-center">🎉 No pending invoices!</p>
                         ) : unpaidInvoices.map(inv => {
                                 const overdue = isOverdue(inv.billingPeriod);
                                 const total = Number(inv.totalAmount || 0);
