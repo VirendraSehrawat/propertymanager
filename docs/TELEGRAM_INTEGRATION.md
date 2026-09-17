@@ -5,6 +5,23 @@ to notify tenants, managers and admins about invoicing and payment events.
 
 Status: **Design proposal** — not yet implemented.
 
+> **Update (Sep 2026):** Phases **P1–P3** implemented in
+> [commit history](https://github.com/VirendraSehrawat/propertymanager/commits/main).
+> Files shipped:
+>
+> - `lib/telegram/{esc,client,messages,recipients}.ts` — server-side bot client + HTML-escape helper + audit log on `tgMessages`
+> - `app/api/telegram/webhook/route.ts` — `/start <code>`, `/stop`, `/status`, `/help`
+> - `app/api/telegram/link-code/route.ts` — issues (or reuses) a one-time code + builds `t.me/<bot>?start=<code>` deep-link
+> - `app/api/notifications/invoice-created/route.ts` — admin + tenant fan-out on invoice generation
+> - `app/api/notifications/payment-recorded/route.ts` — admin + tenant fan-out on settle (partial + full variants)
+> - `lib/notify.ts` — fire-and-forget client helpers (never throw)
+> - `components/tenant/LinkTelegramCard.tsx` — onboarding CTA on the tenant dashboard
+> - Wired: `components/employee/MeterTab.tsx` → invoice-created ; `components/employee/CollectionsTab.tsx` (settle) → payment-recorded
+> - Uses `parse_mode: "HTML"` (simpler escape rules than MarkdownV2)
+>
+> **Not yet shipped** (deferred): P4 overdue sweep cron, P5 admin delivery-health tile, tenant channel preference for WhatsApp fan-out.
+
+
 Telegram is proposed as a **lighter-weight, free alternative** to the
 [WhatsApp integration](./WHATSAPP_INTEGRATION.md). Both can co-exist — tenants
 pick their preferred channel in their profile.

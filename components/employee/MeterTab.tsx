@@ -5,6 +5,7 @@ import { doc, getDoc, writeBatch, deleteField } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { computeRentPeriod, computeElectricityPeriod } from "@/lib/billingPeriods";
 import { carryForwardFromInvoices, composeInvoiceTotal } from "@/lib/allocation";
+import { notifyInvoiceCreated } from "@/lib/notify";
 import type { Unit, Invoice } from "@/types";
 
 interface MeterTabProps {
@@ -115,6 +116,9 @@ export function MeterTab({ occupiedUnits, allInvoices, electricityRate }: MeterT
 
             batch.update(doc(db, "units", unit.id), { lastMeterReading: reading });
             await batch.commit();
+
+            // Fire-and-forget Telegram notification (admin + tenant if linked).
+            notifyInvoiceCreated(invoiceId);
 
             const cfMsg = carryForward !== 0 ? `\n${carryForward > 0 ? "⚠️ Previous Balance Due" : "✓ Advance / Credit"}: ${carryForward > 0 ? "+" : "−"}₹${Math.abs(carryForward).toLocaleString()}` : "";
             const meterNote = meterChanged ? "\n⚠️ Meter was changed — units entered manually" : "";

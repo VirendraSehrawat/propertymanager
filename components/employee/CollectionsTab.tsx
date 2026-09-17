@@ -12,6 +12,7 @@ import {
     carryForwardFromInvoices,
 } from "@/lib/allocation";
 import { allocateMasterPayment } from "@/lib/masterAllocation";
+import { notifyPaymentRecorded } from "@/lib/notify";
 import { SettlePaymentModal, type SettlePaymentSubmit } from "./modals/SettlePaymentModal";
 import { SettleMasterInvoiceModal, type SettleMasterSubmit } from "./modals/SettleMasterInvoiceModal";
 
@@ -207,7 +208,7 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                 transactionId: txnId,
                 ...(note.trim() ? { paymentNote: note.trim() } : {}),
             });
-            await addDoc(collection(db, "ledger"), {
+            const ledgerRef = await addDoc(collection(db, "ledger"), {
                 tenantEmail: inv.tenantEmail,
                 unitId: inv.unitId,
                 unitNumber: inv.unitNumber,
@@ -223,6 +224,15 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                 type: alloc.fullyPaid ? "payment" : "partial-payment",
                 settledBy: "employee",
                 createdAt: new Date().toISOString(),
+            });
+            // Fire-and-forget Telegram notification.
+            notifyPaymentRecorded({
+                invoiceId: inv.id,
+                amount: received,
+                fully: alloc.fullyPaid,
+                mode,
+                reference: reference.trim() || undefined,
+                ledgerId: ledgerRef.id,
             });
             setSettleInvoice(null);
         } catch (error) {

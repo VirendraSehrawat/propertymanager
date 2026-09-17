@@ -9,6 +9,7 @@ import { auth, db } from "@/lib/firebase";
 import { collection, query, where, onSnapshot, doc, getDoc, addDoc, updateDoc } from "firebase/firestore";
 import { useUploadWithProgress, UploadProgressBar } from "@/lib/useUpload";
 import { mapSnapshot } from "@/lib/firestore";
+import { LinkTelegramCard } from "@/components/tenant/LinkTelegramCard";
 import type {
     Announcement,
     Application,
@@ -210,6 +211,10 @@ export default function TenantDashboard() {
             </nav>
 
             <main className="p-6 max-w-4xl mx-auto mt-4 space-y-6">
+
+                {user?.email && (
+                    <LinkTelegramCard email={user.email} unitNumber={unit?.unitNumber} />
+                )}
 
                 {/* --- NEW: TENANT NOTICE BOARD --- */}
                 {relevantAnnouncements.length > 0 && (

@@ -284,6 +284,19 @@ export interface AppUser {
     phone?: string;
     role: "admin" | "employee" | "tenant";
     createdAt: string;
+    /** Unit number the tenant occupies (denormalized for /status command). */
+    unitNumber?: string;
+    // ── Telegram integration (see docs/TELEGRAM_INTEGRATION.md §4.1) ──
+    /** Numeric chat id set once the user completes `/start <code>`. */
+    telegramChatId?: string;
+    /** Optional Telegram @username captured from the webhook update. */
+    telegramUsername?: string;
+    /** True after `/start <code>`, false after `/stop`. */
+    telegramOptIn?: boolean;
+    /** ISO timestamp of last opt-in. */
+    telegramOptInAt?: string;
+    /** One-time code used inside the `t.me/<bot>?start=<code>` deep-link. */
+    telegramLinkCode?: string;
 }
 
 /**
