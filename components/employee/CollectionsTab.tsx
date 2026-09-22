@@ -57,6 +57,27 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
     // Write-off (mark uncollectible — tenant absconded etc.)
     const [writingOff, setWritingOff] = useState("");
 
+    /**
+     * One-click self-heal: closes an invoice whose stored amountPaid already
+     * covers totalAmount but whose status is still "unpaid" / "pending".
+     * Happens when the older DailyLedger auto-settle used strict >= (fixed
+     * separately) or when an admin lowered an invoice's total via Edit
+     * without also flipping the status.
+     */
+    async function handleCloseAlreadyPaid(inv: Invoice) {
+        setIsSettling(inv.id);
+        try {
+            await updateDoc(doc(db, "invoices", inv.id), {
+                status: "paid",
+                paidAt: new Date().toISOString(),
+            });
+        } catch (e) {
+            alert(e instanceof Error ? e.message : String(e));
+        } finally {
+            setIsSettling("");
+        }
+    }
+
     async function handleWriteOff(inv: Invoice) {
         const reason = window.prompt(
             `Mark invoice ${inv.unitNumber} · ${inv.billingPeriod} as UNCOLLECTIBLE?\n\n` +
@@ -272,6 +293,12 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
             );
             const { total: totalAmount } = composeInvoiceTotal({ baseRent, electricityCharge, carryForward });
 
+            // If existing amountPaid already covers the new (possibly lower)
+            // totalAmount, flip the invoice to "paid" — handles the case where
+            // an admin lowers rent/elec on an already-partly-paid invoice.
+            const existingPaid = Number(editInvoice.amountPaid || 0);
+            const shouldClose = existingPaid > 0 && existingPaid >= totalAmount - 0.5;
+
             await updateDoc(doc(db, "invoices", editInvoice.id), {
                 baseRent,
                 electricityRate: rate,
@@ -282,6 +309,7 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                 billingPeriod: editInvBillingMonth,
                 ...(carryForward !== 0 ? { carryForward } : { carryForward: deleteField() }),
                 totalAmount,
+                ...(shouldClose ? { status: "paid", paidAt: new Date().toISOString() } : {}),
             });
 
             if (editInvoice.unitId && currReading !== Number(editInvoice.currentReading || 0)) {
@@ -476,6 +504,8 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                                 const paidSoFar = Number(inv.amountPaid || 0);
                                 const remaining = Math.max(0, total - paidSoFar);
                                 const isPartial = paidSoFar > 0 && paidSoFar < total;
+                                // Self-heal: paid enough but status not flipped (legacy / rounding).
+                                const alreadyCovered = paidSoFar >= total - 0.5 && total > 0;
                                 return (
                                     <div key={inv.id} className={`px-5 py-4 flex justify-between items-center ${overdue ? "bg-red-50 hover:bg-red-100 border-l-4 border-l-red-400" : isPartial ? "bg-amber-50/40 hover:bg-amber-50 border-l-4 border-l-amber-400" : "hover:bg-gray-50"}`}>
                                         <div>
@@ -506,9 +536,15 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                                             </div>
                                             <div className="flex gap-1.5 flex-wrap justify-end">
                                                 <button onClick={() => openEditInvoice(inv)} className="text-xs px-3 py-1.5 bg-blue-600 text-white rounded-md font-bold hover:bg-blue-700 transition">{"\u270F\uFE0F"} Edit</button>
-                                                <button onClick={() => openSettleModal(inv)} disabled={isSettling === inv.id} className={`text-xs px-3 py-1.5 rounded-md font-bold transition text-white disabled:opacity-60 ${isPartial ? "bg-amber-600 hover:bg-amber-700" : "bg-green-600 hover:bg-green-700"}`}>
-                                                    {isSettling === inv.id ? "..." : isPartial ? "\u2795 Add Payment" : "\u2713 Settle"}
-                                                </button>
+                                                {alreadyCovered ? (
+                                                    <button onClick={() => handleCloseAlreadyPaid(inv)} disabled={isSettling === inv.id} className="text-xs px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 rounded-md font-bold transition text-white disabled:opacity-60" title="Amount collected already covers this invoice — mark it paid.">
+                                                        {isSettling === inv.id ? "..." : "\u2705 Close (paid)"}
+                                                    </button>
+                                                ) : (
+                                                    <button onClick={() => openSettleModal(inv)} disabled={isSettling === inv.id} className={`text-xs px-3 py-1.5 rounded-md font-bold transition text-white disabled:opacity-60 ${isPartial ? "bg-amber-600 hover:bg-amber-700" : "bg-green-600 hover:bg-green-700"}`}>
+                                                        {isSettling === inv.id ? "..." : isPartial ? "\u2795 Add Payment" : "\u2713 Settle"}
+                                                    </button>
+                                                )}
                                                 <button onClick={() => handleWriteOff(inv)} disabled={writingOff === inv.id} className="text-xs px-2 py-1.5 bg-gray-100 text-gray-600 border border-gray-300 rounded-md font-bold hover:bg-gray-200 transition disabled:opacity-60" title="Mark uncollectible (tenant absconded)">
                                                     {writingOff === inv.id ? "..." : "🚫"}
                                                 </button>

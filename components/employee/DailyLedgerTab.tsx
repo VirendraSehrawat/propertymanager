@@ -226,7 +226,9 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
                 const paying = Number(amount);
                 const applied = Math.min(paying, remaining);
                 const newPaid = alreadyPaid + applied;
-                const fullySettled = newPaid >= invoiceTotal;
+                // 0.5₹ tolerance so paise-level rounding drift can't leave
+                // an invoice stuck in "unpaid" after the total is covered.
+                const fullySettled = newPaid >= invoiceTotal - 0.5;
 
                 if (fullySettled) {
                     await updateDoc(doc(db, "invoices", targetInvoice.id), {
