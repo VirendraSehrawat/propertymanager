@@ -140,6 +140,43 @@ export function collectedSplit(invoice: {
 }
 
 /**
+ * Split an invoice's still-outstanding balance into Rent / Electricity
+ * buckets using the same rent-first rule as `collectedSplit`.
+ *
+ *   pendingRent        = max(0, rent − collectedRent)
+ *   pendingElectricity = max(0, electricity − collectedElectricity)
+ *   pendingTotal       = pendingRent + pendingElectricity
+ *
+ * Written-off invoices contribute zero pending (they're removed from
+ * collections, not still due). "paid" invoices also contribute zero.
+ *
+ * Used by the Employee Home "Pending Collections" tile, the Collections
+ * tab "Pending Rent / Electricity" tiles and the Overdue total — so a
+ * partially collected invoice no longer overstates what's still due.
+ */
+export function pendingSplit(invoice: {
+    status?: string;
+    amountPaid?: number;
+    baseRent?: number;
+    electricityCharge?: number;
+    totalAmount?: number;
+}): { pendingRent: number; pendingElectricity: number; pendingTotal: number } {
+    if (invoice.status === "paid" || invoice.status === "written-off") {
+        return { pendingRent: 0, pendingElectricity: 0, pendingTotal: 0 };
+    }
+    const rent = Math.max(0, Number(invoice.baseRent) || 0);
+    const elec = Math.max(0, Number(invoice.electricityCharge) || 0);
+    const { collectedRent, collectedElectricity } = collectedSplit(invoice);
+    const pendingRent = Math.max(0, rent - collectedRent);
+    const pendingElectricity = Math.max(0, elec - collectedElectricity);
+    return {
+        pendingRent,
+        pendingElectricity,
+        pendingTotal: pendingRent + pendingElectricity,
+    };
+}
+
+/**
  * Compute how much of a previous unpaid balance rolls into this month's
  * invoice.
  *

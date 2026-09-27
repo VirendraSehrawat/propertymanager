@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { collectedSplit, pendingSplit } from "@/lib/allocation";
 
 interface Unit {
     id: string;
@@ -88,21 +89,20 @@ export function MonthlyOverviewTab({ allUnits, buildings, allInvoices }: Props) 
 
             const total = Number(invoice.totalAmount || 0);
             const paid = Number(invoice.amountPaid || 0);
-            const rent = Number(invoice.baseRent || 0);
-            const electricity = Number(invoice.electricityCharge || 0);
 
             const isFullyPaid = invoice.status === "paid" || paid >= total;
 
             if (isFullyPaid) {
                 groups.paid.push({ unit, invoice, buildingName });
             } else {
-                // Split unpaid heuristic: if electricity is a significant portion, tag as electricity pending too
-                const rentUnpaid = rent > paid; // rough: rent > amountPaid so rent portion outstanding
-                const electricityUnpaid = electricity > 0 && paid < total; // any electricity + not fully paid
-
-                if (rentUnpaid) groups.rentPending.push({ unit, invoice, buildingName });
-                else if (electricityUnpaid) groups.electricityPending.push({ unit, invoice, buildingName });
-                else groups.rentPending.push({ unit, invoice, buildingName });
+                // Rent-first classification: pending rent takes precedence,
+                // then pending electricity. Matches `pendingSplit` so a
+                // partial payment moves the invoice out of "Rent Pending"
+                // only once rent is fully covered.
+                const { pendingRent, pendingElectricity } = pendingSplit(invoice);
+                if (pendingRent > 0) groups.rentPending.push({ unit, invoice, buildingName });
+                else if (pendingElectricity > 0) groups.electricityPending.push({ unit, invoice, buildingName });
+                else groups.paid.push({ unit, invoice, buildingName });
             }
         });
 
@@ -110,15 +110,38 @@ export function MonthlyOverviewTab({ allUnits, buildings, allInvoices }: Props) 
     }, [scopedUnits, allInvoices, monthLabel, buildings]);
 
     const totals = useMemo(() => {
+        // Rent-first: sum the *outstanding* rent/electricity buckets across
+        // every invoice in the non-paid group. The old logic bucketed the
+        // whole `total − paid` remainder under a single group, so a partial
+        // that owed both ₹ rent and ₹ elec was double-counted as rent-only.
+        const rentFirstDue = (arr: Array<{ invoice?: Invoice }>) => {
+            let rent = 0, elec = 0, paidSoFar = 0, totalAmt = 0;
+            arr.forEach(r => {
+                if (!r.invoice) return;
+                const { pendingRent, pendingElectricity } = pendingSplit(r.invoice);
+                const { collectedTotal } = collectedSplit(r.invoice);
+                rent += pendingRent;
+                elec += pendingElectricity;
+                paidSoFar += collectedTotal;
+                totalAmt += Number(r.invoice.totalAmount || 0);
+            });
+            return { total: totalAmt, paid: paidSoFar, due: rent + elec, dueRent: rent, dueElec: elec };
+        };
         const collectAmounts = (arr: Array<{ invoice?: Invoice }>) => {
-            const totalAmt = arr.reduce((s, r) => s + Number(r.invoice?.totalAmount || 0), 0);
-            const paidAmt = arr.reduce((s, r) => s + Number(r.invoice?.amountPaid || 0), 0);
-            return { total: totalAmt, paid: paidAmt, due: totalAmt - paidAmt };
+            // Paid group: sum collected using the same rent-first rule so
+            // legacy paid invoices (amountPaid=0, status=paid) still show ₹.
+            let paidAmt = 0, totalAmt = 0;
+            arr.forEach(r => {
+                if (!r.invoice) return;
+                paidAmt += collectedSplit(r.invoice).collectedTotal;
+                totalAmt += Number(r.invoice.totalAmount || 0);
+            });
+            return { total: totalAmt, paid: paidAmt, due: Math.max(0, totalAmt - paidAmt) };
         };
         return {
             paid: collectAmounts(grouped.paid),
-            rentPending: collectAmounts(grouped.rentPending),
-            electricityPending: collectAmounts(grouped.electricityPending),
+            rentPending: rentFirstDue(grouped.rentPending),
+            electricityPending: rentFirstDue(grouped.electricityPending),
             noInvoice: { total: 0, paid: 0, due: 0 },
         };
     }, [grouped]);

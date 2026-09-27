@@ -5,6 +5,7 @@ import {
     computeCarryForward,
     composeInvoiceTotal,
     carryForwardFromInvoices,
+    pendingSplit,
 } from "@/lib/allocation";
 
 describe("allocatePartialPayment (rent-first)", () => {
@@ -265,5 +266,102 @@ describe("carryForwardFromInvoices", () => {
             { id: "a", status: "unpaid", totalAmount: 5000, amountPaid: 6000 },
         ]);
         expect(cf).toBe(0);
+    });
+});
+
+describe("pendingSplit (rent-first outstanding)", () => {
+    const invoice = {
+        status: "pending",
+        totalAmount: 6200,
+        baseRent: 5000,
+        electricityCharge: 1200,
+        amountPaid: 0,
+    };
+
+    it("fully unpaid invoice → rent + elec are fully pending", () => {
+        const p = pendingSplit({ ...invoice, status: "unpaid" });
+        expect(p.pendingRent).toBe(5000);
+        expect(p.pendingElectricity).toBe(1200);
+        expect(p.pendingTotal).toBe(6200);
+    });
+
+    it("partial under rent → only rent pending shrinks; electricity still fully due", () => {
+        const p = pendingSplit({ ...invoice, amountPaid: 3000 });
+        expect(p.pendingRent).toBe(2000);
+        expect(p.pendingElectricity).toBe(1200);
+        expect(p.pendingTotal).toBe(3200);
+    });
+
+    it("partial that exactly covers rent → only electricity pending", () => {
+        const p = pendingSplit({ ...invoice, amountPaid: 5000 });
+        expect(p.pendingRent).toBe(0);
+        expect(p.pendingElectricity).toBe(1200);
+        expect(p.pendingTotal).toBe(1200);
+    });
+
+    it("partial overflowing into electricity → shrinks both buckets", () => {
+        const p = pendingSplit({ ...invoice, amountPaid: 5500 });
+        expect(p.pendingRent).toBe(0);
+        expect(p.pendingElectricity).toBe(700);
+        expect(p.pendingTotal).toBe(700);
+    });
+
+    it("paid status → nothing pending", () => {
+        expect(
+            pendingSplit({ ...invoice, status: "paid", amountPaid: 6200 }).pendingTotal,
+        ).toBe(0);
+    });
+
+    it("written-off status → nothing pending (excluded from collections)", () => {
+        expect(
+            pendingSplit({ ...invoice, status: "written-off", amountPaid: 0 }).pendingTotal,
+        ).toBe(0);
+    });
+
+    it("collectedSplit + pendingSplit always sum to totalAmount for open invoices", () => {
+        const inv = { ...invoice, amountPaid: 4200 };
+        const c = collectedSplit(inv);
+        const p = pendingSplit(inv);
+        expect(c.collectedTotal + p.pendingTotal).toBe(inv.totalAmount);
+    });
+});
+
+describe("employee page — pending totals include partial payments", () => {
+    // Simulates the three fixed call sites: HomeTab "Pending Collections",
+    // CollectionsTab "Pending Rent / Electricity", CollectionsTab "Overdue".
+    const invoices = [
+        // Fully unpaid rent+elec
+        { id: "a", status: "unpaid", totalAmount: 6200, baseRent: 5000, electricityCharge: 1200, amountPaid: 0 },
+        // Partial: ₹3000 already collected (rent-first → 3000 rent, 0 elec)
+        { id: "b", status: "pending", totalAmount: 6200, baseRent: 5000, electricityCharge: 1200, amountPaid: 3000 },
+        // Partial: rent fully paid, elec half paid (5000 + 600)
+        { id: "c", status: "pending", totalAmount: 6200, baseRent: 5000, electricityCharge: 1200, amountPaid: 5600 },
+        // Paid — must NOT contribute
+        { id: "d", status: "paid", totalAmount: 6200, baseRent: 5000, electricityCharge: 1200, amountPaid: 6200 },
+    ];
+
+    it("total pending amount = Σ (total − paid) across open invoices", () => {
+        const total = invoices.reduce((s, inv) => s + pendingSplit(inv).pendingTotal, 0);
+        // a: 6200 due, b: 3200 due, c: 600 due, d: 0
+        expect(total).toBe(6200 + 3200 + 600);
+    });
+
+    it("pending rent tile uses rent-first split (partials shrink rent bucket)", () => {
+        const totalRent = invoices.reduce((s, inv) => s + pendingSplit(inv).pendingRent, 0);
+        // a: 5000, b: 2000 (5000−3000), c: 0, d: 0
+        expect(totalRent).toBe(5000 + 2000);
+    });
+
+    it("pending electricity tile only fills after rent (partials shrink elec bucket)", () => {
+        const totalElec = invoices.reduce((s, inv) => s + pendingSplit(inv).pendingElectricity, 0);
+        // a: 1200, b: 1200 (rent not fully covered → elec fully due), c: 600, d: 0
+        expect(totalElec).toBe(1200 + 1200 + 600);
+    });
+
+    it("rent + elec pending tiles reconcile to the pending-collections KPI", () => {
+        const rent = invoices.reduce((s, inv) => s + pendingSplit(inv).pendingRent, 0);
+        const elec = invoices.reduce((s, inv) => s + pendingSplit(inv).pendingElectricity, 0);
+        const total = invoices.reduce((s, inv) => s + pendingSplit(inv).pendingTotal, 0);
+        expect(rent + elec).toBe(total);
     });
 });

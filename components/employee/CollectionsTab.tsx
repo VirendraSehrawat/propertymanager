@@ -10,6 +10,7 @@ import {
     allocatePartialPayment,
     composeInvoiceTotal,
     carryForwardFromInvoices,
+    pendingSplit,
 } from "@/lib/allocation";
 import { allocateMasterPayment } from "@/lib/masterAllocation";
 import { notifyPaymentRecorded } from "@/lib/notify";
@@ -196,11 +197,24 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
         .slice()
         .sort((a, b) => (b.writtenOffAt || b.createdAt || "").localeCompare(a.writtenOffAt || a.createdAt || ""));
     const writtenOffTotal = writtenOffInvoices.reduce((s, inv) => s + Math.max(0, Number(inv.totalAmount || 0) - Number(inv.amountPaid || 0)), 0);
-    const totalPendingRent = filteredInvoices.reduce((sum, inv) => sum + Number(inv.baseRent || 0), 0);
-    const totalPendingElec = filteredInvoices.reduce((sum, inv) => sum + Number(inv.electricityCharge || 0), 0);
+    // Rent-first split of the still-outstanding balance across every open
+    // invoice in view. Deducts any partial payments (amountPaid) so the
+    // "Pending Rent / Electricity" tiles reflect what's actually due.
+    const { totalPendingRent, totalPendingElec } = filteredInvoices.reduce(
+        (acc, inv) => {
+            const { pendingRent, pendingElectricity } = pendingSplit(inv);
+            acc.totalPendingRent += pendingRent;
+            acc.totalPendingElec += pendingElectricity;
+            return acc;
+        },
+        { totalPendingRent: 0, totalPendingElec: 0 },
+    );
 
     const overdueCount = pendingInvoices.filter(inv => isOverdue(inv.billingPeriod)).length;
-    const overdueAmount = pendingInvoices.filter(inv => isOverdue(inv.billingPeriod)).reduce((sum, inv) => sum + Number(inv.totalAmount || 0), 0);
+    // Sum outstanding (total − paid) not total, so partial payments are honoured.
+    const overdueAmount = pendingInvoices
+        .filter(inv => isOverdue(inv.billingPeriod))
+        .reduce((sum, inv) => sum + pendingSplit(inv).pendingTotal, 0);
 
     const openSettleModal = (inv: Invoice) => {
         setSettleInvoice(inv);

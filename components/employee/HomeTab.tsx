@@ -2,6 +2,7 @@
 
 import type { Invoice, Unit, MaintenanceTicket, Expense, LedgerEntry } from "@/types";
 import { MonthCollectionsCard } from "./MonthCollectionsCard";
+import { pendingSplit } from "@/lib/allocation";
 
 export type HomeTabNavTarget =
     | "home"
@@ -59,7 +60,12 @@ export function HomeTab({
     openTenantProfile,
 }: HomeTabProps) {
     const pendingInvoices = allInvoices.filter(inv => inv.status === "unpaid" || inv.status === "pending");
-    const totalPendingAmount = pendingInvoices.reduce((sum, inv) => sum + Number(inv.totalAmount || 0), 0);
+    // Sum only the *outstanding* balance so partial payments (amountPaid) are
+    // deducted. Previously this summed totalAmount and overstated the KPI.
+    const totalPendingAmount = pendingInvoices.reduce(
+        (sum, inv) => sum + pendingSplit(inv).pendingTotal,
+        0,
+    );
 
     // Overdue: billing period is a past month
     const now = new Date();
