@@ -44,6 +44,26 @@ export function MeterTab({ occupiedUnits, allInvoices, electricityRate }: MeterT
         if (!meterChanged && !currentReading) return;
         if (meterChanged && !manualUnitsConsumed) return;
 
+        // Guard: billing month is what stamps `billingPeriod` on the invoice.
+        // If the user leaves it on a past month by accident, warn before
+        // generating so we don't backdate rent/electricity to the wrong period.
+        const now = new Date();
+        const nowYm = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+        if (billingMonth < nowYm) {
+            const chosenLabel = new Date(billingMonth + "-01").toLocaleString("default", { month: "long", year: "numeric" });
+            const nowLabel = now.toLocaleString("default", { month: "long", year: "numeric" });
+            if (!window.confirm(
+                `⚠️ Billing month is in the past.\n\n` +
+                `Chosen: ${chosenLabel}\nCurrent: ${nowLabel}\n\n` +
+                `The invoice will be stamped as ${chosenLabel}. Continue?`,
+            )) return;
+        } else if (billingMonth > nowYm) {
+            const chosenLabel = new Date(billingMonth + "-01").toLocaleString("default", { month: "long", year: "numeric" });
+            if (!window.confirm(
+                `⚠️ Billing month is in the future (${chosenLabel}). Continue?`,
+            )) return;
+        }
+
         const unit = occupiedUnits.find((u) => u.id === selectedMeterUnit);
         if (!unit) return;
 
