@@ -9,6 +9,7 @@ import { auth, db } from "@/lib/firebase";
 import { collection, onSnapshot, doc, updateDoc, arrayUnion, query, where, writeBatch, getDocs, deleteField } from "firebase/firestore";
 import { useUploadWithProgress, UploadProgressBar } from "@/lib/useUpload";
 import { mapSnapshot } from "@/lib/firestore";
+import { buildTransferPlan } from "@/lib/transfer";
 import type {
     Allocation,
     Building,
@@ -96,6 +97,13 @@ export default function EmployeeDashboard() {
     const [transferCustomNote, setTransferCustomNote] = useState("");
     const [transferLastReading, setTransferLastReading] = useState("");
     const [isTransferring, setIsTransferring] = useState(false);
+    // When the source unit has co-tenants, employee can choose to leave
+    // them in the old room (true) or move them with the primary tenant
+    // (false — current/legacy behavior).
+    const [coTenantsStay, setCoTenantsStay] = useState(false);
+    // Which co-tenant to promote to "primary" of the old unit when
+    // co-tenants stay. Defaults to the first one in the list.
+    const [promoteCoTenantIdx, setPromoteCoTenantIdx] = useState(0);
 
     // Units Search
     const [unitSearch, setUnitSearch] = useState("");
@@ -355,6 +363,8 @@ export default function EmployeeDashboard() {
         setTransferCustomAmount("");
         setTransferCustomNote("");
         setTransferLastReading(String(unit.lastMeterReading || 0));
+        setCoTenantsStay(false);
+        setPromoteCoTenantIdx(0);
         setIsTransferModalOpen(true);
     };
 
@@ -432,46 +442,34 @@ export default function EmployeeDashboard() {
                 batch.set(doc(db, "invoices", invoiceId), invoiceData);
             }
 
-            // --- Add tenant history to source unit ---
-            const historyEntry = {
-                tenantName: transferSourceUnit.tenantName || "",
-                tenantEmail: transferSourceUnit.tenantEmail || "",
-                tenantPhone: transferSourceUnit.tenantPhone || "",
-                moveInDate: transferSourceUnit.moveInDate || "",
-                moveOutDate: now,
-                securityDeposit: Number(transferSourceUnit.securityDeposit || 0),
-                securityRefund: 0,
-                coTenants: transferSourceUnit.coTenants || [],
-                note: `Transferred to ${destUnit.unitNumber}`
-            };
+            // --- Build the transfer plan (pure logic in lib/transfer.ts) ---
+            const plan = buildTransferPlan({
+                source: transferSourceUnit,
+                destUnitId: transferDestUnit,
+                transferDate,
+                coTenantsStay,
+                promoteCoTenantIdx,
+                now,
+                destUnitNumber: destUnit.unitNumber,
+            });
 
-            // --- Clear source unit ---
+            // --- Source unit update ---
             batch.update(doc(db, "units", transferSourceUnit.id), {
-                tenantHistory: arrayUnion(historyEntry),
-                status: "vacant",
-                tenantEmail: "",
-                tenantName: "",
-                tenantPhone: "",
-                moveInDate: "",
-                paymentDay: "",
-                coTenants: [],
+                tenantHistory: arrayUnion(plan.historyEntry),
+                ...plan.sourceUpdate,
             });
 
             // --- Assign tenant to destination unit ---
-            batch.update(doc(db, "units", transferDestUnit), {
-                status: "occupied",
-                tenantEmail: transferSourceUnit.tenantEmail || "",
-                tenantName: transferSourceUnit.tenantName || "",
-                tenantPhone: transferSourceUnit.tenantPhone || "",
-                moveInDate: transferDate,
-                paymentDay: transferSourceUnit.paymentDay || "",
-                securityDeposit: transferSourceUnit.securityDeposit || "",
-                securityDepositDate: transferSourceUnit.securityDepositDate || "",
-                coTenants: transferSourceUnit.coTenants || [],
-            });
+            batch.update(doc(db, "units", transferDestUnit), plan.destUpdate);
 
             await batch.commit();
-            alert(`✅ Tenant transferred from ${transferSourceUnit.unitNumber} → ${destUnit.unitNumber}${transferInvoiceMode !== "none" ? "\n📄 Invoice generated for old unit." : ""}`);
+            const hasCoTenants = (transferSourceUnit.coTenants?.length ?? 0) > 0;
+            const coTenantMsg = hasCoTenants
+                ? (plan.keepCoTenantsInSource
+                    ? `\n🏠 Co-tenant(s) stayed in ${transferSourceUnit.unitNumber}`
+                    : `\n👥 Co-tenant(s) moved to ${destUnit.unitNumber}`)
+                : "";
+            alert(`✅ Tenant transferred from ${transferSourceUnit.unitNumber} → ${destUnit.unitNumber}${transferInvoiceMode !== "none" ? "\n📄 Invoice generated for old unit." : ""}${coTenantMsg}`);
             setIsTransferModalOpen(false);
             setTransferSourceUnit(null);
         } catch (error) {
@@ -1108,6 +1106,64 @@ export default function EmployeeDashboard() {
                                 <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Transfer Date</label>
                                 <input type="date" required value={transferDate} onChange={(e) => setTransferDate(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
                             </div>
+
+                            {/* Co-tenant handling — only when source has co-tenants */}
+                            {(transferSourceUnit.coTenants?.length ?? 0) > 0 && (
+                                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-2">
+                                    <p className="text-xs font-bold text-amber-800 uppercase">
+                                        👥 Co-tenant(s) on this unit ({transferSourceUnit.coTenants!.length})
+                                    </p>
+                                    <div className="text-[11px] text-amber-700 space-y-0.5 pl-1">
+                                        {transferSourceUnit.coTenants!.map((c, i) => (
+                                            <p key={i}>• {c.name || c.email || c.phone || "—"}</p>
+                                        ))}
+                                    </div>
+                                    <div className="space-y-1.5 pt-1">
+                                        <label className="flex items-start gap-2 cursor-pointer">
+                                            <input
+                                                type="radio"
+                                                name="coTenantsStay"
+                                                checked={!coTenantsStay}
+                                                onChange={() => setCoTenantsStay(false)}
+                                                className="accent-amber-600 mt-0.5"
+                                            />
+                                            <span className="text-xs text-amber-900">
+                                                Move co-tenant(s) with primary → <strong>{transferSourceUnit.unitNumber} unit becomes vacant</strong>
+                                            </span>
+                                        </label>
+                                        <label className="flex items-start gap-2 cursor-pointer">
+                                            <input
+                                                type="radio"
+                                                name="coTenantsStay"
+                                                checked={coTenantsStay}
+                                                onChange={() => setCoTenantsStay(true)}
+                                                className="accent-amber-600 mt-0.5"
+                                            />
+                                            <span className="text-xs text-amber-900">
+                                                Co-tenant(s) stay in <strong>{transferSourceUnit.unitNumber}</strong> → one promoted to primary tenant
+                                            </span>
+                                        </label>
+                                    </div>
+                                    {coTenantsStay && transferSourceUnit.coTenants!.length > 1 && (
+                                        <div className="pt-1">
+                                            <label className="block text-[10px] font-bold text-amber-700 uppercase mb-1">
+                                                Promote to primary
+                                            </label>
+                                            <select
+                                                value={promoteCoTenantIdx}
+                                                onChange={(e) => setPromoteCoTenantIdx(Number(e.target.value))}
+                                                className="w-full px-2 py-1.5 border border-amber-300 rounded-md text-xs bg-white"
+                                            >
+                                                {transferSourceUnit.coTenants!.map((c, i) => (
+                                                    <option key={i} value={i}>
+                                                        {c.name || c.email || c.phone || `Co-tenant #${i + 1}`}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
 
                             {/* Invoice Mode */}
                             <div>
