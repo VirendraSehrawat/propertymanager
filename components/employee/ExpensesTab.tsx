@@ -284,22 +284,55 @@ export function ExpensesTab({ allExpenses, allAllocations, buildings, userEmail 
 
                     {/* Summary */}
                     {(() => {
-                        const thisMonth = new Date().toISOString().slice(0, 7);
-                        const monthExpenses = allExpenses.filter((e) => (e.date || e.createdAt || "").startsWith(thisMonth));
-                        const monthTotal = monthExpenses.reduce((s, e) => s + Number(e.amount || 0), 0);
+                        // The top-left tile follows the view-mode picker so the
+                        // employee can audit any past month at a glance. When
+                        // "All" is selected it still shows the current calendar
+                        // month for a quick snapshot.
+                        const scopeIso =
+                            expenseViewMode === "monthly"
+                                ? expenseSelectedMonth
+                                : expenseViewMode === "daily"
+                                ? expenseSelectedDate.slice(0, 7)
+                                : new Date().toISOString().slice(0, 7);
+                        const scopeExpenses = allExpenses.filter((e) =>
+                            (e.date || e.createdAt || "").startsWith(scopeIso),
+                        );
+                        const scopeTotal = scopeExpenses.reduce((s, e) => s + Number(e.amount || 0), 0);
+                        const scopeSettled = scopeExpenses
+                            .filter((e) => e.settled === true)
+                            .reduce((s, e) => s + Number(e.amount || 0), 0);
+                        const scopePending = scopeTotal - scopeSettled;
                         const allTotal = allExpenses.reduce((s, e) => s + Number(e.amount || 0), 0);
+                        const scopeLabel = new Date(scopeIso + "-01").toLocaleDateString("en-IN", {
+                            month: "short",
+                            year: "numeric",
+                        });
                         return (
-                            <div className="grid grid-cols-2 gap-3">
-                                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-center">
-                                    <p className="text-[10px] font-bold text-amber-600 uppercase">This Month</p>
-                                    <p className="text-xl font-bold text-amber-800">₹{monthTotal.toLocaleString()}</p>
-                                    <p className="text-[10px] text-amber-500">{monthExpenses.length} entries</p>
+                            <div className="space-y-2">
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-center">
+                                        <p className="text-[10px] font-bold text-amber-600 uppercase">{scopeLabel}</p>
+                                        <p className="text-xl font-bold text-amber-800">₹{scopeTotal.toLocaleString()}</p>
+                                        <p className="text-[10px] text-amber-500">{scopeExpenses.length} entries</p>
+                                    </div>
+                                    <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 text-center">
+                                        <p className="text-[10px] font-bold text-gray-600 uppercase">All Time</p>
+                                        <p className="text-xl font-bold text-gray-800">₹{allTotal.toLocaleString()}</p>
+                                        <p className="text-[10px] text-gray-500">{allExpenses.length} entries</p>
+                                    </div>
                                 </div>
-                                <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 text-center">
-                                    <p className="text-[10px] font-bold text-gray-600 uppercase">All Time</p>
-                                    <p className="text-xl font-bold text-gray-800">₹{allTotal.toLocaleString()}</p>
-                                    <p className="text-[10px] text-gray-500">{allExpenses.length} entries</p>
-                                </div>
+                                {scopeTotal > 0 && (
+                                    <div className="grid grid-cols-2 gap-2 text-[10px]">
+                                        <div className="bg-green-50 border border-green-200 rounded-lg py-1.5 px-2 flex justify-between">
+                                            <span className="font-bold text-green-700">✓ Settled</span>
+                                            <span className="font-bold text-green-800">₹{scopeSettled.toLocaleString()}</span>
+                                        </div>
+                                        <div className="bg-orange-50 border border-orange-200 rounded-lg py-1.5 px-2 flex justify-between">
+                                            <span className="font-bold text-orange-700">⏳ Pending</span>
+                                            <span className="font-bold text-orange-800">₹{scopePending.toLocaleString()}</span>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         );
                     })()}
@@ -317,7 +350,38 @@ export function ExpensesTab({ allExpenses, allAllocations, buildings, userEmail 
                         <input type="date" value={expenseSelectedDate} onChange={(e) => setExpenseSelectedDate(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
                     )}
                     {expenseViewMode === "monthly" && (
-                        <input type="month" value={expenseSelectedMonth} onChange={(e) => setExpenseSelectedMonth(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+                        <div className="flex items-center gap-2">
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    const [y, m] = expenseSelectedMonth.split("-").map(Number);
+                                    const d = new Date(y, m - 2, 1);
+                                    setExpenseSelectedMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+                                }}
+                                className="w-9 h-9 rounded-md bg-gray-100 border border-gray-300 text-gray-700 font-bold hover:bg-gray-200"
+                                title="Previous month"
+                            >‹</button>
+                            <input
+                                type="month"
+                                value={expenseSelectedMonth}
+                                max={new Date().toISOString().slice(0, 7)}
+                                onChange={(e) => setExpenseSelectedMonth(e.target.value)}
+                                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                            />
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    const [y, m] = expenseSelectedMonth.split("-").map(Number);
+                                    const d = new Date(y, m, 1);
+                                    const nowYm = new Date().toISOString().slice(0, 7);
+                                    const nextYm = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+                                    if (nextYm <= nowYm) setExpenseSelectedMonth(nextYm);
+                                }}
+                                disabled={expenseSelectedMonth >= new Date().toISOString().slice(0, 7)}
+                                className="w-9 h-9 rounded-md bg-gray-100 border border-gray-300 text-gray-700 font-bold hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed"
+                                title="Next month"
+                            >›</button>
+                        </div>
                     )}
 
                     <div className="flex gap-2">
@@ -325,6 +389,52 @@ export function ExpensesTab({ allExpenses, allAllocations, buildings, userEmail 
                             <button key={f} onClick={() => setExpenseFilter(f)} className={`flex-1 text-xs font-bold py-2 rounded-lg capitalize transition ${expenseFilter === f ? "bg-amber-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>{f}</button>
                         ))}
                     </div>
+
+                    {/* Category breakdown — only in daily/monthly view */}
+                    {expenseViewMode !== "all" && (() => {
+                        const scoped = allExpenses.filter((e) => {
+                            const d = e.date || (e.createdAt || "").slice(0, 10);
+                            if (expenseViewMode === "daily") return d === expenseSelectedDate;
+                            return (d || "").startsWith(expenseSelectedMonth);
+                        });
+                        if (scoped.length === 0) return null;
+                        const byCat = new Map<string, { total: number; count: number }>();
+                        scoped.forEach((e) => {
+                            const key = e.category || "Other";
+                            const prev = byCat.get(key) || { total: 0, count: 0 };
+                            byCat.set(key, { total: prev.total + Number(e.amount || 0), count: prev.count + 1 });
+                        });
+                        const rows = Array.from(byCat.entries())
+                            .map(([category, v]) => ({ category, ...v }))
+                            .sort((a, b) => b.total - a.total);
+                        const scopedTotal = rows.reduce((s, r) => s + r.total, 0);
+                        return (
+                            <details className="bg-indigo-50 border border-indigo-200 rounded-xl p-3" open>
+                                <summary className="text-xs font-bold text-indigo-800 uppercase cursor-pointer flex justify-between items-center">
+                                    <span>📊 By Category</span>
+                                    <span className="text-[10px] font-normal text-indigo-600">
+                                        {rows.length} categor{rows.length === 1 ? "y" : "ies"} · ₹{scopedTotal.toLocaleString()}
+                                    </span>
+                                </summary>
+                                <div className="mt-2 space-y-1.5">
+                                    {rows.map(({ category, total, count }) => {
+                                        const pct = scopedTotal > 0 ? Math.round((total / scopedTotal) * 100) : 0;
+                                        return (
+                                            <div key={category} className="bg-white border border-indigo-100 rounded-lg px-2.5 py-1.5">
+                                                <div className="flex justify-between items-center text-xs">
+                                                    <span className="font-bold text-gray-800">{categoryEmoji(category)} {category}</span>
+                                                    <span className="font-bold text-indigo-700">₹{total.toLocaleString()} <span className="text-[9px] text-gray-400 font-normal">· {count}</span></span>
+                                                </div>
+                                                <div className="h-1 bg-indigo-100 rounded-full overflow-hidden mt-1">
+                                                    <div className="h-full bg-indigo-500" style={{ width: `${pct}%` }} />
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </details>
+                        );
+                    })()}
 
                     {/* Expense List */}
                     <div className="divide-y divide-gray-100 max-h-96 overflow-y-auto">
