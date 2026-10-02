@@ -5,7 +5,7 @@ import { doc, updateDoc, addDoc, collection, deleteDoc, deleteField } from "fire
 import { db } from "@/lib/firebase";
 import { Modal } from "@/components/ui";
 import { useUploadWithProgress, UploadProgressBar } from "@/lib/useUpload";
-import { calculateFundSummary, filterExpenses, buildSettlementUpdate } from "@/lib/expenses";
+import { calculateFundSummary, filterExpenses, buildSettlementUpdate, EXPENSE_CATEGORIES, categoryEmoji } from "@/lib/expenses";
 import type { Allocation, Building, Expense } from "@/types";
 
 interface ExpensesTabProps {
@@ -351,7 +351,7 @@ export function ExpensesTab({ allExpenses, allAllocations, buildings, userEmail 
                                         <div key={exp.id} className={`py-3 flex justify-between items-start gap-3 ${exp.settled ? "opacity-70" : ""}`}>
                                             <div>
                                                 <div className="flex items-center gap-2 flex-wrap">
-                                                    <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">{exp.category}</span>
+                                                    <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">{categoryEmoji(exp.category)} {exp.category}</span>
                                                     {exp.settled ? (
                                                         <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-green-100 text-green-700">✓ Settled</span>
                                                     ) : (
@@ -424,7 +424,7 @@ export function ExpensesTab({ allExpenses, allAllocations, buildings, userEmail 
                     <div>
                         <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Category</label>
                         <select value={expenseCategory} onChange={(e) => setExpenseCategory(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm">
-                            {["Maintenance", "Plumbing", "Electrical", "Cleaning", "Supplies", "Painting", "Security", "Water", "Common Area", "Other"].map((c) => <option key={c}>{c}</option>)}
+                            {EXPENSE_CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.emoji} {c.value}</option>)}
                         </select>
                     </div>
                     <div>

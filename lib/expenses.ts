@@ -3,6 +3,43 @@
  * Kept free of Firebase imports so they can be unit tested in isolation.
  */
 
+/**
+ * Canonical list of expense categories shown in the "Log Expense" picker
+ * on both the Employee and Admin tabs. Keep this as the single source of
+ * truth — adding a category here surfaces it everywhere.
+ *
+ * The emoji is purely cosmetic (used by the picker + list chips).
+ */
+export const EXPENSE_CATEGORIES = [
+    { value: "Maintenance", emoji: "🛠️" },
+    { value: "Plumbing", emoji: "🚿" },
+    { value: "Electrical", emoji: "⚡" },
+    { value: "Painting", emoji: "🎨" },
+    { value: "Cleaning", emoji: "🧹" },
+    { value: "Supplies", emoji: "📦" },
+    { value: "Security", emoji: "🛡️" },
+    { value: "Water", emoji: "💧" },
+    { value: "Common Area", emoji: "🏛️" },
+    { value: "Food & Drinks", emoji: "🍽️" },
+    { value: "Travel & Fuel", emoji: "⛽" },
+    { value: "Staff Salary", emoji: "👷" },
+    { value: "Property Tax", emoji: "🏛️" },
+    { value: "Utilities (Building)", emoji: "🔌" },
+    { value: "Internet / Cable", emoji: "📶" },
+    { value: "Appliances", emoji: "🔧" },
+    { value: "Furniture", emoji: "🛋️" },
+    { value: "Legal / Documentation", emoji: "📄" },
+    { value: "Other", emoji: "📝" },
+] as const;
+
+export type ExpenseCategory = (typeof EXPENSE_CATEGORIES)[number]["value"];
+
+/** Lookup helper — returns the emoji for a category, or 📝 as fallback. */
+export function categoryEmoji(category: string | undefined): string {
+    const match = EXPENSE_CATEGORIES.find(c => c.value === category);
+    return match?.emoji || "📝";
+}
+
 export interface ExpenseLike {
     amount: number | string;
     settled?: boolean;

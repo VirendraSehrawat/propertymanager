@@ -301,6 +301,20 @@ export default function LoginPage() {
             </button>
           </div>
         </div>
+
+        {/* --- GUEST DEMO --- */}
+        <div className="mt-5 pt-5 border-t border-gray-100 text-center">
+          <p className="text-xs text-gray-500 mb-2">New here? See everything the app can do.</p>
+          <a
+            href="/demo"
+            className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-md border border-indigo-200 bg-indigo-50 text-indigo-700 text-sm font-bold hover:bg-indigo-100"
+          >
+            🧪 Try Guest Demo
+          </a>
+          <p className="text-[10px] text-gray-400 mt-2">
+            Explore all features with fictional data — no sign-up, no database writes.
+          </p>
+        </div>
       </div>
     </div>
   );

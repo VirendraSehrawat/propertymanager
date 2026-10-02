@@ -15,11 +15,50 @@ import {
     filterExpenses,
     buildSettlementUpdate,
     sumAmounts,
+    EXPENSE_CATEGORIES,
+    categoryEmoji,
 } from '@/lib/expenses';
 
 // ============================================================
 // PART 1 — Pure unit tests (no database)
 // ============================================================
+
+describe('EXPENSE_CATEGORIES catalog', () => {
+    it('exposes a non-empty list with unique values', () => {
+        expect(EXPENSE_CATEGORIES.length).toBeGreaterThan(5);
+        const values = EXPENSE_CATEGORIES.map(c => c.value);
+        expect(new Set(values).size).toBe(values.length);
+    });
+
+    it('includes the common property-management categories', () => {
+        const values = EXPENSE_CATEGORIES.map(c => c.value);
+        for (const expected of [
+            "Maintenance", "Plumbing", "Electrical", "Food & Drinks",
+            "Cleaning", "Staff Salary", "Other",
+        ]) {
+            expect(values).toContain(expected);
+        }
+    });
+
+    it('every category has an emoji string', () => {
+        for (const c of EXPENSE_CATEGORIES) {
+            expect(typeof c.emoji).toBe('string');
+            expect(c.emoji.length).toBeGreaterThan(0);
+        }
+    });
+
+    it('categoryEmoji returns the catalog emoji for known values', () => {
+        expect(categoryEmoji('Plumbing')).toBe('🚿');
+        expect(categoryEmoji('Electrical')).toBe('⚡');
+        expect(categoryEmoji('Food & Drinks')).toBe('🍽️');
+    });
+
+    it('categoryEmoji falls back to 📝 for unknown / missing values', () => {
+        expect(categoryEmoji('Something New')).toBe('📝');
+        expect(categoryEmoji(undefined)).toBe('📝');
+        expect(categoryEmoji('')).toBe('📝');
+    });
+});
 
 describe('sumAmounts', () => {
     it('sums numeric amounts', () => {
