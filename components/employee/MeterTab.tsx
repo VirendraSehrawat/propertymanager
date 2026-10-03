@@ -106,7 +106,7 @@ export function MeterTab({ occupiedUnits, allInvoices, electricityRate }: MeterT
 
             const carryForward = carryForwardFromInvoices(
                 allInvoices.filter((i) => (i.tenantEmail || "") === (unit.tenantEmail || "")),
-                { excludeInvoiceId: invoiceId },
+                { excludeInvoiceId: invoiceId, excludeBillingPeriod: monthName },
             );
             const baseRent = Number(unit.baseRent || 0);
             const { total: totalAmount } = composeInvoiceTotal({ baseRent, electricityCharge, carryForward });
@@ -282,9 +282,10 @@ export function MeterTab({ occupiedUnits, allInvoices, electricityRate }: MeterT
                     const elecCharge = consumed * effectiveRate;
                     const [pYear, pMonth] = billingMonth.split("-");
                     const previewInvoiceId = `inv_${selectedUnit.id}_${pMonth}_${pYear}`;
+                    const previewMonthName = new Date(Number(pYear), Number(pMonth) - 1).toLocaleString("default", { month: "long", year: "numeric" });
                     const carryForward = carryForwardFromInvoices(
                         allInvoices.filter((i) => (i.tenantEmail || "") === (selectedUnit.tenantEmail || "")),
-                        { excludeInvoiceId: previewInvoiceId },
+                        { excludeInvoiceId: previewInvoiceId, excludeBillingPeriod: previewMonthName },
                     );
                     const rent = Number(selectedUnit.baseRent || 0);
                     const { total } = composeInvoiceTotal({ baseRent: rent, electricityCharge: elecCharge, carryForward });

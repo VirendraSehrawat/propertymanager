@@ -267,6 +267,32 @@ describe("carryForwardFromInvoices", () => {
         ]);
         expect(cf).toBe(0);
     });
+
+    it("excludes same-month invoices when excludeBillingPeriod is supplied", () => {
+        // Simulates October 2026: the current month's own unpaid invoice should
+        // NOT count as carry forward for another October 2026 invoice.
+        const cf = carryForwardFromInvoices(
+            [
+                { id: "curr", status: "unpaid", totalAmount: 10000, amountPaid: 0, billingPeriod: "October 2026" },
+                { id: "prev", status: "unpaid", totalAmount: 3000, amountPaid: 500, billingPeriod: "September 2026" },
+            ],
+            { excludeInvoiceId: "curr", excludeBillingPeriod: "October 2026" },
+        );
+        // Only the September invoice's outstanding balance should carry forward.
+        expect(cf).toBe(2500);
+    });
+
+    it("does not exclude previous-month invoices when excludeBillingPeriod is set", () => {
+        const cf = carryForwardFromInvoices(
+            [
+                { id: "a", status: "unpaid", totalAmount: 2000, amountPaid: 0, billingPeriod: "August 2026" },
+                { id: "b", status: "pending", totalAmount: 1500, amountPaid: 500, billingPeriod: "September 2026" },
+            ],
+            { excludeBillingPeriod: "October 2026" },
+        );
+        // Both previous months carry forward — October is excluded but nothing belongs to October.
+        expect(cf).toBe(3000);
+    });
 });
 
 describe("pendingSplit (rent-first outstanding)", () => {

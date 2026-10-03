@@ -491,7 +491,9 @@ export default function AdminDashboard() {
             // (Excludes the invoice we're about to write so it doesn't reference itself.)
             const carryForward = carryForwardFromInvoices(
                 allInvoicesForDashboard.filter(i => (i.tenantEmail || "") === (unit.tenantEmail || "")),
-                { excludeInvoiceId: invoiceId },
+                // Carry forward only applies to previous months — exclude the
+                // current billing month's own invoices from the sum.
+                { excludeInvoiceId: invoiceId, excludeBillingPeriod: monthName },
             );
             const baseTotal = baseRentApplied + electricityCharge;
             const totalAmount = Math.max(0, baseTotal + carryForward);

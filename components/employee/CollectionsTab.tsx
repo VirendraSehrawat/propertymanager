@@ -278,12 +278,19 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
         }
     };
 
-    // Helper: get all open (unpaid/pending) invoices for a tenant, excluding a given invoice
-    function getCarryForwardItems(tenantEmail: string, excludeInvoiceId?: string) {
+    // Helper: get all open (unpaid/pending) invoices for a tenant from previous months only,
+    // excluding the invoice being generated/edited and optionally excluding same-month invoices.
+    function getCarryForwardItems(
+        tenantEmail: string,
+        excludeInvoiceId?: string,
+        excludeBillingPeriod?: string,
+    ) {
         return allInvoices
             .filter(i => (i.tenantEmail || "") === tenantEmail)
             .filter(i => i.status === "unpaid" || i.status === "pending")
             .filter(i => !excludeInvoiceId || i.id !== excludeInvoiceId)
+            // Carry forward only comes from previous months — exclude same billing period.
+            .filter(i => !excludeBillingPeriod || (i.billingPeriod || "") !== excludeBillingPeriod)
             .map(i => ({
                 id: i.id,
                 billingPeriod: i.billingPeriod,
@@ -323,7 +330,7 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
 
             const carryForward = carryForwardFromInvoices(
                 allInvoices.filter(i => (i.tenantEmail || "") === (editInvoice.tenantEmail || "")),
-                { excludeInvoiceId: editInvoice.id },
+                { excludeInvoiceId: editInvoice.id, excludeBillingPeriod: editInvBillingMonth },
             );
             const { total: totalAmount } = composeInvoiceTotal({ baseRent, electricityCharge, carryForward });
 
@@ -532,7 +539,7 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                         const carryMap = new Map<string, ReturnType<typeof getCarryForwardItems>>();
                         occupiedUnits.forEach(u => {
                             if (!u.tenantEmail) return;
-                            carryMap.set(u.id, getCarryForwardItems(u.tenantEmail));
+                            carryMap.set(u.id, getCarryForwardItems(u.tenantEmail, undefined, collectionFilter));
                         });
                         const rows = Array.from(carryMap.entries()).filter(([_, items]) => items.length > 0);
                         if (rows.length === 0) return <span className="text-amber-700">No outstanding carry forward for any unit.</span>;
@@ -796,10 +803,10 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                         {/* Carry Forward Breakdown */}
                         <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-900 space-y-1">
                             <p className="font-bold text-amber-800 mb-1">Carry Forward from Previous Months:</p>
-                            {getCarryForwardItems(editInvoice.tenantEmail, editInvoice.id).length === 0 ? (
+                            {getCarryForwardItems(editInvoice.tenantEmail, editInvoice.id, editInvBillingMonth).length === 0 ? (
                                 <span className="text-amber-700">No outstanding carry forward.</span>
                             ) : (
-                                getCarryForwardItems(editInvoice.tenantEmail, editInvoice.id).map(item => (
+                                getCarryForwardItems(editInvoice.tenantEmail, editInvoice.id, editInvBillingMonth).map(item => (
                                     <div key={item.id} className="flex justify-between items-center">
                                         <span>
                                             {item.rentDue > 0 && <>🏠 <span>Rent</span> </>}

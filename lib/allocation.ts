@@ -226,17 +226,34 @@ export interface CarryForwardInvoice {
     status?: string;
     totalAmount?: number;
     amountPaid?: number;
+    /** Human-readable billing period label, e.g. "October 2026". Used to
+     *  exclude same-month invoices when `excludeBillingPeriod` is supplied. */
+    billingPeriod?: string;
 }
 
 export function carryForwardFromInvoices(
     invoices: CarryForwardInvoice[],
-    opts: { excludeInvoiceId?: string } = {},
+    opts: {
+        excludeInvoiceId?: string;
+        /**
+         * When provided, any invoice whose `billingPeriod` matches this value
+         * is excluded from the carry-forward sum. Use this to prevent the
+         * current month's own (still-unpaid) invoices from inflating the
+         * carry-forward of the invoice being generated for that same month.
+         *
+         * Only invoices from **previous** months should carry forward.
+         */
+        excludeBillingPeriod?: string;
+    } = {},
 ): number {
-    const { excludeInvoiceId } = opts;
+    const { excludeInvoiceId, excludeBillingPeriod } = opts;
     let owed = 0;
     for (const inv of invoices) {
         if (!inv) continue;
         if (excludeInvoiceId && inv.id === excludeInvoiceId) continue;
+        // Skip invoices that belong to the same billing month as the invoice
+        // being generated — carry forward only applies to previous months.
+        if (excludeBillingPeriod && inv.billingPeriod === excludeBillingPeriod) continue;
         const status = inv.status || "unpaid";
         if (status !== "unpaid" && status !== "pending") continue;
         const total = Number(inv.totalAmount || 0);
