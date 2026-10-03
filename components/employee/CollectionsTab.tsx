@@ -278,6 +278,26 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
         }
     };
 
+    // Helper: get all open (unpaid/pending) invoices for a tenant, excluding a given invoice
+    function getCarryForwardItems(tenantEmail: string, excludeInvoiceId?: string) {
+        return allInvoices
+            .filter(i => (i.tenantEmail || "") === tenantEmail)
+            .filter(i => i.status === "unpaid" || i.status === "pending")
+            .filter(i => !excludeInvoiceId || i.id !== excludeInvoiceId)
+            .map(i => ({
+                id: i.id,
+                billingPeriod: i.billingPeriod,
+                rentDue: Math.max(0, Number(i.baseRent || 0) - Number(i.amountPaid || 0)),
+                elecDue: Math.max(0, Number(i.electricityCharge || 0) - Number(i.amountPaid || 0)),
+                totalDue: Math.max(0, Number(i.totalAmount || 0) - Number(i.amountPaid || 0)),
+                baseRent: i.baseRent,
+                electricityCharge: i.electricityCharge,
+                rentPeriod: i.rentPeriod,
+                electricityPeriod: i.electricityPeriod,
+            }))
+            .filter(i => i.totalDue > 0);
+    }
+
     const openEditInvoice = (inv: Invoice) => {
         setEditInvoice(inv);
         setEditInvBaseRent(String(inv.baseRent || 0));
@@ -504,6 +524,44 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                     </div>
                 )}
 
+                {/* Carry Forward Section for Collections */}
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-4">
+                    <h3 className="text-sm font-bold text-amber-800 mb-1">Carry Forward (Outstanding from Previous Months)</h3>
+                    {(() => {
+                        // Group by tenant/unit
+                        const carryMap = new Map<string, ReturnType<typeof getCarryForwardItems>>();
+                        occupiedUnits.forEach(u => {
+                            if (!u.tenantEmail) return;
+                            carryMap.set(u.id, getCarryForwardItems(u.tenantEmail));
+                        });
+                        const rows = Array.from(carryMap.entries()).filter(([_, items]) => items.length > 0);
+                        if (rows.length === 0) return <span className="text-amber-700">No outstanding carry forward for any unit.</span>;
+                        return (
+                            <div className="space-y-2">
+                                {rows.map(([unitId, items]) => {
+                                    const unit = occupiedUnits.find(u => u.id === unitId);
+                                    return (
+                                        <div key={unitId} className="border-b border-amber-100 pb-1 mb-1 last:border-b-0 last:pb-0 last:mb-0">
+                                            <span className="font-bold text-amber-900">{unit?.unitNumber || unitId}</span>
+                                            <ul className="ml-2 mt-0.5 space-y-0.5">
+                                                {items.map(item => (
+                                                    <li key={item.id} className="flex justify-between text-xs">
+                                                        <span>
+                                                            {item.rentDue > 0 && <>🏠 Rent </>}
+                                                            {item.elecDue > 0 && <>⚡ Electricity </>}
+                                                            <span className="text-gray-500">({item.billingPeriod})</span>
+                                                        </span>
+                                                        <span className="font-bold">₹{item.totalDue.toLocaleString()}</span>
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        );
+                    })()}
+                </div>
                 <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                     <div className="bg-gray-50 px-5 py-3 border-b border-gray-200 flex justify-between items-center">
                         <h3 className="text-sm font-bold text-gray-800">Pending Invoices</h3>
@@ -735,6 +793,24 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                     <div className="bg-white p-6 rounded-xl shadow-xl max-w-md w-full space-y-4" onClick={(e) => e.stopPropagation()}>
                         <h3 className="text-lg font-bold text-gray-800">{"\u270F\uFE0F"} Edit Invoice</h3>
                         <p className="text-xs text-gray-500">{editInvoice.unitNumber} {"\u2014"} {editInvBillingMonth}</p>
+                        {/* Carry Forward Breakdown */}
+                        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-900 space-y-1">
+                            <p className="font-bold text-amber-800 mb-1">Carry Forward from Previous Months:</p>
+                            {getCarryForwardItems(editInvoice.tenantEmail, editInvoice.id).length === 0 ? (
+                                <span className="text-amber-700">No outstanding carry forward.</span>
+                            ) : (
+                                getCarryForwardItems(editInvoice.tenantEmail, editInvoice.id).map(item => (
+                                    <div key={item.id} className="flex justify-between items-center">
+                                        <span>
+                                            {item.rentDue > 0 && <>🏠 <span>Rent</span> </>}
+                                            {item.elecDue > 0 && <>⚡ <span>Electricity</span> </>}
+                                            <span className="text-gray-500">({item.billingPeriod})</span>
+                                        </span>
+                                        <span className="font-bold">₹{item.totalDue.toLocaleString()}</span>
+                                    </div>
+                                ))
+                            )}
+                        </div>
                         <form onSubmit={handleSaveInvoice} className="space-y-3">
                             <div>
                                 <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Billing Month / Period</label>
