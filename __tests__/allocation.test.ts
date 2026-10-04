@@ -5,6 +5,9 @@ import {
     computeCarryForward,
     composeInvoiceTotal,
     carryForwardFromInvoices,
+    carryForwardItems,
+    previousMonthLabel,
+    stripBillingPeriodSuffix,
     pendingSplit,
 } from "@/lib/allocation";
 
@@ -292,6 +295,137 @@ describe("carryForwardFromInvoices", () => {
         );
         // Both previous months carry forward — October is excluded but nothing belongs to October.
         expect(cf).toBe(3000);
+    });
+});
+
+describe("stripBillingPeriodSuffix", () => {
+    it("removes a parenthetical suffix and trims", () => {
+        expect(stripBillingPeriodSuffix("October 2026 (relabelled)")).toBe("October 2026");
+        expect(stripBillingPeriodSuffix("September 2026  ")).toBe("September 2026");
+    });
+
+    it("returns empty string for undefined / empty", () => {
+        expect(stripBillingPeriodSuffix(undefined)).toBe("");
+        expect(stripBillingPeriodSuffix("")).toBe("");
+    });
+});
+
+describe("previousMonthLabel", () => {
+    it("returns the immediately preceding month", () => {
+        expect(previousMonthLabel("October 2026")).toBe("September 2026");
+        expect(previousMonthLabel("September 2026")).toBe("August 2026");
+    });
+
+    it("rolls back across a year boundary", () => {
+        expect(previousMonthLabel("January 2026")).toBe("December 2025");
+    });
+
+    it("ignores a human-readable suffix on the anchor", () => {
+        expect(previousMonthLabel("October 2026 (relabelled)")).toBe("September 2026");
+    });
+
+    it("returns empty string for non-month anchors (all / overdue / junk)", () => {
+        expect(previousMonthLabel("all")).toBe("");
+        expect(previousMonthLabel("overdue")).toBe("");
+        expect(previousMonthLabel(undefined)).toBe("");
+        expect(previousMonthLabel("")).toBe("");
+    });
+});
+
+describe("carryForwardItems (previous-month-only regression)", () => {
+    const TENANT = "tenant@example.com";
+    // A tenant with open balances across Aug, Sep and the current Oct invoice.
+    const pool = [
+        { id: "aug", tenantEmail: TENANT, status: "unpaid", billingPeriod: "August 2026", baseRent: 5000, electricityCharge: 500, totalAmount: 5500, amountPaid: 0 },
+        { id: "sep", tenantEmail: TENANT, status: "pending", billingPeriod: "September 2026", baseRent: 5000, electricityCharge: 800, totalAmount: 5800, amountPaid: 800 },
+        { id: "oct", tenantEmail: TENANT, status: "unpaid", billingPeriod: "October 2026", baseRent: 5000, electricityCharge: 600, totalAmount: 5600, amountPaid: 0 },
+        // A different tenant — must never leak into results.
+        { id: "other", tenantEmail: "someone@else.com", status: "unpaid", billingPeriod: "September 2026", baseRent: 9000, electricityCharge: 0, totalAmount: 9000, amountPaid: 0 },
+    ];
+
+    it("October anchor → only September carries forward (October itself excluded)", () => {
+        const items = carryForwardItems(pool, { tenantEmail: TENANT, anchorMonth: "October 2026" });
+        expect(items.map(i => i.id)).toEqual(["sep"]);
+        // Sep: 5800 total − 800 paid = 5000 due.
+        expect(items[0].totalDue).toBe(5000);
+    });
+
+    it("September anchor → only August carries forward", () => {
+        const items = carryForwardItems(pool, { tenantEmail: TENANT, anchorMonth: "September 2026" });
+        expect(items.map(i => i.id)).toEqual(["aug"]);
+        expect(items[0].totalDue).toBe(5500);
+    });
+
+    it("never includes the anchor (current) month's own invoice", () => {
+        const items = carryForwardItems(pool, { tenantEmail: TENANT, anchorMonth: "October 2026" });
+        expect(items.some(i => i.id === "oct")).toBe(false);
+    });
+
+    it("August anchor → no carry forward (nothing open in July)", () => {
+        const items = carryForwardItems(pool, { tenantEmail: TENANT, anchorMonth: "August 2026" });
+        expect(items).toEqual([]);
+    });
+
+    it("scopes strictly to the given tenant", () => {
+        const items = carryForwardItems(pool, { tenantEmail: TENANT, anchorMonth: "October 2026" });
+        expect(items.every(i => i.id !== "other")).toBe(true);
+    });
+
+    it("tolerates a relabelled suffix on both anchor and invoice periods", () => {
+        const relabelled = [
+            { id: "sep", tenantEmail: TENANT, status: "unpaid", billingPeriod: "September 2026 (relabelled)", baseRent: 5000, electricityCharge: 0, totalAmount: 5000, amountPaid: 0 },
+        ];
+        const items = carryForwardItems(relabelled, { tenantEmail: TENANT, anchorMonth: "October 2026 (corrected)" });
+        expect(items.map(i => i.id)).toEqual(["sep"]);
+    });
+
+    it("excludes a specific invoice id when requested", () => {
+        const items = carryForwardItems(pool, { tenantEmail: TENANT, excludeInvoiceId: "sep", anchorMonth: "October 2026" });
+        expect(items).toEqual([]);
+    });
+
+    it("drops fully-paid previous-month invoices (nothing due)", () => {
+        const paidSep = [
+            { id: "sep", tenantEmail: TENANT, status: "unpaid", billingPeriod: "September 2026", baseRent: 5000, electricityCharge: 0, totalAmount: 5000, amountPaid: 5000 },
+        ];
+        const items = carryForwardItems(paidSep, { tenantEmail: TENANT, anchorMonth: "October 2026" });
+        expect(items).toEqual([]);
+    });
+
+    it("ignores paid / written-off statuses", () => {
+        const mixed = [
+            { id: "sep-paid", tenantEmail: TENANT, status: "paid", billingPeriod: "September 2026", baseRent: 5000, electricityCharge: 0, totalAmount: 5000, amountPaid: 5000 },
+            { id: "sep-wo", tenantEmail: TENANT, status: "written-off", billingPeriod: "September 2026", baseRent: 5000, electricityCharge: 0, totalAmount: 5000, amountPaid: 0 },
+            { id: "sep-open", tenantEmail: TENANT, status: "unpaid", billingPeriod: "September 2026", baseRent: 2000, electricityCharge: 0, totalAmount: 2000, amountPaid: 0 },
+        ];
+        const items = carryForwardItems(mixed, { tenantEmail: TENANT, anchorMonth: "October 2026" });
+        expect(items.map(i => i.id)).toEqual(["sep-open"]);
+    });
+
+    it("surfaces per-charge dues (rent vs electricity) for a partial payment", () => {
+        // Sep paid 800 which (by this helper's simple model) offsets both buckets.
+        const items = carryForwardItems(pool, { tenantEmail: TENANT, anchorMonth: "October 2026" });
+        const sep = items.find(i => i.id === "sep")!;
+        expect(sep.rentDue).toBe(4200);   // 5000 − 800
+        expect(sep.elecDue).toBe(0);      // 800 − 800
+        expect(sep.totalDue).toBe(5000);  // 5800 − 800
+    });
+
+    describe("pseudo-filter fallback (all / overdue)", () => {
+        it("'all' → every open invoice across months (current month included)", () => {
+            const items = carryForwardItems(pool, { tenantEmail: TENANT, anchorMonth: "all" });
+            expect(items.map(i => i.id).sort()).toEqual(["aug", "oct", "sep"]);
+        });
+
+        it("'overdue' → same open set (non-month anchors are not subtracted)", () => {
+            const items = carryForwardItems(pool, { tenantEmail: TENANT, anchorMonth: "overdue" });
+            expect(items.map(i => i.id).sort()).toEqual(["aug", "oct", "sep"]);
+        });
+
+        it("undefined anchor → every open invoice for the tenant", () => {
+            const items = carryForwardItems(pool, { tenantEmail: TENANT });
+            expect(items.map(i => i.id).sort()).toEqual(["aug", "oct", "sep"]);
+        });
     });
 });
 

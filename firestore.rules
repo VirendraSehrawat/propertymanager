@@ -187,12 +187,28 @@ service cloud.firestore {
       // Staff can create
       allow create: if isStaff();
 
-      // Updates: Staff can update everything; Tenants can only update payment submission fields
+      // Updates:
+      //   • Staff can update everything (settle, edit, write-off, etc.).
+      //   • Tenants may only SUBMIT a payment claim for their own invoice.
+      //     This is deliberately NOT a self-settle: a tenant can move the
+      //     invoice into the "pending" review state and attach proof, but can
+      //     never set it to "paid"/"written-off" or claim more than the
+      //     invoice total. Staff approval is what flips it to "paid".
       allow update: if isStaff() || (
         isAuthenticated() &&
         resource.data.tenantEmail != null &&
         isUserEmail(resource.data.tenantEmail) &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['paidAt', 'paymentScreenshotUrl', 'transactionId', 'paymentNote', 'status', 'amountPaid'])
+        // Only these payment-submission fields may change.
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'transactionId', 'amountPaid', 'paymentScreenshotUrl',
+          'paymentNote', 'submittedAt'
+        ]) &&
+        // Tenants may only move an invoice INTO review — never self-settle.
+        request.resource.data.status == 'pending' &&
+        // Claimed amount must be a non-negative number not exceeding the total.
+        request.resource.data.amountPaid is number &&
+        request.resource.data.amountPaid >= 0 &&
+        request.resource.data.amountPaid <= resource.data.totalAmount
       );
 
       // Delete: Admin only

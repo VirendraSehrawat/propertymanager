@@ -6,6 +6,7 @@ import { addDoc, collection, doc, updateDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { Modal } from "@/components/ui";
 import { useUploadWithProgress, UploadProgressBar } from "@/lib/useUpload";
+import { allocateLumpSum } from "@/lib/payments";
 
 interface DailyLedgerEntry {
     id: string;
@@ -163,34 +164,33 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
                 }
             }
 
-            // Auto-settle matching invoice: inflow + specific unit + settlement-eligible category.
-            // NEW: if no invoice exists yet (manager collected before the monthly bill
-            // was generated), we auto-create an "on-the-fly" invoice for the current
-            // month and immediately settle it. This keeps `invoices` + `ledger`
-            // canonical even when collection happens before invoicing.
+            // Auto-settle matching invoice(s): inflow + specific unit + settlement-eligible category.
+            // A single lump-sum inflow can clear MULTIPLE pending invoices
+            // oldest-first via `allocateLumpSum` (see lib/payments). If no
+            // invoice exists yet (manager collected before the monthly bill was
+            // generated), we auto-create one for the current month first. Any
+            // cash left after every invoice is cleared is recorded as a tenant
+            // credit so it is never lost.
             const settleCategories = ["rent", "electricity", "maintenance"];
             if (
                 direction === "inflow" &&
                 unitId &&
                 settleCategories.includes(category)
             ) {
-                let targetInvoice = pendingInvoicesForUnit[0];
+                const paying = Number(amount);
 
-                // No pending invoice → create one on the fly using the unit's rent
-                // and the amount paid (electricity charge is inferred as the delta).
-                if (!targetInvoice) {
-                    const paying = Number(amount);
+                // Build the pool to waterfall across. When nothing is pending,
+                // create an on-the-fly invoice for the current month and seed
+                // the pool with it.
+                let pool: Invoice[] = pendingInvoicesForUnit;
+                if (pool.length === 0) {
                     const baseRent = Number(unit?.baseRent || 0);
-                    const inferredElectricity = category === "rent"
-                        ? 0
-                        : category === "electricity"
-                            ? paying
-                            : 0; // maintenance → treat whole amount as base
+                    const inferredElectricity = category === "electricity" ? paying : 0;
                     const totalAmount = category === "rent"
                         ? Math.max(baseRent, paying)
                         : category === "electricity"
                             ? baseRent + inferredElectricity
-                            : paying;
+                            : paying; // maintenance → treat whole amount as base
                     const monthName = new Date((entryDate || todayISO()) + "T00:00:00").toLocaleString("default", { month: "long", year: "numeric" });
                     const newInvRef = await addDoc(collection(db, "invoices"), {
                         unitId,
@@ -208,7 +208,7 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
                         createdBy: currentUserEmail || "",
                         createdAt: new Date().toISOString(),
                     });
-                    targetInvoice = {
+                    pool = [{
                         id: newInvRef.id,
                         unitId,
                         unitNumber: unit?.unitNumber,
@@ -217,53 +217,74 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
                         amountPaid: 0,
                         billingPeriod: monthName,
                         status: "unpaid",
-                    };
+                    }];
                 }
 
-                const invoiceTotal = Number(targetInvoice.totalAmount || 0);
-                const alreadyPaid = Number(targetInvoice.amountPaid || 0);
-                const remaining = Math.max(0, invoiceTotal - alreadyPaid);
-                const paying = Number(amount);
-                const applied = Math.min(paying, remaining);
-                const newPaid = alreadyPaid + applied;
-                // 0.5₹ tolerance so paise-level rounding drift can't leave
-                // an invoice stuck in "unpaid" after the total is covered.
-                const fullySettled = newPaid >= invoiceTotal - 0.5;
+                // Waterfall the payment across the pool, oldest-first.
+                const result = allocateLumpSum(paying, pool, unitId, category);
+                const nowIso = new Date().toISOString();
+                const settledLabels: string[] = [];
+                const partialLabels: string[] = [];
 
-                if (fullySettled) {
-                    await updateDoc(doc(db, "invoices", targetInvoice.id), {
-                        status: "paid",
-                        paidAt: new Date().toISOString(),
-                        amountPaid: newPaid,
+                for (const line of result.lines) {
+                    const inv = pool.find(i => i.id === line.invoiceId)!;
+                    if (line.fullySettled) {
+                        await updateDoc(doc(db, "invoices", line.invoiceId), {
+                            status: "paid",
+                            paidAt: nowIso,
+                            amountPaid: line.newAmountPaid,
+                            transactionId: "DAILY_LEDGER_AUTOSETTLE",
+                        });
+                        settledLabels.push(`${inv.billingPeriod}`);
+                    } else {
+                        await updateDoc(doc(db, "invoices", line.invoiceId), {
+                            amountPaid: line.newAmountPaid,
+                        });
+                        partialLabels.push(`${inv.billingPeriod} (₹${line.remaining.toLocaleString()} left)`);
+                    }
+
+                    await addDoc(collection(db, "ledger"), {
+                        tenantEmail: inv.tenantEmail || unit?.tenantEmail || "",
+                        unitId: inv.unitId,
+                        unitNumber: inv.unitNumber || unit?.unitNumber || "",
+                        invoiceId: inv.id,
+                        billingPeriod: inv.billingPeriod || "Ad-Hoc",
+                        invoiceAmount: Number(inv.totalAmount || 0),
+                        amountPaid: line.applied,
+                        balance: line.remaining === 0 ? 0 : -line.remaining,
                         transactionId: "DAILY_LEDGER_AUTOSETTLE",
-                    });
-                } else {
-                    await updateDoc(doc(db, "invoices", targetInvoice.id), {
-                        amountPaid: newPaid,
+                        type: line.fullySettled ? "payment" : "partial-payment",
+                        settledBy: "employee-daily-ledger",
+                        category,
+                        createdAt: nowIso,
                     });
                 }
 
-                await addDoc(collection(db, "ledger"), {
-                    tenantEmail: targetInvoice.tenantEmail || unit?.tenantEmail || "",
-                    unitId: targetInvoice.unitId,
-                    unitNumber: targetInvoice.unitNumber || unit?.unitNumber || "",
-                    invoiceId: targetInvoice.id,
-                    billingPeriod: targetInvoice.billingPeriod || "Ad-Hoc",
-                    invoiceAmount: invoiceTotal,
-                    amountPaid: applied,
-                    balance: applied - invoiceTotal + alreadyPaid,
-                    transactionId: "DAILY_LEDGER_AUTOSETTLE",
-                    type: "payment",
-                    settledBy: "employee-daily-ledger",
-                    category,
-                    createdAt: new Date().toISOString(),
-                });
-
-                if (fullySettled) {
-                    alert(`✅ Invoice ${targetInvoice.billingPeriod} settled for ${targetInvoice.unitNumber}.`);
-                } else {
-                    alert(`💵 Partial payment ₹${applied} applied. Remaining ₹${(invoiceTotal - newPaid).toLocaleString()} on ${targetInvoice.billingPeriod}.`);
+                // Record any unallocated remainder as a tenant credit / advance.
+                if (result.leftover > 0) {
+                    await addDoc(collection(db, "ledger"), {
+                        tenantEmail: unit?.tenantEmail || "",
+                        unitId,
+                        unitNumber: unit?.unitNumber || "",
+                        invoiceId: "",
+                        billingPeriod: "Advance / Credit",
+                        invoiceAmount: 0,
+                        amountPaid: result.leftover,
+                        balance: result.leftover,
+                        transactionId: "DAILY_LEDGER_AUTOSETTLE",
+                        type: "credit",
+                        settledBy: "employee-daily-ledger",
+                        category,
+                        createdAt: nowIso,
+                    });
                 }
+
+                // Summarise what happened for the user.
+                const parts: string[] = [];
+                if (settledLabels.length) parts.push(`✅ Settled: ${settledLabels.join(", ")}`);
+                if (partialLabels.length) parts.push(`💵 Partial: ${partialLabels.join(", ")}`);
+                if (result.leftover > 0) parts.push(`🪙 Credit ₹${result.leftover.toLocaleString()} recorded as advance`);
+                if (parts.length) alert(parts.join("\n"));
             }
 
             setIsModalOpen(false);
@@ -457,11 +478,48 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
                     {direction === "inflow" && unitId && ["rent", "electricity", "maintenance"].includes(category) && pendingInvoicesForUnit.length > 0 && (
                         <div className="bg-teal-50 border border-teal-200 rounded-lg p-3 text-xs">
                             <p className="font-bold text-teal-800 mb-1">💡 Auto-settle preview</p>
-                            <p className="text-teal-700">Oldest pending invoice for this unit will be updated on save:</p>
-                            <p className="mt-1 text-teal-900 font-medium">{pendingInvoicesForUnit[0].billingPeriod} — ₹{Number(pendingInvoicesForUnit[0].totalAmount || 0).toLocaleString()} due</p>
-                            {pendingInvoicesForUnit.length > 1 && (
-                                <p className="mt-0.5 text-[10px] text-teal-600">({pendingInvoicesForUnit.length - 1} more pending)</p>
-                            )}
+                            {(() => {
+                                const paying = Number(amount) || 0;
+                                if (paying <= 0) {
+                                    return (
+                                        <>
+                                            <p className="text-teal-700">Enter an amount to see how it clears pending invoices (oldest-first):</p>
+                                            <p className="mt-1 text-teal-900 font-medium">{pendingInvoicesForUnit[0].billingPeriod} — ₹{Math.max(0, Number(pendingInvoicesForUnit[0].totalAmount || 0) - Number(pendingInvoicesForUnit[0].amountPaid || 0)).toLocaleString()} due</p>
+                                            {pendingInvoicesForUnit.length > 1 && (
+                                                <p className="mt-0.5 text-[10px] text-teal-600">({pendingInvoicesForUnit.length - 1} more pending)</p>
+                                            )}
+                                        </>
+                                    );
+                                }
+                                const preview = allocateLumpSum(paying, pendingInvoicesForUnit, unitId, category);
+                                return (
+                                    <>
+                                        <p className="text-teal-700">₹{paying.toLocaleString()} will be applied oldest-first:</p>
+                                        <ul className="mt-1 space-y-0.5">
+                                            {preview.lines.map(line => {
+                                                const inv = pendingInvoicesForUnit.find(i => i.id === line.invoiceId);
+                                                return (
+                                                    <li key={line.invoiceId} className="flex justify-between text-teal-900">
+                                                        <span>{inv?.billingPeriod || line.invoiceId}</span>
+                                                        <span className="font-medium">
+                                                            +₹{line.applied.toLocaleString()}{" "}
+                                                            {line.fullySettled
+                                                                ? <span className="text-green-700">✓ paid</span>
+                                                                : <span className="text-amber-700">· ₹{line.remaining.toLocaleString()} left</span>}
+                                                        </span>
+                                                    </li>
+                                                );
+                                            })}
+                                        </ul>
+                                        {preview.leftover > 0 && (
+                                            <p className="mt-1 text-[11px] text-teal-700">🪙 ₹{preview.leftover.toLocaleString()} extra will be recorded as a tenant credit.</p>
+                                        )}
+                                        {preview.lines.length === 0 && (
+                                            <p className="mt-1 text-[11px] text-teal-600">No eligible pending invoice for this category.</p>
+                                        )}
+                                    </>
+                                );
+                            })()}
                         </div>
                     )}
 

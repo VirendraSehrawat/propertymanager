@@ -10,6 +10,7 @@ import {
     allocatePartialPayment,
     composeInvoiceTotal,
     carryForwardFromInvoices,
+    carryForwardItems,
     pendingSplit,
 } from "@/lib/allocation";
 import { allocateMasterPayment } from "@/lib/masterAllocation";
@@ -282,62 +283,15 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
     // excluding the invoice being generated/edited and optionally excluding same-month invoices.
     /**
      * Carry-forward items for a tenant, scoped to the month *immediately
-     * preceding* the anchor month.
-     *
-     * Business rule: an invoice for the current month is NOT carry-forward —
-     * carry-forward is strictly the unpaid balance from the previous month.
-     * So when October is the anchor, only September's open invoices count;
-     * when September is the anchor, only August's open invoices count.
-     *
-     * When `anchorMonth` is not a parseable month label (e.g. the "all" /
-     * "overdue" pseudo-filters), we fall back to showing every open invoice
-     * except those in the anchor period itself.
+     * preceding* the anchor month. Thin wrapper over the shared pure helper
+     * `carryForwardItems` (see lib/allocation) so UI and tests share logic.
      */
     function getCarryForwardItems(
         tenantEmail: string,
         excludeInvoiceId?: string,
         anchorMonth?: string,
     ) {
-        // Strip any human-readable suffix like "October 2026 (relabelled)".
-        const stripSuffix = (bp?: string) => (bp || "").replace(/\s*\(.+\)\s*$/, "").trim();
-        const anchor = stripSuffix(anchorMonth);
-        const anchorDate = anchor ? new Date(anchor) : null;
-        const anchorValid = anchorDate && !isNaN(anchorDate.getTime());
-
-        // Previous-month label relative to the anchor (e.g. October → September).
-        let prevMonthLabel = "";
-        if (anchorValid) {
-            const d = new Date(anchorDate!);
-            d.setDate(1);
-            d.setMonth(d.getMonth() - 1);
-            prevMonthLabel = d.toLocaleString("default", { month: "long", year: "numeric" });
-        }
-
-        return allInvoices
-            .filter(i => (i.tenantEmail || "") === tenantEmail)
-            .filter(i => i.status === "unpaid" || i.status === "pending")
-            .filter(i => !excludeInvoiceId || i.id !== excludeInvoiceId)
-            .filter(i => {
-                const bp = stripSuffix(i.billingPeriod);
-                if (anchorValid) {
-                    // Only the single previous month qualifies as carry-forward.
-                    return bp === prevMonthLabel;
-                }
-                // "all" / "overdue": show every open invoice except the anchor itself.
-                return !anchor || bp !== anchor;
-            })
-            .map(i => ({
-                id: i.id,
-                billingPeriod: i.billingPeriod,
-                rentDue: Math.max(0, Number(i.baseRent || 0) - Number(i.amountPaid || 0)),
-                elecDue: Math.max(0, Number(i.electricityCharge || 0) - Number(i.amountPaid || 0)),
-                totalDue: Math.max(0, Number(i.totalAmount || 0) - Number(i.amountPaid || 0)),
-                baseRent: i.baseRent,
-                electricityCharge: i.electricityCharge,
-                rentPeriod: i.rentPeriod,
-                electricityPeriod: i.electricityPeriod,
-            }))
-            .filter(i => i.totalDue > 0);
+        return carryForwardItems(allInvoices, { tenantEmail, excludeInvoiceId, anchorMonth });
     }
 
     const openEditInvoice = (inv: Invoice) => {

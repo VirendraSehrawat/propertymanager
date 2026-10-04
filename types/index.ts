@@ -76,6 +76,8 @@ export interface Invoice {
     status: "unpaid" | "pending" | "paid" | "written-off";
     totalAmount: number;
     billingPeriod: string;
+    /** Canonical ISO billing month format (e.g. "2026-09"). */
+    billingYm?: string;
     /** Human-readable date range the rent covers, e.g. "8 Sep 2026 – 8 Oct 2026". */
     rentPeriod?: string;
     /** Month label for which electricity consumption is billed, e.g. "August 2026". */
@@ -140,6 +142,8 @@ export interface LedgerEntry {
     unitNumber: string;
     invoiceId: string;
     billingPeriod: string;
+    /** Canonical ISO billing month format (e.g. "2026-09"). */
+    billingYm?: string;
     invoiceAmount: number;
     amountPaid: number;
     balance: number;
@@ -176,6 +180,8 @@ export interface DailyLedgerEntry {
     tenantName?: string;
     tenantEmail?: string;
     invoiceId?: string;
+    /** Canonical ISO billing month associated with this entry (e.g. "2026-09"). */
+    billingYm?: string;
     expenseId?: string;
     paymentMode?: string;
     paymentReference?: string | null;

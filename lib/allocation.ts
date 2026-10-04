@@ -283,3 +283,114 @@ export function composeInvoiceTotal(input: {
     const total = Math.max(0, rent + electricity + carryForward);
     return { rent, electricity, carryForward, total };
 }
+
+/**
+ * Strip a human-readable suffix from a billing-period label so that
+ * `"October 2026 (relabelled)"` compares equal to `"October 2026"`.
+ */
+export function stripBillingPeriodSuffix(billingPeriod?: string): string {
+    return (billingPeriod || "").replace(/\s*\(.+\)\s*$/, "").trim();
+}
+
+/**
+ * Month label immediately preceding the given anchor month.
+ *
+ *   previousMonthLabel("October 2026")  → "September 2026"
+ *   previousMonthLabel("January 2026")  → "December 2025"
+ *
+ * Returns `""` when the anchor is not a parseable month label (e.g. the
+ * "all" / "overdue" pseudo-filters used by the Collections tab).
+ */
+export function previousMonthLabel(anchorMonth?: string): string {
+    const anchor = stripBillingPeriodSuffix(anchorMonth);
+    if (!anchor) return "";
+    const anchorDate = new Date(anchor);
+    if (isNaN(anchorDate.getTime())) return "";
+    const d = new Date(anchorDate);
+    d.setDate(1);
+    d.setMonth(d.getMonth() - 1);
+    return d.toLocaleString("default", { month: "long", year: "numeric" });
+}
+
+/** An open invoice considered for carry-forward display. */
+export interface CarryForwardItemInput {
+    id: string;
+    tenantEmail?: string;
+    status?: string;
+    billingPeriod?: string;
+    baseRent?: number;
+    electricityCharge?: number;
+    totalAmount?: number;
+    amountPaid?: number;
+    rentPeriod?: string;
+    electricityPeriod?: string;
+}
+
+/** A single carry-forward line produced by {@link carryForwardItems}. */
+export interface CarryForwardItem {
+    id: string;
+    billingPeriod?: string;
+    rentDue: number;
+    elecDue: number;
+    totalDue: number;
+    baseRent?: number;
+    electricityCharge?: number;
+    rentPeriod?: string;
+    electricityPeriod?: string;
+}
+
+/**
+ * Carry-forward line items for a tenant, scoped to the month *immediately
+ * preceding* the anchor month.
+ *
+ * Business rule: an invoice for the anchor (current) month is NOT
+ * carry-forward — carry-forward is strictly the unpaid balance from the
+ * previous month. So when October is the anchor only September's open
+ * invoices count; when September is the anchor only August's do.
+ *
+ * When `anchorMonth` is not a parseable month label (e.g. the "all" /
+ * "overdue" pseudo-filters) we fall back to every open invoice except those
+ * in the anchor period itself.
+ *
+ * Pure & side-effect-free so the Collections tab UI and regression tests
+ * share identical logic.
+ */
+export function carryForwardItems(
+    invoices: CarryForwardItemInput[],
+    opts: {
+        tenantEmail: string;
+        excludeInvoiceId?: string;
+        anchorMonth?: string;
+    },
+): CarryForwardItem[] {
+    const { tenantEmail, excludeInvoiceId, anchorMonth } = opts;
+    const anchor = stripBillingPeriodSuffix(anchorMonth);
+    const prevMonth = previousMonthLabel(anchorMonth);
+    const anchorValid = prevMonth !== "";
+
+    return invoices
+        .filter(i => (i.tenantEmail || "") === tenantEmail)
+        .filter(i => i.status === "unpaid" || i.status === "pending")
+        .filter(i => !excludeInvoiceId || i.id !== excludeInvoiceId)
+        .filter(i => {
+            const bp = stripBillingPeriodSuffix(i.billingPeriod);
+            if (anchorValid) {
+                // Only the single previous month qualifies as carry-forward.
+                return bp === prevMonth;
+            }
+            // "all" / "overdue": show every open invoice except the anchor itself.
+            return !anchor || bp !== anchor;
+        })
+        .map(i => ({
+            id: i.id,
+            billingPeriod: i.billingPeriod,
+            rentDue: Math.max(0, Number(i.baseRent || 0) - Number(i.amountPaid || 0)),
+            elecDue: Math.max(0, Number(i.electricityCharge || 0) - Number(i.amountPaid || 0)),
+            totalDue: Math.max(0, Number(i.totalAmount || 0) - Number(i.amountPaid || 0)),
+            baseRent: i.baseRent,
+            electricityCharge: i.electricityCharge,
+            rentPeriod: i.rentPeriod,
+            electricityPeriod: i.electricityPeriod,
+        }))
+        .filter(i => i.totalDue > 0);
+}
