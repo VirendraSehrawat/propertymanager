@@ -534,7 +534,7 @@ describe('Property Manager Integration Tests', () => {
         it('should remove a co-tenant', async () => {
             const unitRef = db.collection('units').doc(`${TEST_PREFIX}_unit`);
             const snap = await unitRef.get();
-            const coTenants = snap.data()!.coTenants.filter((ct: any) => ct.email !== 'roommate_a@test.com');
+            const coTenants = snap.data()!.coTenants.filter((ct: { email?: string }) => ct.email !== 'roommate_a@test.com');
 
             await unitRef.update({ coTenants });
 
@@ -675,7 +675,7 @@ describe('Property Manager Integration Tests', () => {
 
             // Remove the one without email using addedAt
             const targetAddedAt = '2026-08-20T10:00:00.000Z';
-            const filtered = coTenants.filter((ct: any) => ct.addedAt !== targetAddedAt);
+            const filtered = coTenants.filter((ct: { addedAt?: string }) => ct.addedAt !== targetAddedAt);
             await unitRef.update({ coTenants: filtered });
 
             const updated = await unitRef.get();

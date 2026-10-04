@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import { auth } from "@/lib/firebase";
 
 export function useUploadWithProgress() {
     const [uploadProgress, setUploadProgress] = useState<number>(0);
@@ -16,9 +17,17 @@ export function useUploadWithProgress() {
             formData.append("path", path);
             formData.append("file", file);
 
+            const user = auth.currentUser;
+            const token = user ? await user.getIdToken() : null;
+            const headers: Record<string, string> = {};
+            if (token) {
+                headers["Authorization"] = `Bearer ${token}`;
+            }
+
             setUploadProgress(40);
             const response = await fetch("/api/uploads/cloudinary", {
                 method: "POST",
+                headers,
                 body: formData,
             });
 

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { buildCloudinarySignature, deriveCloudinaryTarget } from "@/lib/cloudinary";
+import { verifyAuthToken } from "@/lib/serverAuth";
 
 export const runtime = "nodejs";
 
@@ -7,6 +8,14 @@ const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 
 export async function POST(request: Request) {
     try {
+        const user = await verifyAuthToken(request);
+        if (!user) {
+            return NextResponse.json(
+                { error: "Unauthorized. Valid authentication token required." },
+                { status: 401 }
+            );
+        }
+
         const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
         const apiKey = process.env.CLOUDINARY_API_KEY;
         const apiSecret = process.env.CLOUDINARY_API_SECRET;

@@ -6,7 +6,8 @@ import {
   createUserWithEmailAndPassword,
   signInWithPopup,
   RecaptchaVerifier,
-  signInWithPhoneNumber
+  signInWithPhoneNumber,
+  type ConfirmationResult,
 } from "firebase/auth";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { auth, db, googleProvider } from "@/lib/firebase";
@@ -68,9 +69,10 @@ export default function LoginPage() {
       } else {
         await signInWithEmailAndPassword(auth, email, password);
       }
-    } catch (err: any) {
-      if (err.code === 'auth/email-already-in-use') setError("This email is already registered.");
-      else if (err.code === 'auth/invalid-credential') setError("Invalid email or password.");
+    } catch (err: unknown) {
+      const authError = err as { code?: string };
+      if (authError.code === 'auth/email-already-in-use') setError("This email is already registered.");
+      else if (authError.code === 'auth/invalid-credential') setError("Invalid email or password.");
       else setError("Authentication failed. Please try again.");
     } finally {
       setIsProcessing(false);
@@ -79,8 +81,8 @@ export default function LoginPage() {
 
   // --- PHONE AUTH LOGIC ---
   const setupRecaptcha = () => {
-    if (!(window as any).recaptchaVerifier) {
-      (window as any).recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
+    if (typeof window !== "undefined" && !(window as unknown as { recaptchaVerifier?: RecaptchaVerifier }).recaptchaVerifier) {
+      (window as unknown as { recaptchaVerifier?: RecaptchaVerifier }).recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
         size: 'invisible',
       });
     }
@@ -100,13 +102,14 @@ export default function LoginPage() {
 
     try {
       setupRecaptcha();
-      const appVerifier = (window as any).recaptchaVerifier;
+      const appVerifier = (window as unknown as { recaptchaVerifier?: RecaptchaVerifier }).recaptchaVerifier;
+      if (!appVerifier) throw new Error("Recaptcha verifier not initialized");
       const confirmationResult = await signInWithPhoneNumber(auth, phoneNumber, appVerifier);
 
       // Store the confirmation object on the window to use it in the next step
-      (window as any).confirmationResult = confirmationResult;
+      (window as unknown as { confirmationResult?: ConfirmationResult }).confirmationResult = confirmationResult;
       setIsOtpSent(true);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
       setError("Failed to send OTP. Please check the phone number.");
     } finally {
@@ -120,7 +123,8 @@ export default function LoginPage() {
     setIsProcessing(true);
 
     try {
-      const confirmationResult = (window as any).confirmationResult;
+      const confirmationResult = (window as unknown as { confirmationResult?: ConfirmationResult }).confirmationResult;
+      if (!confirmationResult) throw new Error("No pending OTP confirmation found");
       const result = await confirmationResult.confirm(otp);
       const user = result.user;
 
@@ -136,7 +140,7 @@ export default function LoginPage() {
           createdAt: new Date().toISOString()
         });
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
       setError("Invalid OTP. Please try again.");
     } finally {
@@ -166,7 +170,7 @@ export default function LoginPage() {
           createdAt: new Date().toISOString()
         });
       }
-    } catch (err) {
+    } catch {
       setError("Google sign-in failed. Please try again.");
     }
   };

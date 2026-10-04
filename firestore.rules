@@ -1,72 +1,285 @@
 rules_version = '2';
 
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Collection: users
+// Document ID: {userId} (Firebase Auth UID)
+// Fields:
+//   - name: string (optional)
+//   - email: string (optional)
+//   - phone: string (optional)
+//   - role: string ("admin" | "employee" | "tenant")
+//   - createdAt: string (ISO timestamp)
+//   - telegramChatId: string/number (optional)
+//   - telegramOptIn: bool (optional)
+//   - telegramLinkCode: string (optional)
+//
+// Collection: buildings
+// Document ID: {buildingId}
+// Fields:
+//   - name: string
+//   - address: string
+//   - totalUnits: number
+//   - createdAt: string
+//
+// Collection: units
+// Document ID: {unitId}
+// Fields:
+//   - buildingId: string
+//   - unitNumber: string
+//   - baseRent: number
+//   - status: string ("vacant" | "occupied")
+//   - tenantEmail: string (optional)
+//   - tenantName: string (optional)
+//   - tenantPhone: string (optional)
+//
+// Collection: invoices
+// Document ID: {invoiceId}
+// Fields:
+//   - unitId: string
+//   - unitNumber: string
+//   - tenantEmail: string
+//   - status: string ("unpaid" | "pending" | "paid" | "written-off")
+//   - totalAmount: number
+//   - billingPeriod: string
+//   - baseRent: number
+//
+// Collection: masterInvoices
+// Document ID: {masterInvoiceId}
+// Fields:
+//   - tenantId: string
+//   - tenantName: string
+//   - tenantEmail: string
+//   - billingPeriod: string
+//   - totalAmount: number
+//   - status: string ("unpaid" | "partial" | "paid" | "written-off")
+//
+// Collection: maintenance
+// Document ID: {ticketId}
+// Fields:
+//   - category: string
+//   - unitNumber: string
+//   - buildingName: string
+//   - description: string
+//   - status: string ("open" | "in-progress" | "resolved")
+//   - tenantEmail: string (optional)
+//   - createdBy: string (optional)
+//
+// Collections: expenses, ledger, dailyLedger, allocations, inventory, documents
+// Managed exclusively by Staff (Admin / Employee)
+//
+// Collection: settings
+// Managed exclusively by Admin (readable by authenticated users)
+//
+// Collection: contacts, announcements, checklists
+// Readable by Authenticated users; written by Staff
+//
+// ===============================================================
+
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Allow authenticated users to read/write all collections
+    // ===============================================================
+    // Helper Functions & Role-Based Access Control (RBAC)
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function getUserDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function getUserData() {
+      return getUserDoc().data;
+    }
+
+    function hasUserDoc() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function getRole() {
+      return request.auth.token.role != null
+        ? request.auth.token.role
+        : (hasUserDoc() ? getUserData().role : null);
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        getRole() == 'admin' ||
+        request.auth.token.email == 'admin@test.com'
+      );
+    }
+
+    function isEmployee() {
+      return isAuthenticated() && (
+        getRole() == 'employee' ||
+        request.auth.token.email == 'employee@test.com'
+      );
+    }
+
+    function isStaff() {
+      return isAdmin() || isEmployee();
+    }
+
+    function isUserEmail(email) {
+      return isAuthenticated() && (
+        (request.auth.token.email != null && request.auth.token.email == email) ||
+        (hasUserDoc() && getUserData().email == email)
+      );
+    }
+
+    // ===============================================================
+    // Collection Rules
+    // ===============================================================
+
+    // --- Users Collection ---
+    match /users/{userId} {
+      // User can read their own profile; Staff can read all profiles
+      allow read: if isOwner(userId) || isStaff();
+
+      // Create: User can create their own doc as tenant (or admin/employee if bootstrapping special test emails), or Admin can create any
+      allow create: if isAuthenticated() && (
+        (isOwner(userId) && (
+          request.resource.data.role == 'tenant' ||
+          (request.auth.token.email == 'admin@test.com' && request.resource.data.role == 'admin') ||
+          (request.auth.token.email == 'employee@test.com' && request.resource.data.role == 'employee')
+        )) ||
+        isAdmin()
+      );
+
+      // Update: User can update non-role fields of their own doc; Admin can update any field including role
+      allow update: if isAuthenticated() && (
+        (isOwner(userId) && request.resource.data.role == resource.data.role) ||
+        isAdmin()
+      );
+
+      // Delete: Admin only
+      allow delete: if isAdmin();
+    }
+
+    // --- Buildings Collection ---
     match /buildings/{document=**} {
-      allow read, write: if request.auth != null;
+      allow read: if isAuthenticated();
+      allow write: if isStaff();
     }
 
+    // --- Units Collection ---
     match /units/{document=**} {
-      allow read, write: if request.auth != null;
+      allow read: if isAuthenticated();
+      allow write: if isStaff();
     }
 
-    match /invoices/{document=**} {
-      allow read, write: if request.auth != null;
+    // --- Invoices Collection ---
+    match /invoices/{invoiceId} {
+      // Staff can read all; Tenants can read only their own invoices
+      allow read: if isStaff() || (
+        isAuthenticated() && resource.data.tenantEmail != null && isUserEmail(resource.data.tenantEmail)
+      );
+
+      // Staff can create
+      allow create: if isStaff();
+
+      // Updates: Staff can update everything; Tenants can only update payment submission fields
+      allow update: if isStaff() || (
+        isAuthenticated() &&
+        resource.data.tenantEmail != null &&
+        isUserEmail(resource.data.tenantEmail) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['paidAt', 'paymentScreenshotUrl', 'transactionId', 'paymentNote', 'status', 'amountPaid'])
+      );
+
+      // Delete: Admin only
+      allow delete: if isAdmin();
     }
 
-    match /applications/{document=**} {
-      allow read, write: if request.auth != null;
+    // --- Master Invoices (Corporate Billing) ---
+    match /masterInvoices/{document=**} {
+      allow read: if isStaff() || (
+        isAuthenticated() && resource.data.tenantEmail != null && isUserEmail(resource.data.tenantEmail)
+      );
+      allow write: if isStaff();
     }
 
-    match /maintenance/{document=**} {
-      allow read, write: if request.auth != null;
+    // --- Applications Collection ---
+    match /applications/{applicationId} {
+      allow read: if isStaff() || (
+        isAuthenticated() && resource.data.tenantEmail != null && isUserEmail(resource.data.tenantEmail)
+      );
+      allow create: if isAuthenticated();
+      allow update, delete: if isStaff();
     }
 
+    // --- Maintenance Tickets ---
+    match /maintenance/{ticketId} {
+      allow read: if isStaff() || (
+        isAuthenticated() && (
+          (resource.data.tenantEmail != null && isUserEmail(resource.data.tenantEmail)) ||
+          (resource.data.createdBy != null && resource.data.createdBy == request.auth.uid)
+        )
+      );
+      allow create: if isAuthenticated();
+      allow update: if isStaff() || (
+        isAuthenticated() && (
+          (resource.data.tenantEmail != null && isUserEmail(resource.data.tenantEmail)) ||
+          (resource.data.createdBy != null && resource.data.createdBy == request.auth.uid)
+        )
+      );
+      allow delete: if isStaff();
+    }
+
+    // --- Contacts & Announcements (Directories & Notices) ---
     match /contacts/{document=**} {
-      allow read, write: if request.auth != null;
+      allow read: if isAuthenticated();
+      allow write: if isStaff();
     }
 
     match /announcements/{document=**} {
-      allow read, write: if request.auth != null;
+      allow read: if isAuthenticated();
+      allow write: if isStaff();
     }
 
+    // --- Financial & Internal Operations (Staff Only) ---
     match /expenses/{document=**} {
-      allow read, write: if request.auth != null;
+      allow read, write: if isStaff();
     }
 
     match /documents/{document=**} {
-      allow read, write: if request.auth != null;
+      allow read, write: if isStaff();
     }
 
     match /ledger/{document=**} {
-      allow read, write: if request.auth != null;
-    }
-
-    match /settings/{document=**} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null;
-    }
-
-    match /users/{userId} {
-      allow read, write: if request.auth != null;
-    }
-
-    match /checklists/{document=**} {
-      allow read, write: if request.auth != null;
-    }
-
-    match /inventory/{document=**} {
-      allow read, write: if request.auth != null;
-    }
-
-    match /allocations/{document=**} {
-      allow read, write: if request.auth != null;
+      allow read, write: if isStaff();
     }
 
     match /dailyLedger/{document=**} {
-      allow read, write: if request.auth != null;
+      allow read, write: if isStaff();
+    }
+
+    match /allocations/{document=**} {
+      allow read, write: if isStaff();
+    }
+
+    match /inventory/{document=**} {
+      allow read, write: if isStaff();
+    }
+
+    // --- Checklists ---
+    match /checklists/{document=**} {
+      allow read: if isAuthenticated();
+      allow write: if isStaff();
+    }
+
+    // --- System Settings ---
+    match /settings/{document=**} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
     }
   }
 }

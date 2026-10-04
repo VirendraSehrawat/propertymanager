@@ -7,6 +7,20 @@ import { db } from "@/lib/firebase";
 import { useUploadWithProgress, UploadProgressBar } from "@/lib/useUpload";
 import { useAuth } from "@/context/AuthContext";
 
+interface Building {
+    id: string;
+    name: string;
+    address: string;
+    totalUnits: number;
+    createdAt: string;
+}
+
+interface UnitDocumentItem {
+    name: string;
+    url: string;
+    uploadedAt: string;
+}
+
 interface Unit {
     id: string;
     unitNumber: string;
@@ -18,7 +32,7 @@ interface Unit {
     lastMeterReading?: number;
     buildingId: string;
     createdAt: string;
-    documents?: { name: string; url: string; uploadedAt: string }[];
+    documents?: UnitDocumentItem[];
     notes?: { text: string; author: string; createdAt: string }[];
 }
 
@@ -28,7 +42,7 @@ export default function BuildingUnitsPage() {
     const { role, loading } = useAuth();
     const { uploadFile, uploadProgress, isUploading } = useUploadWithProgress();
 
-    const [building, setBuilding] = useState<any>(null);
+    const [building, setBuilding] = useState<Building | null>(null);
     const [units, setUnits] = useState<Unit[]>([]);
     const [isGenerating, setIsGenerating] = useState(false);
 
@@ -36,31 +50,31 @@ export default function BuildingUnitsPage() {
     const [baseRent, setBaseRent] = useState("8000");
 
     const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
-    const [selectedUnit, setSelectedUnit] = useState<any>(null);
+    const [selectedUnit, setSelectedUnit] = useState<Unit | null>(null);
     const [tenantEmail, setTenantEmail] = useState("");
     const [tenantName, setTenantName] = useState("");
     const [tenantPhone, setTenantPhone] = useState("");
 
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-    const [editingUnit, setEditingUnit] = useState<any>(null);
+    const [editingUnit, setEditingUnit] = useState<Unit | null>(null);
     const [editUnitNumber, setEditUnitNumber] = useState("");
     const [editBaseRent, setEditBaseRent] = useState("");
 
     // NEW: Document Upload States
     const [isDocModalOpen, setIsDocModalOpen] = useState(false);
-    const [selectedUnitForDoc, setSelectedUnitForDoc] = useState<any>(null);
+    const [selectedUnitForDoc, setSelectedUnitForDoc] = useState<Unit | null>(null);
     const [docName, setDocName] = useState("");
     const [docFile, setDocFile] = useState<File | null>(null);
     const [isUploadingDoc, setIsUploadingDoc] = useState(false);
 
     // NEW: Assign Existing Tenant to Another Room
     const [isAssignExistingModalOpen, setIsAssignExistingModalOpen] = useState(false);
-    const [selectedVacantUnit, setSelectedVacantUnit] = useState<any>(null);
+    const [selectedVacantUnit, setSelectedVacantUnit] = useState<Unit | null>(null);
     const [selectedExistingTenant, setSelectedExistingTenant] = useState("");
 
     // NEW: Single Room Meter Reading & Invoice
     const [isMeterModalOpen, setIsMeterModalOpen] = useState(false);
-    const [meterUnit, setMeterUnit] = useState<any>(null);
+    const [meterUnit, setMeterUnit] = useState<Unit | null>(null);
     const [meterReading, setMeterReading] = useState("");
     const [meterMonth, setMeterMonth] = useState(() => {
         const now = new Date();
@@ -71,7 +85,7 @@ export default function BuildingUnitsPage() {
 
     // NEW: Tenant Profile & Notes
     const [isTenantProfileOpen, setIsTenantProfileOpen] = useState(false);
-    const [profileUnit, setProfileUnit] = useState<any>(null);
+    const [profileUnit, setProfileUnit] = useState<Unit | null>(null);
     const [profileName, setProfileName] = useState("");
     const [profilePhone, setProfilePhone] = useState("");
     const [profileEmail, setProfileEmail] = useState("");
@@ -86,7 +100,7 @@ export default function BuildingUnitsPage() {
         if (!id) return;
         const fetchBuilding = async () => {
             const docSnap = await getDoc(doc(db, "buildings", id as string));
-            if (docSnap.exists()) setBuilding({ id: docSnap.id, ...docSnap.data() });
+            if (docSnap.exists()) setBuilding({ id: docSnap.id, ...docSnap.data() } as Building);
         };
         fetchBuilding();
     }, [id]);
@@ -308,7 +322,7 @@ export default function BuildingUnitsPage() {
 
                                                     {unit.documents && unit.documents.length > 0 ? (
                                                         <ul className="space-y-1">
-                                                            {unit.documents.map((doc: any, i: number) => (
+                                                            {unit.documents.map((doc: UnitDocumentItem, i: number) => (
                                                                 <li key={i}><a href={doc.url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline flex items-center gap-1">📄 {doc.name}</a></li>
                                                             ))}
                                                         </ul>
