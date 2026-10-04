@@ -1,332 +1,144 @@
 "use client";
 
-import { useAuth } from "@/context/AuthContext";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { useEffect, useState } from "react";
 import { signOut } from "firebase/auth";
-import { collection, addDoc, onSnapshot, query, orderBy, where, doc, updateDoc, setDoc, getDocs, writeBatch, deleteDoc, getDoc, deleteField } from "firebase/firestore";
+import {
+    collection,
+    onSnapshot,
+    query,
+    orderBy,
+    where,
+    doc,
+} from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
-import { useUploadWithProgress, UploadProgressBar } from "@/lib/useUpload";
-import { collectedSplit, carryForwardFromInvoices } from "@/lib/allocation";
 import { mapSnapshot } from "@/lib/firestore";
-import { EXPENSE_CATEGORIES, categoryEmoji } from "@/lib/expenses";
+import { useAuth } from "@/context/AuthContext";
 import type {
+    Building,
+    Invoice,
+    MaintenanceTicket,
+    Contact,
+    Announcement,
+    Expense,
     LedgerEntry,
     DailyLedgerEntry,
     AppUser,
+    Application,
     Unit,
 } from "@/types";
+import { TabButton } from "@/components/ui";
 import { DailyLedgerTab } from "@/components/employee";
+import {
+    AdminOverviewTab,
+    AdminBuildingsTab,
+    AdminTenantsTab,
+    AdminInvoicesTab,
+    AdminExpensesTab,
+    AdminLedgerTab,
+    AdminUsersTab,
+    AdminMaintenanceTab,
+    AdminApplicationsTab,
+    AdminAnnouncementsTab,
+    AdminContactsTab,
+    AdminSettingsTab,
+} from "@/components/admin";
 
-interface Building {
-    id: string;
-    name: string;
-    address: string;
-    totalUnits: number;
-    createdAt: string;
-}
-
-interface Application {
-    id: string;
-    unitId: string;
-    unitNumber: string;
-    status: string;
-    tenantEmail: string;
-    createdAt: string;
-}
-
-interface Invoice {
-    id: string;
-    unitId: string;
-    unitNumber: string;
-    status: string;
-    tenantEmail: string;
-    createdAt: string;
-    totalAmount?: number;
-    billingPeriod?: string;
-    baseRent?: number;
-    previousReading?: number;
-    currentReading?: number;
-    electricityConsumed?: number;
-    electricityRate?: number;
-    electricityCharge?: number;
-    isCustom?: boolean;
-    paidAt?: string;
-    transactionId?: string;
-    amountPaid?: number;
-    paymentScreenshotUrl?: string;
-}
-
-interface MaintenanceTicket {
-    id: string;
-    category: string;
-    unitNumber: string;
-    buildingName: string;
-    description: string;
-    status: string;
-    createdAt: string;
-    comments?: Array<{ author: string; text: string }>;
-    photoUrl?: string;
-    resolutionPhotoUrl?: string;
-}
-
-interface Contact {
-    id: string;
-    name: string;
-    role: string;
-    phone: string;
-    createdAt: string;
-}
-
-interface Announcement {
-    id: string;
-    title: string;
-    message: string;
-    target: string;
-    author: string;
-    createdAt: string;
-}
-
-interface Expense {
-    id: string;
-    amount: number;
-    category: string;
-    description: string;
-    date: string;
-    createdAt: string;
-}
-
-interface OccupiedUnit {
-    id: string;
-    unitNumber: string;
-    tenantEmail: string;
-    status: string;
-    tenantPhone?: string;
-    emergencyContact?: string;
-    leaseStart?: string;
-    leaseEnd?: string;
-    lastMeterReading?: number;
-    baseRent?: number;
-}
-
-interface DocumentData {
-    id: string;
-    unitId: string;
-    unitNumber: string;
-    tenantEmail: string;
-    title: string;
-    fileUrl: string;
-    uploadedBy: string;
-    createdAt: string;
-}
+type AdminTab =
+    | "overview"
+    | "buildings"
+    | "tenants"
+    | "invoices"
+    | "expenses"
+    | "ledger"
+    | "daily"
+    | "users"
+    | "maintenance"
+    | "applications"
+    | "announcements"
+    | "contacts"
+    | "settings";
 
 export default function AdminDashboard() {
     const { user, role, loading } = useAuth();
     const router = useRouter();
-    const { uploadFile, uploadProgress, isUploading } = useUploadWithProgress();
 
+    const [activeTab, setActiveTab] = useState<AdminTab>("overview");
+
+    // Core Data States
     const [buildings, setBuildings] = useState<Building[]>([]);
+    const [allUnits, setAllUnits] = useState<Unit[]>([]);
+    const [occupiedUnits, setOccupiedUnits] = useState<Unit[]>([]);
     const [applications, setApplications] = useState<Application[]>([]);
     const [pendingInvoices, setPendingInvoices] = useState<Invoice[]>([]);
-
+    const [paidInvoices, setPaidInvoices] = useState<Invoice[]>([]);
     const [unpaidInvoices, setUnpaidInvoices] = useState<Invoice[]>([]);
-    const [isLateFeeModalOpen, setIsLateFeeModalOpen] = useState(false);
-    const [lateFeeAmount, setLateFeeAmount] = useState<number>(500);
-    const [isApplyingLateFees, setIsApplyingLateFees] = useState(false);
-
     const [maintenanceTickets, setMaintenanceTickets] = useState<MaintenanceTicket[]>([]);
     const [contacts, setContacts] = useState<Contact[]>([]);
-    const [occupiedUnits, setOccupiedUnits] = useState<OccupiedUnit[]>([]);
-    const [paidInvoices, setPaidInvoices] = useState<Invoice[]>([]);
     const [expenses, setExpenses] = useState<Expense[]>([]);
-
     const [announcements, setAnnouncements] = useState<Announcement[]>([]);
-    const [noticeMessage, setNoticeMessage] = useState("");
-    const [noticeTarget, setNoticeTarget] = useState("all");
-    const [isSubmittingNotice, setIsSubmittingNotice] = useState(false);
+    const [allLedgerEntries, setAllLedgerEntries] = useState<LedgerEntry[]>([]);
+    const [allUsers, setAllUsers] = useState<AppUser[]>([]);
+    const [dailyLedgerEntries, setDailyLedgerEntries] = useState<DailyLedgerEntry[]>([]);
 
+    // Settings States
     const [upiId, setUpiId] = useState("");
     const [payeeName, setPayeeName] = useState("");
-    const [isSubmittingSettings, setIsSubmittingSettings] = useState(false);
 
-    const [isCustomInvModalOpen, setIsCustomInvModalOpen] = useState(false);
-    const [customInvUnit, setCustomInvUnit] = useState("");
-    const [customInvAmount, setCustomInvAmount] = useState("");
-    const [customInvTitle, setCustomInvTitle] = useState("");
-    const [isSubmittingCustomInv, setIsSubmittingCustomInv] = useState(false);
-
-    const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
-    const [expenseAmount, setExpenseAmount] = useState("");
-    const [expenseCategory, setExpenseCategory] = useState("Maintenance");
-    const [expenseDesc, setExpenseDesc] = useState("");
-    const [expenseDate, setExpenseDate] = useState("");
-    const [isSubmittingExpense, setIsSubmittingExpense] = useState(false);
-
-    const [isLeaseModalOpen, setIsLeaseModalOpen] = useState(false);
-    const [selectedUnitForLease, setSelectedUnitForLease] = useState<OccupiedUnit | null>(null);
-    const [tenantPhone, setTenantPhone] = useState("");
-    const [emergencyContact, setEmergencyContact] = useState("");
-    const [leaseStart, setLeaseStart] = useState("");
-    const [leaseEnd, setLeaseEnd] = useState("");
-    const [isUpdatingLease, setIsUpdatingLease] = useState(false);
-
-    const [contactName, setContactName] = useState("");
-    const [contactRole, setContactRole] = useState("Plumber");
-    const [contactPhone, setContactPhone] = useState("");
-    const [isSubmittingContact, setIsSubmittingContact] = useState(false);
-
-    const [name, setName] = useState("");
-    const [address, setAddress] = useState("");
-    const [totalUnits, setTotalUnits] = useState("");
-    const [isSubmitting, setIsSubmitting] = useState(false);
-
-    const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
-    const [electricityRate, setElectricityRate] = useState<number>(8);
-    const [meterReadings, setMeterReadings] = useState<Record<string, number>>({});
-    const [isNoticeModalOpen, setIsNoticeModalOpen] = useState(false);
-    const [noticeTitle, setNoticeTitle] = useState("");
-    const [isGeneratingInvoices, setIsGeneratingInvoices] = useState(false);
-
-    const [documents, setDocuments] = useState<DocumentData[]>([]);
-    const [isDocModalOpen, setIsDocModalOpen] = useState(false);
-    const [docTargetUnit, setDocTargetUnit] = useState("");
-    const [docTitle, setDocTitle] = useState("");
-    const [docFile, setDocFile] = useState<File | null>(null);
-    const [isUploadingDoc, setIsUploadingDoc] = useState(false);
-
-    // --- NEW: Financial Export State ---
-    const [exportMonth, setExportMonth] = useState("");
+    // Date & Export States
+    const [exportMonth, setExportMonth] = useState(() => {
+        const d = new Date();
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    });
     const [isExporting, setIsExporting] = useState(false);
 
-    // --- Tenant Ledger State ---
-    const [allLedgerEntries, setAllLedgerEntries] = useState<LedgerEntry[]>([]);
-    const [ledgerFilter, setLedgerFilter] = useState("");
-    const [editLedger, setEditLedger] = useState<LedgerEntry | null>(null);
-    const [editLedgerAmount, setEditLedgerAmount] = useState("");
-    const [editLedgerNote, setEditLedgerNote] = useState("");
-
-    // --- User Management State ---
-    const [allUsers, setAllUsers] = useState<AppUser[]>([]);
-
-    // --- Daily Ledger State ---
-    const [dailyLedgerEntries, setDailyLedgerEntries] = useState<DailyLedgerEntry[]>([]);
-    const [allUnits, setAllUnits] = useState<Unit[]>([]);
-
-    // --- Single Invoice Generation State ---
-    const [isSingleInvModalOpen, setIsSingleInvModalOpen] = useState(false);
-    const [singleInvUnit, setSingleInvUnit] = useState("");
-    const [singleInvMonth, setSingleInvMonth] = useState("");
-    const [singleInvReading, setSingleInvReading] = useState("");
-    const [isGeneratingSingleInv, setIsGeneratingSingleInv] = useState(false);
-    const [singleInvMeterChanged, setSingleInvMeterChanged] = useState(false);
-    const [singleInvUnitsConsumed, setSingleInvUnitsConsumed] = useState("");
-    const [singleInvNewReading, setSingleInvNewReading] = useState("");
-    const [singleInvChargeType, setSingleInvChargeType] = useState<"both" | "rent" | "electricity">("both");
-
-    const handleReadingChange = (unitId: string, value: string) => {
-        setMeterReadings(prev => ({ ...prev, [unitId]: Number(value) }));
-    };
-
-    useEffect(() => {
-        if (!loading && (!user || role !== "admin")) router.push("/");
-        if (role === "admin") document.title = "Admin Portal | Property Manager";
-    }, [user, role, loading, router]);
-
-    useEffect(() => {
-        if (role !== "admin") return;
-        const unsubBldgs = onSnapshot(query(collection(db, "buildings"), orderBy("createdAt", "desc")), (snapshot) => { setBuildings(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Building))); });
-        const unsubApps = onSnapshot(query(collection(db, "applications"), where("status", "==", "pending")), (snapshot) => { const appsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Application)); appsData.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()); setApplications(appsData); });
-        const unsubAllInvoices = onSnapshot(collection(db, "invoices"), (snapshot) => {
-            const all = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Invoice));
-            setPendingInvoices(all.filter(i => i.status === "pending").sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()));
-            setPaidInvoices(all.filter(i => i.status === "paid"));
-            setUnpaidInvoices(all.filter(i => i.status === "unpaid"));
-        });
-        const unsubTickets = onSnapshot(collection(db, "maintenance"), (snapshot) => { const tData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as MaintenanceTicket)); tData.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()); setMaintenanceTickets(tData); });
-        const unsubContacts = onSnapshot(collection(db, "contacts"), (snapshot) => { setContacts(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Contact))); });
-        const unsubOccupied = onSnapshot(query(collection(db, "units"), where("status", "==", "occupied")), (snapshot) => { setOccupiedUnits(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as OccupiedUnit)).sort((a, b) => a.unitNumber.localeCompare(b.unitNumber, undefined, { numeric: true }))); });
-        const unsubExpenses = onSnapshot(collection(db, "expenses"), (snapshot) => { const expData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Expense)); expData.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()); setExpenses(expData); });
-        const unsubSettings = onSnapshot(doc(db, "settings", "payment"), (docSnap) => { if (docSnap.exists()) { setUpiId(docSnap.data().upiId || ""); setPayeeName(docSnap.data().payeeName || ""); } });
-        const unsubAnnouncements = onSnapshot(collection(db, "announcements"), (snapshot) => { const annData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Announcement)); annData.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()); setAnnouncements(annData); });
-        const unsubDocs = onSnapshot(collection(db, "documents"), (snapshot) => { const docData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as DocumentData)); docData.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()); setDocuments(docData); });
-        const unsubLedger = onSnapshot(collection(db, "ledger"), (snapshot) => { setAllLedgerEntries(mapSnapshot<LedgerEntry>(snapshot).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())); });
-        const unsubUsers = onSnapshot(collection(db, "users"), (snapshot) => { setAllUsers(mapSnapshot<AppUser>(snapshot).sort((a, b) => (a.email || "").localeCompare(b.email || ""))); });
-        const unsubDailyLedger = onSnapshot(collection(db, "dailyLedger"), (snapshot) => { setDailyLedgerEntries(mapSnapshot<DailyLedgerEntry>(snapshot).sort((a, b) => (b.date || "").localeCompare(a.date || ""))); });
-        const unsubAllUnits = onSnapshot(collection(db, "units"), (snapshot) => { setAllUnits(mapSnapshot<Unit>(snapshot)); });
-
-        return () => { unsubBldgs(); unsubApps(); unsubAllInvoices(); unsubTickets(); unsubContacts(); unsubOccupied(); unsubExpenses(); unsubSettings(); unsubAnnouncements(); unsubDocs(); unsubLedger(); unsubUsers(); unsubDailyLedger(); unsubAllUnits(); };
-    }, [role]);
-
-    const totalIncome = paidInvoices.reduce((sum, inv) => sum + Number(inv.totalAmount || 0), 0);
-    const totalExpenses = expenses.reduce((sum, exp) => sum + Number(exp.amount || 0), 0);
-    const netProfit = totalIncome - totalExpenses;
-
-    // Monthly Dashboard calculations
     const allInvoicesForDashboard = [...paidInvoices, ...unpaidInvoices, ...pendingInvoices];
     const dashboardPeriods = [...new Set(allInvoicesForDashboard.filter(inv => !inv.isCustom && inv.billingPeriod).map(inv => inv.billingPeriod!))].sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
+
     const [dashboardMonth, setDashboardMonth] = useState(() => {
         const now = new Date();
         return now.toLocaleString('default', { month: 'long', year: 'numeric' });
     });
-    // Verify Collections: month picker for Payment Verifications section ("all" = show every pending)
-    const [verifyMonth, setVerifyMonth] = useState<string>("all");
 
-    // Daily Dashboard
-    const [dashboardDate, setDashboardDate] = useState(() => new Date().toISOString().split("T")[0]);
-    const [dashboardViewMode, setDashboardViewMode] = useState<"day" | "month">("day");
-
-    // Global month selector — drives every month-scoped section on this page.
-    // Format: "YYYY-MM". Setting this cascades the individual pickers so all sections stay in sync.
+    // Global month state
     const [globalMonth, setGlobalMonthState] = useState<string>(() => {
         const d = new Date();
         return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
     });
+
     const applyGlobalMonth = (ym: string) => {
         setGlobalMonthState(ym);
         const [y, m] = ym.split("-").map(Number);
         const label = new Date(y, m - 1, 1).toLocaleString('default', { month: 'long', year: 'numeric' });
         setDashboardMonth(label);
-        setVerifyMonth(label);
-        setDashboardDate(`${ym}-01`);
-        setDashboardViewMode("month");
         setExportMonth(ym);
     };
-    // Given a "Month YYYY" label, cascade through the global setter.
-    const applyGlobalMonthFromLabel = (label: string) => {
-        const d = new Date(label);
-        if (isNaN(d.getTime())) return;
-        applyGlobalMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
-    };
 
-    // --- NEW: FINANCIAL EXPORT LOGIC ---
+    // Financial export handler
     const handleExportFinancials = () => {
         if (!exportMonth) {
             alert("Please select a month to export.");
             return;
         }
         setIsExporting(true);
-
         try {
             const [year, month] = exportMonth.split("-");
             const targetMonth = parseInt(month, 10);
             const targetYear = parseInt(year, 10);
 
-            // Filter Income (Paid Invoices) for the selected month
             const monthIncome = paidInvoices.filter(inv => {
                 if (!inv.paidAt) return false;
                 const d = new Date(inv.paidAt);
                 return d.getFullYear() === targetYear && (d.getMonth() + 1) === targetMonth;
             });
 
-            // Filter Expenses for the selected month
             const monthExpenses = expenses.filter(exp => {
                 if (!exp.date) return false;
                 const d = new Date(exp.date);
                 return d.getFullYear() === targetYear && (d.getMonth() + 1) === targetMonth;
             });
 
-            // Build the CSV String
             let csvContent = "Date,Type,Category/Unit,Description/Tenant,Amount (INR)\n";
             let totalInc = 0;
             let totalExp = 0;
@@ -346,13 +158,10 @@ export default function AdminDashboard() {
             });
 
             const currentNetProfit = totalInc - totalExp;
-
-            // Add Summary Rows
             csvContent += `\n"","","","TOTAL INCOME","${totalInc}"\n`;
             csvContent += `"","","","TOTAL EXPENSES","-${totalExp}"\n`;
             csvContent += `"","","","NET PROFIT","${currentNetProfit}"\n`;
 
-            // Create a Blob and trigger the browser download
             const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
             const link = document.createElement("a");
             const url = URL.createObjectURL(blob);
@@ -362,7 +171,6 @@ export default function AdminDashboard() {
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
-
         } catch (error) {
             console.error("Export failed", error);
             alert("Failed to generate report.");
@@ -371,1183 +179,241 @@ export default function AdminDashboard() {
         }
     };
 
-    const handleApplyLateFees = async (e: React.FormEvent) => { e.preventDefault(); setIsApplyingLateFees(true); try { const standardUnpaid = unpaidInvoices.filter(inv => !inv.isCustom); if (standardUnpaid.length === 0) { alert("There are currently no unpaid standard invoices to penalize."); setIsLateFeeModalOpen(false); return; } const batch = writeBatch(db); let count = 0; for (const inv of standardUnpaid) { const penaltyTitle = `Late Fee: ${inv.billingPeriod}`; const existingFeeQuery = query(collection(db, "invoices"), where("unitId", "==", inv.unitId), where("billingPeriod", "==", penaltyTitle)); const existingFeeSnap = await getDocs(existingFeeQuery); if (existingFeeSnap.empty) { const newInvRef = doc(collection(db, "invoices")); batch.set(newInvRef, { unitId: inv.unitId, unitNumber: inv.unitNumber, tenantEmail: inv.tenantEmail, totalAmount: Number(lateFeeAmount), billingPeriod: penaltyTitle, isCustom: true, status: "unpaid", transactionId: "", createdAt: new Date().toISOString() }); count++; } } if (count > 0) { await batch.commit(); alert(`Successfully generated late fees for ${count} overdue tenants.`); } else { alert("Late fees have already been generated for all currently overdue invoices."); } setIsLateFeeModalOpen(false); } catch (error) { console.error(error); alert("Failed to apply late fees."); } finally { setIsApplyingLateFees(false); } };
-    const handleUploadDocument = async (e: React.FormEvent) => { e.preventDefault(); if (!docTargetUnit || !docTitle || !docFile) return; setIsUploadingDoc(true); try { const selectedUnit = occupiedUnits.find(u => u.id === docTargetUnit); if (!selectedUnit) return; const fileUrl = await uploadFile(`vault/${selectedUnit.id}/${Date.now()}_${docFile.name}`, docFile); await addDoc(collection(db, "documents"), { unitId: selectedUnit.id, unitNumber: selectedUnit.unitNumber, tenantEmail: selectedUnit.tenantEmail, title: docTitle, fileUrl: fileUrl, uploadedBy: user?.email, createdAt: new Date().toISOString() }); setIsDocModalOpen(false); setDocTitle(""); setDocTargetUnit(""); setDocFile(null); } catch (error) { console.error(error); alert("Failed to upload document."); } finally { setIsUploadingDoc(false); } };
-    const handleDeleteDocument = async (id: string) => { if (window.confirm("Delete this document? Tenants will no longer be able to see it.")) { await deleteDoc(doc(db, "documents", id)); } };
-    const handleBroadcastNotice = async (e: React.FormEvent) => { e.preventDefault(); if (!noticeTitle || !noticeMessage) return; setIsSubmittingNotice(true); try { await addDoc(collection(db, "announcements"), { title: noticeTitle, message: noticeMessage, target: noticeTarget, author: user?.email, createdAt: new Date().toISOString() }); setIsNoticeModalOpen(false); setNoticeTitle(""); setNoticeMessage(""); setNoticeTarget("all"); } catch (error) { console.error(error); alert("Failed to broadcast notice."); } finally { setIsSubmittingNotice(false); } };
-    const handleDeleteNotice = async (id: string) => { if (window.confirm("Remove this announcement from tenant boards?")) { await deleteDoc(doc(db, "announcements", id)); } };
-    const handleSaveSettings = async (e: React.FormEvent) => { e.preventDefault(); setIsSubmittingSettings(true); try { await setDoc(doc(db, "settings", "payment"), { upiId, payeeName }, { merge: true }); alert("Payment settings updated successfully!"); } catch (error) { console.error(error); alert("Failed to save settings."); } finally { setIsSubmittingSettings(false); } };
-    const handleCreateCustomInvoice = async (e: React.FormEvent) => { e.preventDefault(); if (!customInvUnit || !customInvAmount || !customInvTitle) return; setIsSubmittingCustomInv(true); try { const selectedUnit = occupiedUnits.find(u => u.id === customInvUnit); if (!selectedUnit) return; await addDoc(collection(db, "invoices"), { unitId: selectedUnit.id, unitNumber: selectedUnit.unitNumber, tenantEmail: selectedUnit.tenantEmail, totalAmount: Number(customInvAmount), billingPeriod: customInvTitle, isCustom: true, status: "unpaid", transactionId: "", createdAt: new Date().toISOString() }); setIsCustomInvModalOpen(false); setCustomInvUnit(""); setCustomInvAmount(""); setCustomInvTitle(""); } catch (error) { console.error(error); alert("Failed to create invoice."); } finally { setIsSubmittingCustomInv(false); } };
-    const handleAddExpense = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!expenseAmount || !expenseDesc) return;
-        setIsSubmittingExpense(true);
-        try {
-            const amt = Number(expenseAmount);
-            const dateStr = expenseDate || new Date().toISOString().split('T')[0];
-            const nowIso = new Date().toISOString();
-            // 1) Write the expense first
-            const expenseRef = await addDoc(collection(db, "expenses"), {
-                amount: amt,
-                category: expenseCategory,
-                description: expenseDesc,
-                date: dateStr,
-                buildingId: "",
-                buildingName: "General",
-                createdBy: user?.email || "admin",
-                createdAt: nowIso,
-            });
-            // 2) Mirror to dailyLedger as an outflow so admin's Daily Transactions
-            // by Building and the employee Daily Ledger tab stay in sync.
-            // Cross-link with expenseId ↔ dailyLedgerId so soft-delete cascades.
-            try {
-                const ledgerRef = await addDoc(collection(db, "dailyLedger"), {
-                    direction: "outflow",
-                    category: (expenseCategory || "other").toLowerCase(),
-                    date: dateStr,
-                    buildingId: "",
-                    buildingName: "General",
-                    unitId: "",
-                    unitNumber: "",
-                    tenantName: "",
-                    amount: amt,
-                    description: expenseDesc,
-                    expenseId: expenseRef.id,
-                    source: "admin-expense",
-                    createdBy: user?.email || "admin",
-                    createdAt: nowIso,
-                });
-                await updateDoc(doc(db, "expenses", expenseRef.id), { dailyLedgerId: ledgerRef.id, source: "admin-expense" });
-            } catch (mirrorErr) {
-                console.warn("Daily-ledger mirror write failed", mirrorErr);
+    // Route Protection
+    useEffect(() => {
+        if (!loading && (!user || role !== "admin")) router.push("/");
+        if (role === "admin") document.title = "Admin Portal | Property Manager";
+    }, [user, role, loading, router]);
+
+    // Firestore Listeners
+    useEffect(() => {
+        if (role !== "admin") return;
+
+        const unsubBldgs = onSnapshot(query(collection(db, "buildings"), orderBy("createdAt", "desc")), (snapshot) => {
+            setBuildings(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Building)));
+        });
+
+        const unsubApps = onSnapshot(query(collection(db, "applications"), where("status", "==", "pending")), (snapshot) => {
+            const appsData = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Application));
+            appsData.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+            setApplications(appsData);
+        });
+
+        const unsubAllInvoices = onSnapshot(collection(db, "invoices"), (snapshot) => {
+            const all = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Invoice));
+            setPendingInvoices(all.filter(i => i.status === "pending").sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()));
+            setPaidInvoices(all.filter(i => i.status === "paid"));
+            setUnpaidInvoices(all.filter(i => i.status === "unpaid"));
+        });
+
+        const unsubTickets = onSnapshot(collection(db, "maintenance"), (snapshot) => {
+            const tData = mapSnapshot<MaintenanceTicket>(snapshot);
+            tData.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+            setMaintenanceTickets(tData);
+        });
+
+        const unsubContacts = onSnapshot(collection(db, "contacts"), (snapshot) => {
+            setContacts(mapSnapshot<Contact>(snapshot));
+        });
+
+        const unsubOccupied = onSnapshot(query(collection(db, "units"), where("status", "==", "occupied")), (snapshot) => {
+            setOccupiedUnits(mapSnapshot<Unit>(snapshot).sort((a, b) => a.unitNumber.localeCompare(b.unitNumber, undefined, { numeric: true })));
+        });
+
+        const unsubExpenses = onSnapshot(collection(db, "expenses"), (snapshot) => {
+            const expData = mapSnapshot<Expense>(snapshot);
+            expData.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+            setExpenses(expData);
+        });
+
+        const unsubSettings = onSnapshot(doc(db, "settings", "payment"), (docSnap) => {
+            if (docSnap.exists()) {
+                setUpiId(docSnap.data().upiId || "");
+                setPayeeName(docSnap.data().payeeName || "");
             }
-            setIsExpenseModalOpen(false);
-            setExpenseAmount("");
-            setExpenseDesc("");
-            setExpenseCategory("Maintenance");
-            setExpenseDate("");
-        } catch (error) {
-            console.error(error);
-        } finally {
-            setIsSubmittingExpense(false);
-        }
-    };
-    const handleDeleteExpense = async (id: string) => { if (window.confirm("Delete this expense record?")) { await deleteDoc(doc(db, "expenses", id)); } };
-    const handleUpdateLease = async (e: React.FormEvent) => { e.preventDefault(); if (!selectedUnitForLease) return; setIsUpdatingLease(true); try { await updateDoc(doc(db, "units", selectedUnitForLease.id), { tenantPhone, emergencyContact, leaseStart, leaseEnd }); setIsLeaseModalOpen(false); } catch (error) { console.error(error); } finally { setIsUpdatingLease(false); } };
-    const getLeaseStatus = (endDate?: string) => { if (!endDate) return { label: "Setup Lease", color: "bg-gray-100 text-gray-600" }; const daysLeft = Math.ceil((new Date(endDate).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24)); if (daysLeft < 0) return { label: "Expired", color: "bg-red-100 text-red-800" }; if (daysLeft <= 60) return { label: `Expires in ${daysLeft} days`, color: "bg-orange-100 text-orange-800" }; return { label: "Active", color: "bg-green-100 text-green-800" }; };
-    const handleAddContact = async (e: React.FormEvent) => { e.preventDefault(); if (!contactName || !contactPhone) return; setIsSubmittingContact(true); try { await addDoc(collection(db, "contacts"), { name: contactName, role: contactRole, phone: contactPhone, createdAt: new Date().toISOString() }); setContactName(""); setContactPhone(""); } catch (error) { console.error(error); } finally { setIsSubmittingContact(false); } };
-    const handleDeleteContact = async (id: string) => { if (window.confirm("Remove this contact?")) { await deleteDoc(doc(db, "contacts", id)); } };
-    const handleUpdateTicketStatus = async (ticketId: string, newStatus: string) => { try { await updateDoc(doc(db, "maintenance", ticketId), { status: newStatus }); } catch (error) { console.error(error); } };
-    const openInvoiceModal = () => { const initialReadings: Record<string, number> = {}; occupiedUnits.forEach(u => { initialReadings[u.id] = u.lastMeterReading || 0; }); setMeterReadings(initialReadings); setIsInvoiceModalOpen(true); };
-    const handleConfirmInvoices = async (e: React.FormEvent) => { e.preventDefault(); setIsGeneratingInvoices(true); try { const date = new Date(); const monthName = date.toLocaleString('default', { month: 'long', year: 'numeric' }); const monthKey = `${date.getMonth() + 1}_${date.getFullYear()}`; const batch = writeBatch(db); let count = 0; occupiedUnits.forEach((unit) => { const invoiceId = `inv_${unit.id}_${monthKey}`; const invoiceRef = doc(db, "invoices", invoiceId); const unitRef = doc(db, "units", unit.id); const currentReading = Number(meterReadings[unit.id]) || 0; const previousReading = Number(unit.lastMeterReading) || 0; const unitsConsumed = Math.max(0, currentReading - previousReading); const electricityCharge = unitsConsumed * electricityRate; const totalAmount = Number(unit.baseRent) + electricityCharge; batch.set(invoiceRef, { unitId: unit.id, unitNumber: unit.unitNumber, tenantEmail: unit.tenantEmail, baseRent: unit.baseRent, previousReading, currentReading, electricityConsumed: unitsConsumed, electricityRate, electricityCharge, totalAmount, billingPeriod: monthName, status: "unpaid", transactionId: "", createdAt: new Date().toISOString() }, { merge: true }); batch.update(unitRef, { lastMeterReading: currentReading }); count++; }); await batch.commit(); alert(`Successfully generated invoices for ${count} units.`); setIsInvoiceModalOpen(false); } catch { alert("Failed to generate invoices."); } finally { setIsGeneratingInvoices(false); } };
+        });
 
-    const handleGenerateSingleInvoice = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!singleInvUnit || !singleInvMonth) return;
-        const needsMeter = singleInvChargeType !== "rent";
-        if (needsMeter && !singleInvMeterChanged && !singleInvReading) return;
-        if (needsMeter && singleInvMeterChanged && !singleInvUnitsConsumed) return;
-        const unit = occupiedUnits.find(u => u.id === singleInvUnit);
-        if (!unit) return;
+        const unsubAnnouncements = onSnapshot(collection(db, "announcements"), (snapshot) => {
+            const annData = mapSnapshot<Announcement>(snapshot);
+            annData.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+            setAnnouncements(annData);
+        });
 
-        const [year, month] = singleInvMonth.split("-");
-        const monthKey = `${month}_${year}`;
-        const chargeSuffix = singleInvChargeType === "rent" ? "_rent" : singleInvChargeType === "electricity" ? "_elec" : "";
-        const invoiceId = `inv_${unit.id}_${monthKey}${chargeSuffix}`;
+        const unsubLedger = onSnapshot(collection(db, "ledger"), (snapshot) => {
+            setAllLedgerEntries(mapSnapshot<LedgerEntry>(snapshot).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
+        });
 
-        // Check if invoice already exists
-        const existingSnap = await getDoc(doc(db, "invoices", invoiceId));
-        if (existingSnap.exists()) {
-            const existing = existingSnap.data();
-            if (!window.confirm(`⚠️ Invoice already exists for ${unit.unitNumber} — ${existing.billingPeriod}\n\nStatus: ${existing.status?.toUpperCase()}\nAmount: ₹${existing.totalAmount}\n\nDo you want to OVERRIDE this invoice?`)) return;
-        }
+        const unsubUsers = onSnapshot(collection(db, "users"), (snapshot) => {
+            setAllUsers(mapSnapshot<AppUser>(snapshot).sort((a, b) => (a.email || "").localeCompare(b.email || "")));
+        });
 
-        setIsGeneratingSingleInv(true);
-        try {
-            const monthName = new Date(Number(year), Number(month) - 1).toLocaleString('default', { month: 'long', year: 'numeric' });
-            const chargeLabel = singleInvChargeType === "rent" ? " (Rent only)" : singleInvChargeType === "electricity" ? " (Electricity only)" : "";
-            const billingPeriodLabel = `${monthName}${chargeLabel}`;
+        const unsubDailyLedger = onSnapshot(collection(db, "dailyLedger"), (snapshot) => {
+            setDailyLedgerEntries(mapSnapshot<DailyLedgerEntry>(snapshot).sort((a, b) => (b.date || "").localeCompare(a.date || "")));
+        });
 
-            let reading = 0;
-            const previousReading = Number(unit.lastMeterReading) || 0;
-            let unitsConsumed = 0;
+        const unsubAllUnits = onSnapshot(collection(db, "units"), (snapshot) => {
+            setAllUnits(mapSnapshot<Unit>(snapshot));
+        });
 
-            if (needsMeter) {
-                if (singleInvMeterChanged) {
-                    unitsConsumed = Number(singleInvUnitsConsumed);
-                    reading = singleInvNewReading ? Number(singleInvNewReading) : 0;
-                } else {
-                    reading = Number(singleInvReading);
-                    unitsConsumed = Math.max(0, reading - previousReading);
-                }
-            } else {
-                // rent-only invoice: don't touch meter
-                reading = previousReading;
-            }
-            const electricityCharge = needsMeter ? unitsConsumed * electricityRate : 0;
-            const baseRentApplied = singleInvChargeType === "electricity" ? 0 : Number(unit.baseRent || 0);
+        return () => {
+            unsubBldgs();
+            unsubApps();
+            unsubAllInvoices();
+            unsubTickets();
+            unsubContacts();
+            unsubOccupied();
+            unsubExpenses();
+            unsubSettings();
+            unsubAnnouncements();
+            unsubLedger();
+            unsubUsers();
+            unsubDailyLedger();
+            unsubAllUnits();
+        };
+    }, [role]);
 
-            // Fetch carry-forward from other outstanding invoices for this tenant.
-            // (Excludes the invoice we're about to write so it doesn't reference itself.)
-            const carryForward = carryForwardFromInvoices(
-                allInvoicesForDashboard.filter(i => (i.tenantEmail || "") === (unit.tenantEmail || "")),
-                // Carry forward only applies to previous months — exclude the
-                // current billing month's own invoices from the sum.
-                { excludeInvoiceId: invoiceId, excludeBillingPeriod: monthName },
-            );
-            const baseTotal = baseRentApplied + electricityCharge;
-            const totalAmount = Math.max(0, baseTotal + carryForward);
-
-            const batch = writeBatch(db);
-            batch.set(doc(db, "invoices", invoiceId), {
-                unitId: unit.id,
-                unitNumber: unit.unitNumber,
-                tenantEmail: unit.tenantEmail,
-                baseRent: baseRentApplied,
-                previousReading,
-                currentReading: reading,
-                electricityConsumed: unitsConsumed,
-                electricityRate: needsMeter ? electricityRate : 0,
-                electricityCharge,
-                chargeType: singleInvChargeType,
-                ...(singleInvMeterChanged ? { meterChanged: true } : { meterChanged: deleteField() }),
-                ...(carryForward !== 0 ? { carryForward } : { carryForward: deleteField() }),
-                totalAmount,
-                billingPeriod: billingPeriodLabel,
-                status: "unpaid",
-                transactionId: "",
-                createdAt: new Date().toISOString()
-            }, { merge: true });
-            // Only bump the unit's stored meter reading when the invoice actually consumed electricity units
-            if (needsMeter) {
-                batch.update(doc(db, "units", unit.id), { lastMeterReading: reading });
-            }
-            await batch.commit();
-
-            const cfMsg = carryForward !== 0 ? `\nCarry Forward: ${carryForward > 0 ? '+' : ''}₹${carryForward}` : '';
-            const meterNote = singleInvMeterChanged ? '\n⚠️ Meter was changed — units entered manually' : '';
-            const rentLine = singleInvChargeType === "electricity" ? "" : `\nRent: ₹${baseRentApplied}`;
-            const elecLine = singleInvChargeType === "rent" ? "" : `\nElectricity: ${unitsConsumed} units × ₹${electricityRate} = ₹${electricityCharge}`;
-            alert(`Invoice generated for ${unit.unitNumber}!${meterNote}${rentLine}${elecLine}${cfMsg}\nTotal: ₹${totalAmount}`);
-            setIsSingleInvModalOpen(false);
-            setSingleInvUnit("");
-            setSingleInvMonth("");
-            setSingleInvReading("");
-            setSingleInvMeterChanged(false);
-            setSingleInvUnitsConsumed("");
-            setSingleInvNewReading("");
-            setSingleInvChargeType("both");
-        } catch (error) {
-            console.error(error);
-            alert("Failed to generate invoice.");
-        } finally {
-            setIsGeneratingSingleInv(false);
-        }
-    };
-
-    const handleApproveInvoice = async (invId: string) => {
-        try {
-            const inv = pendingInvoices.find(i => i.id === invId);
-            await updateDoc(doc(db, "invoices", invId), { status: "paid", paidAt: new Date().toISOString() });
-            if (inv) {
-                const invoiceAmount = Number(inv.totalAmount || 0);
-                const amountPaid = Number(inv.amountPaid || invoiceAmount);
-                await addDoc(collection(db, "ledger"), {
-                    tenantEmail: inv.tenantEmail,
-                    unitId: inv.unitId,
-                    unitNumber: inv.unitNumber,
-                    invoiceId: invId,
-                    billingPeriod: inv.billingPeriod || "Ad-Hoc",
-                    invoiceAmount,
-                    amountPaid,
-                    balance: amountPaid - invoiceAmount,
-                    transactionId: inv.transactionId || "",
-                    type: "payment",
-                    settledBy: "admin",
-                    createdAt: new Date().toISOString()
-                });
-            }
-        } catch (error) { console.error(error); }
-    };
-    const handleRejectInvoice = async (invId: string) => { if (!window.confirm("Reject this payment?")) return; try { await updateDoc(doc(db, "invoices", invId), { status: "unpaid", transactionId: "" }); } catch (error) { console.error(error); } };
-
-    // --- Ledger Rectification (Admin only) ---
-    const handleEditLedgerOpen = (entry: LedgerEntry) => {
-        setEditLedger(entry);
-        setEditLedgerAmount(String(entry.amountPaid));
-        setEditLedgerNote("");
-    };
-    const handleEditLedgerSave = async () => {
-        if (!editLedger) return;
-        const newAmountPaid = Number(editLedgerAmount);
-        if (isNaN(newAmountPaid) || newAmountPaid < 0) { alert("Enter a valid amount."); return; }
-        if (!editLedgerNote.trim()) { alert("Please provide a reason for this correction."); return; }
-        const newBalance = newAmountPaid - Number(editLedger.invoiceAmount);
-        try {
-            await updateDoc(doc(db, "ledger", editLedger.id), {
-                amountPaid: newAmountPaid,
-                balance: newBalance,
-                correctedAt: new Date().toISOString(),
-                correctionNote: editLedgerNote.trim(),
-                correctedBy: user?.email || "admin",
-                originalAmountPaid: editLedger.originalAmountPaid ?? editLedger.amountPaid,
-            });
-            setEditLedger(null);
-        } catch (error) { console.error(error); alert("Failed to update ledger entry."); }
-    };
-    const handleDeleteLedger = async (entry: LedgerEntry) => {
-        if (!window.confirm(`Delete ledger entry for ${entry.billingPeriod} (₹${entry.amountPaid} paid)? This cannot be undone.`)) return;
-        try {
-            await deleteDoc(doc(db, "ledger", entry.id));
-        } catch (error) { console.error(error); alert("Failed to delete ledger entry."); }
-    };
-
-    const handleChangeUserRole = async (userId: string, email: string, newRole: string) => {
-        if (email === user?.email) { alert("You cannot change your own role."); return; }
-        if (!window.confirm(`Change role of ${email} to "${newRole}"?`)) return;
-        try {
-            await updateDoc(doc(db, "users", userId), { role: newRole });
-        } catch (error) { console.error(error); alert("Failed to update role."); }
-    };
-    const handleDeleteUser = async (userId: string, email: string) => {
-        if (email === user?.email) { alert("You cannot delete your own account."); return; }
-        if (!window.confirm(`Remove ${email} from the system? They will need to be re-added to login again.`)) return;
-        try {
-            await deleteDoc(doc(db, "users", userId));
-        } catch (error) { console.error(error); alert("Failed to delete user."); }
-    };
-
-    const handleAddBuilding = async (e: React.FormEvent) => { e.preventDefault(); setIsSubmitting(true); try { await addDoc(collection(db, "buildings"), { name, address, totalUnits: Number(totalUnits), createdAt: new Date().toISOString() }); setName(""); setAddress(""); setTotalUnits(""); } catch (error) { console.error(error); } finally { setIsSubmitting(false); } };
-    const handleApproveApp = async (appId: string, unitId: string, tenantEmail: string) => { try { await updateDoc(doc(db, "units", unitId), { status: "occupied", tenantEmail, lastMeterReading: 0 }); await updateDoc(doc(db, "applications", appId), { status: "approved" }); } catch (error) { console.error(error); } };
-    const handleRejectApp = async (appId: string) => { try { await updateDoc(doc(db, "applications", appId), { status: "rejected" }); } catch (error) { console.error(error); } };
-    const handleLogout = async () => { await signOut(auth); router.push("/"); };
-
-    if (loading) return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
-    if (!user || role !== "admin") return null;
-    const activeTicketsCount = maintenanceTickets.filter(t => t.status !== "resolved").length;
+    if (loading || !user || role !== "admin") {
+        return <div className="min-h-screen flex items-center justify-center bg-gray-50 text-gray-500">Loading Admin Portal...</div>;
+    }
 
     return (
-        <div className="min-h-screen bg-gray-50">
-            <nav className="bg-white shadow-sm px-6 py-4 flex justify-between items-center border-b border-gray-200 sticky top-0 z-10">
-                <h1 className="text-xl font-bold text-gray-800">Admin Portal</h1>
-                <div className="flex items-center gap-4">
-                    <Link href="/admin/tenants" className="text-sm px-3 py-2 bg-indigo-50 text-indigo-700 rounded-md hover:bg-indigo-100 transition font-bold">Tenants</Link>
-                    <span className="text-sm text-gray-600 hidden sm:block">{user.email}</span>
-                    <button onClick={handleLogout} className="text-sm px-4 py-2 bg-red-50 text-red-600 rounded-md hover:bg-red-100 transition">Logout</button>
-                </div>
-            </nav>
-
-            <main className="p-6 max-w-7xl mx-auto space-y-8">
-
-                {/* Global Month Selector — filters every month-scoped section below */}
-                {(() => {
-                    const [y, m] = globalMonth.split("-").map(Number);
-                    const label = new Date(y, m - 1, 1).toLocaleString('default', { month: 'long', year: 'numeric' });
-                    const shift = (delta: number) => {
-                        const d = new Date(y, m - 1 + delta, 1);
-                        applyGlobalMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
-                    };
-                    const nowYm = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
-                    return (
-                        <div className="bg-white rounded-lg shadow-sm border border-indigo-200 px-5 py-3 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 sticky top-16 z-10">
-                            <div className="flex items-center gap-3">
-                                <span className="text-xs font-bold text-gray-500 uppercase">Viewing</span>
-                                <button onClick={() => shift(-1)} className="w-8 h-8 rounded-md bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold hover:bg-indigo-100">‹</button>
-                                <div className="text-center min-w-35">
-                                    <p className="text-base font-bold text-indigo-800">{label}</p>
-                                    {globalMonth === nowYm && <p className="text-[10px] text-indigo-500 -mt-0.5">Current month</p>}
-                                </div>
-                                <button onClick={() => shift(1)} className="w-8 h-8 rounded-md bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold hover:bg-indigo-100">›</button>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <input type="month" value={globalMonth} onChange={(e) => e.target.value && applyGlobalMonth(e.target.value)} className="px-3 py-1.5 border border-indigo-300 rounded-md text-sm font-medium bg-white" />
-                                {globalMonth !== nowYm && (
-                                    <button onClick={() => applyGlobalMonth(nowYm)} className="text-xs px-3 py-1.5 border border-indigo-200 text-indigo-700 rounded-md hover:bg-indigo-50 font-bold">Today</button>
-                                )}
-                            </div>
+        <div className="min-h-screen bg-gray-100 flex flex-col font-sans pb-16">
+            {/* Top Navigation */}
+            <header className="bg-white border-b border-gray-200 sticky top-0 z-30 shadow-xs">
+                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex justify-between items-center">
+                    <div className="flex items-center gap-3">
+                        <span className="text-2xl">🏢</span>
+                        <div>
+                            <h1 className="text-base font-black text-gray-900 tracking-tight leading-tight">Property Manager Admin</h1>
+                            <p className="text-[11px] text-gray-400 font-medium">Portfolio & Operational Control Center</p>
                         </div>
-                    );
-                })()}
-
-                <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-                    <div><h2 className="text-xl font-bold text-gray-900">Command Center</h2><p className="text-sm text-gray-500">Manage billing, maintenance, portfolio, and staff.</p></div>
-                    <div className="flex flex-wrap gap-3 w-full lg:w-auto">
-                        <button onClick={() => setIsNoticeModalOpen(true)} className="px-5 py-2.5 bg-indigo-50 text-indigo-700 border border-indigo-200 font-medium rounded-md hover:bg-indigo-100 transition shadow-sm text-sm">📢 Broadcast Notice</button>
-                        <button onClick={() => setIsLateFeeModalOpen(true)} className="px-5 py-2.5 bg-red-50 text-red-700 border border-red-200 font-medium rounded-md hover:bg-red-100 transition shadow-sm text-sm">🚨 Late Fees</button>
-                        <button onClick={() => setIsCustomInvModalOpen(true)} className="px-5 py-2.5 bg-white border border-gray-300 text-gray-700 font-medium rounded-md hover:bg-gray-50 transition shadow-sm text-sm">+ Custom Bill</button>
-                        <button onClick={() => setIsSingleInvModalOpen(true)} className="px-5 py-2.5 bg-purple-50 text-purple-700 border border-purple-200 font-medium rounded-md hover:bg-purple-100 transition shadow-sm text-sm">⚡ Single Invoice</button>
-                        <button onClick={openInvoiceModal} className="px-5 py-2.5 bg-gray-900 text-white font-medium rounded-md hover:bg-gray-800 transition shadow-sm text-sm">+ Generate Invoices</button>
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <span className="hidden sm:inline-block text-xs bg-purple-100 text-purple-800 font-bold px-2.5 py-1 rounded-full">
+                            Admin: {user.email}
+                        </span>
+                        <Link href="/employee" className="text-xs bg-blue-50 text-blue-700 hover:bg-blue-100 font-bold px-3 py-1.5 rounded-lg transition">
+                            Switch to Employee Portal →
+                        </Link>
+                        <button
+                            onClick={() => signOut(auth)}
+                            className="text-xs bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold px-3 py-1.5 rounded-lg transition"
+                        >
+                            Sign Out
+                        </button>
                     </div>
                 </div>
 
-                {/* MONTH-SCOPED FINANCIAL SUMMARY */}
-                {(() => {
-                    const [y, m] = globalMonth.split("-").map(Number);
-                    const monthLabel = new Date(y, m - 1, 1).toLocaleString("default", { month: "long", year: "numeric" });
-                    const norm = (bp: string | undefined) => (bp || "").replace(/\s*\(.+\)\s*$/, "").trim();
-                    // Income: paid invoices whose billingPeriod matches selected month
-                    const monthPaid = paidInvoices.filter(inv => norm(inv.billingPeriod) === monthLabel);
-                    const monthIncome = monthPaid.reduce((s, inv) => s + Number(inv.amountPaid || inv.totalAmount || 0), 0);
-                    // Expenses: match on date YYYY-MM
-                    const monthExp = expenses.filter(e => (e.date || e.createdAt || "").startsWith(globalMonth));
-                    const monthExpense = monthExp.reduce((s, e) => s + Number(e.amount || 0), 0);
-                    const monthNet = monthIncome - monthExpense;
-                    return (
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                            <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200 flex flex-col justify-center border-l-4 border-l-green-500">
-                                <span className="text-xs text-gray-400 font-medium">Income — {monthLabel}</span>
-                                <span className="text-2xl font-bold text-green-700 mt-1">₹{monthIncome.toLocaleString()}</span>
-                                <span className="text-[10px] text-gray-400 mt-0.5">{monthPaid.length} paid invoices · all-time ₹{totalIncome.toLocaleString()}</span>
-                            </div>
-                            <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200 flex flex-col justify-center border-l-4 border-l-red-500">
-                                <span className="text-xs text-gray-400 font-medium">Expenses — {monthLabel}</span>
-                                <span className="text-2xl font-bold text-red-700 mt-1">₹{monthExpense.toLocaleString()}</span>
-                                <span className="text-[10px] text-gray-400 mt-0.5">{monthExp.length} entries · all-time ₹{totalExpenses.toLocaleString()}</span>
-                            </div>
-                            <div className="bg-gray-900 p-6 rounded-lg shadow-sm flex flex-col justify-center">
-                                <span className="text-xs text-gray-300 font-medium">Net Profit — {monthLabel}</span>
-                                <span className={`text-2xl font-bold mt-1 ${monthNet >= 0 ? "text-white" : "text-red-400"}`}>₹{monthNet.toLocaleString()}</span>
-                                <span className="text-[10px] text-gray-400 mt-0.5">all-time ₹{netProfit.toLocaleString()}</span>
-                            </div>
-                        </div>
-                    );
-                })()}
-
-                {/* DAILY TRANSACTIONS BY BUILDING (Inflow / Outflow) */}
-                {(() => {
-                    const monthEntries = dailyLedgerEntries.filter(e => !e.deleted && (e.date || "").startsWith(globalMonth));
-                    const [y, m] = globalMonth.split("-").map(Number);
-                    const monthLabel = new Date(y, m - 1, 1).toLocaleString("default", { month: "long", year: "numeric" });
-                    if (monthEntries.length === 0) {
-                        return (
-                            <div className="bg-white rounded-lg shadow-sm border border-orange-200 p-6">
-                                <h2 className="text-lg font-bold text-orange-800 mb-1">🏢 Daily Transactions by Building — {monthLabel}</h2>
-                                <p className="text-sm text-gray-500">No inflow / outflow entries recorded for this month yet.</p>
-                            </div>
-                        );
-                    }
-                    // Group: buildingId → day → { inflow, outflow, entries[] }
-                    type DayBucket = { inflow: number; outflow: number; entries: DailyLedgerEntry[] };
-                    type BldgBucket = { name: string; days: Map<string, DayBucket>; totalIn: number; totalOut: number };
-                    const map = new Map<string, BldgBucket>();
-                    monthEntries.forEach(e => {
-                        const bid = e.buildingId || "__general__";
-                        const bname = e.buildingName || "General / Unassigned";
-                        if (!map.has(bid)) map.set(bid, { name: bname, days: new Map(), totalIn: 0, totalOut: 0 });
-                        const b = map.get(bid)!;
-                        const day = e.date || "unknown";
-                        if (!b.days.has(day)) b.days.set(day, { inflow: 0, outflow: 0, entries: [] });
-                        const d = b.days.get(day)!;
-                        const amt = Number(e.amount || 0);
-                        if (e.direction === "inflow") { d.inflow += amt; b.totalIn += amt; }
-                        else { d.outflow += amt; b.totalOut += amt; }
-                        d.entries.push(e);
-                    });
-                    const bldgList = Array.from(map.entries()).sort((a, b) => a[1].name.localeCompare(b[1].name));
-                    const grandIn = bldgList.reduce((s, [, b]) => s + b.totalIn, 0);
-                    const grandOut = bldgList.reduce((s, [, b]) => s + b.totalOut, 0);
-                    return (
-                        <div className="bg-white rounded-lg shadow-sm border border-orange-200 overflow-hidden">
-                            <div className="bg-orange-50 px-6 py-4 border-b border-orange-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
-                                <div>
-                                    <h2 className="text-lg font-bold text-orange-800">🏢 Daily Transactions by Building — {monthLabel}</h2>
-                                    <p className="text-[11px] text-orange-600 mt-0.5">{bldgList.length} building{bldgList.length !== 1 ? "s" : ""} · {monthEntries.length} entr{monthEntries.length !== 1 ? "ies" : "y"}</p>
-                                </div>
-                                <div className="text-right text-sm">
-                                    <p><span className="text-green-700 font-bold">↓ Inflow ₹{grandIn.toLocaleString()}</span> · <span className="text-red-700 font-bold">↑ Outflow ₹{grandOut.toLocaleString()}</span></p>
-                                    <p className={`text-xs font-bold ${grandIn - grandOut >= 0 ? "text-emerald-700" : "text-red-700"}`}>Net ₹{(grandIn - grandOut).toLocaleString()}</p>
-                                </div>
-                            </div>
-                            <div className="divide-y divide-gray-100">
-                                {bldgList.map(([bid, b]) => {
-                                    const dayList = Array.from(b.days.entries()).sort((a, c) => c[0].localeCompare(a[0]));
-                                    return (
-                                        <details key={bid} className="group" open={bldgList.length <= 2}>
-                                            <summary className="px-6 py-4 flex justify-between items-center hover:bg-gray-50 cursor-pointer list-none">
-                                                <div className="flex items-center gap-2">
-                                                    <span className="text-gray-400 group-open:rotate-90 transition-transform inline-block">▶</span>
-                                                    <div>
-                                                        <p className="font-bold text-gray-900">{b.name}</p>
-                                                        <p className="text-[10px] text-gray-500">{dayList.length} day{dayList.length !== 1 ? "s" : ""} with activity</p>
-                                                    </div>
-                                                </div>
-                                                <div className="text-right text-xs">
-                                                    <p><span className="text-green-700 font-bold">↓ ₹{b.totalIn.toLocaleString()}</span> · <span className="text-red-700 font-bold">↑ ₹{b.totalOut.toLocaleString()}</span></p>
-                                                    <p className={`font-bold ${b.totalIn - b.totalOut >= 0 ? "text-emerald-700" : "text-red-700"}`}>Net ₹{(b.totalIn - b.totalOut).toLocaleString()}</p>
-                                                </div>
-                                            </summary>
-                                            <div className="bg-gray-50 border-t border-gray-100 px-6 py-3 space-y-3">
-                                                {dayList.map(([day, d]) => (
-                                                    <div key={day} className="bg-white border border-gray-200 rounded-md p-3">
-                                                        <div className="flex justify-between items-center mb-2 pb-2 border-b border-gray-100">
-                                                            <p className="text-sm font-bold text-gray-800">📅 {new Date(day + "T00:00:00").toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" })}</p>
-                                                            <div className="text-xs">
-                                                                <span className="text-green-700 font-bold">↓ ₹{d.inflow.toLocaleString()}</span>
-                                                                <span className="mx-2 text-gray-300">|</span>
-                                                                <span className="text-red-700 font-bold">↑ ₹{d.outflow.toLocaleString()}</span>
-                                                                <span className="mx-2 text-gray-300">|</span>
-                                                                <span className={`font-bold ${d.inflow - d.outflow >= 0 ? "text-emerald-700" : "text-red-700"}`}>Net ₹{(d.inflow - d.outflow).toLocaleString()}</span>
-                                                            </div>
-                                                        </div>
-                                                        <div className="divide-y divide-gray-50">
-                                                            {d.entries
-                                                                .slice()
-                                                                .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""))
-                                                                .map(e => (
-                                                                    <div key={e.id} className="py-1.5 flex justify-between items-center text-xs">
-                                                                        <div className="min-w-0">
-                                                                            <div className="flex items-center gap-1.5 flex-wrap">
-                                                                                <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ${e.direction === "inflow" ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>{e.direction === "inflow" ? "IN" : "OUT"}</span>
-                                                                                <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">{e.category || "other"}</span>
-                                                                                {e.unitNumber && <span className="text-[10px] text-gray-700 font-medium">{e.unitNumber}</span>}
-                                                                            </div>
-                                                                            {e.description && <p className="text-[11px] text-gray-600 truncate mt-0.5">{e.description}</p>}
-                                                                        </div>
-                                                                        <p className={`font-bold shrink-0 ${e.direction === "inflow" ? "text-green-700" : "text-red-700"}`}>{e.direction === "inflow" ? "+" : "−"}₹{Number(e.amount || 0).toLocaleString()}</p>
-                                                                    </div>
-                                                                ))}
-                                                        </div>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        </details>
-                                    );
-                                })}
-                            </div>
-                        </div>
-                    );
-                })()}
-
-                {/* PER-BUILDING COLLECTIONS (invoiced / pending / collected — rent + electricity) */}
-                {(() => {
-                    const [y, m] = globalMonth.split("-").map(Number);
-                    const monthLabel = new Date(y, m - 1, 1).toLocaleString("default", { month: "long", year: "numeric" });
-                    const norm = (bp: string | undefined) => (bp || "").replace(/\s*\(.+\)\s*$/, "").trim();
-                    const monthInvoices = allInvoicesForDashboard.filter(inv => norm(inv.billingPeriod) === monthLabel && !inv.isCustom);
-                    // Map unitId → buildingId via allUnits
-                    const unitBuilding = new Map<string, { id: string; name: string }>();
-                    allUnits.forEach((u) => {
-                        const b = buildings.find(bb => bb.id === u.buildingId);
-                        unitBuilding.set(u.id, { id: u.buildingId || "__unassigned__", name: b?.name || "Unassigned" });
-                    });
-                    type Row = { id: string; name: string; invRent: number; invElec: number; paidRent: number; paidElec: number; pendRent: number; pendElec: number; invCount: number; paidCount: number; pendCount: number };
-                    const rows = new Map<string, Row>();
-                    // Seed with every building so zero-activity buildings still show
-                    buildings.forEach(b => rows.set(b.id, { id: b.id, name: b.name, invRent: 0, invElec: 0, paidRent: 0, paidElec: 0, pendRent: 0, pendElec: 0, invCount: 0, paidCount: 0, pendCount: 0 }));
-                    monthInvoices.forEach(inv => {
-                        const bldg = unitBuilding.get(inv.unitId) || { id: "__unassigned__", name: "Unassigned" };
-                        if (!rows.has(bldg.id)) rows.set(bldg.id, { id: bldg.id, name: bldg.name, invRent: 0, invElec: 0, paidRent: 0, paidElec: 0, pendRent: 0, pendElec: 0, invCount: 0, paidCount: 0, pendCount: 0 });
-                        const r = rows.get(bldg.id)!;
-                        const rent = Number(inv.baseRent || 0);
-                        const elec = Number(inv.electricityCharge || 0);
-                        r.invRent += rent; r.invElec += elec; r.invCount++;
-                        // Shared rent-first split (heals legacy paid invoices with missing amountPaid)
-                        const { collectedRent: paidR, collectedElectricity: paidE } = collectedSplit({
-                            status: inv.status,
-                            amountPaid: inv.amountPaid,
-                            baseRent: rent,
-                            electricityCharge: elec,
-                            totalAmount: Number(inv.totalAmount || 0) || rent + elec,
-                        });
-                        r.paidRent += paidR; r.paidElec += paidE;
-                        r.pendRent += Math.max(0, rent - paidR);
-                        r.pendElec += Math.max(0, elec - paidE);
-                        if (inv.status === "paid") r.paidCount++; else r.pendCount++;
-                    });
-                    const list = Array.from(rows.values()).sort((a, b) => a.name.localeCompare(b.name));
-                    const totals = list.reduce((t, r) => ({
-                        invRent: t.invRent + r.invRent, invElec: t.invElec + r.invElec,
-                        paidRent: t.paidRent + r.paidRent, paidElec: t.paidElec + r.paidElec,
-                        pendRent: t.pendRent + r.pendRent, pendElec: t.pendElec + r.pendElec,
-                        invCount: t.invCount + r.invCount, paidCount: t.paidCount + r.paidCount, pendCount: t.pendCount + r.pendCount,
-                    }), { invRent: 0, invElec: 0, paidRent: 0, paidElec: 0, pendRent: 0, pendElec: 0, invCount: 0, paidCount: 0, pendCount: 0 });
-                    return (
-                        <div className="bg-white rounded-lg shadow-sm border border-purple-200 overflow-hidden">
-                            <div className="bg-purple-50 px-6 py-4 border-b border-purple-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
-                                <div>
-                                    <h2 className="text-lg font-bold text-purple-800">🏢 Per-Building Collections — {monthLabel}</h2>
-                                    <p className="text-[11px] text-purple-600 mt-0.5">Standard invoices only (excludes late fees / custom invoices)</p>
-                                </div>
-                                <div className="text-right text-xs">
-                                    <p className="text-gray-600">Invoiced <span className="font-bold text-gray-900">₹{(totals.invRent + totals.invElec).toLocaleString()}</span> · Collected <span className="font-bold text-green-700">₹{(totals.paidRent + totals.paidElec).toLocaleString()}</span> · Pending <span className="font-bold text-red-700">₹{(totals.pendRent + totals.pendElec).toLocaleString()}</span></p>
-                                </div>
-                            </div>
-                            <div className="overflow-x-auto">
-                                <table className="w-full text-xs">
-                                    <thead className="bg-gray-50 text-gray-600 border-b border-gray-200">
-                                        <tr>
-                                            <th className="text-left px-4 py-2 font-bold">Building</th>
-                                            <th className="text-right px-3 py-2 font-bold">Invoices</th>
-                                            <th className="text-right px-3 py-2 font-bold">🏠 Invoiced Rent</th>
-                                            <th className="text-right px-3 py-2 font-bold">⚡ Invoiced Elec</th>
-                                            <th className="text-right px-3 py-2 font-bold bg-green-50 text-green-800">🏠 Collected Rent</th>
-                                            <th className="text-right px-3 py-2 font-bold bg-green-50 text-green-800">⚡ Collected Elec</th>
-                                            <th className="text-right px-3 py-2 font-bold bg-red-50 text-red-800">🏠 Pending Rent</th>
-                                            <th className="text-right px-3 py-2 font-bold bg-red-50 text-red-800">⚡ Pending Elec</th>
-                                            <th className="text-right px-3 py-2 font-bold">% Collected</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-gray-100">
-                                        {list.length === 0 ? (
-                                            <tr><td colSpan={9} className="px-4 py-6 text-center text-gray-500">No buildings yet.</td></tr>
-                                        ) : list.map(r => {
-                                            const inv = r.invRent + r.invElec;
-                                            const paid = r.paidRent + r.paidElec;
-                                            const pct = inv > 0 ? Math.round((paid / inv) * 100) : 0;
-                                            return (
-                                                <tr key={r.id} className="hover:bg-gray-50">
-                                                    <td className="px-4 py-2 font-bold text-gray-900">{r.name}</td>
-                                                    <td className="px-3 py-2 text-right text-gray-700">{r.invCount}<span className="text-[9px] text-gray-400"> ({r.paidCount}✓ / {r.pendCount}⏳)</span></td>
-                                                    <td className="px-3 py-2 text-right text-gray-900 font-medium">₹{r.invRent.toLocaleString()}</td>
-                                                    <td className="px-3 py-2 text-right text-gray-900 font-medium">₹{r.invElec.toLocaleString()}</td>
-                                                    <td className="px-3 py-2 text-right bg-green-50/40 text-green-700 font-bold">₹{r.paidRent.toLocaleString()}</td>
-                                                    <td className="px-3 py-2 text-right bg-green-50/40 text-green-700 font-bold">₹{r.paidElec.toLocaleString()}</td>
-                                                    <td className="px-3 py-2 text-right bg-red-50/40 text-red-700 font-bold">₹{r.pendRent.toLocaleString()}</td>
-                                                    <td className="px-3 py-2 text-right bg-red-50/40 text-red-700 font-bold">₹{r.pendElec.toLocaleString()}</td>
-                                                    <td className="px-3 py-2 text-right">
-                                                        <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${pct >= 90 ? "bg-green-100 text-green-800" : pct >= 60 ? "bg-amber-100 text-amber-800" : "bg-red-100 text-red-800"}`}>{pct}%</span>
-                                                    </td>
-                                                </tr>
-                                            );
-                                        })}
-                                    </tbody>
-                                    {list.length > 0 && (
-                                        <tfoot className="bg-purple-50 border-t border-purple-200">
-                                            <tr className="font-bold text-purple-900">
-                                                <td className="px-4 py-2">Total</td>
-                                                <td className="px-3 py-2 text-right">{totals.invCount}<span className="text-[9px] text-purple-600"> ({totals.paidCount}✓ / {totals.pendCount}⏳)</span></td>
-                                                <td className="px-3 py-2 text-right">₹{totals.invRent.toLocaleString()}</td>
-                                                <td className="px-3 py-2 text-right">₹{totals.invElec.toLocaleString()}</td>
-                                                <td className="px-3 py-2 text-right text-green-800">₹{totals.paidRent.toLocaleString()}</td>
-                                                <td className="px-3 py-2 text-right text-green-800">₹{totals.paidElec.toLocaleString()}</td>
-                                                <td className="px-3 py-2 text-right text-red-800">₹{totals.pendRent.toLocaleString()}</td>
-                                                <td className="px-3 py-2 text-right text-red-800">₹{totals.pendElec.toLocaleString()}</td>
-                                                <td className="px-3 py-2 text-right">{(totals.invRent + totals.invElec) > 0 ? Math.round(((totals.paidRent + totals.paidElec) / (totals.invRent + totals.invElec)) * 100) : 0}%</td>
-                                            </tr>
-                                        </tfoot>
-                                    )}
-                                </table>
-                            </div>
-                        </div>
-                    );
-                })()}
-
-                {/* DAILY LEDGER (Manager Books) */}
-                <div className="bg-white rounded-lg shadow-sm border border-teal-200 overflow-hidden">
-                    <div className="bg-teal-50 px-6 py-4 border-b border-teal-200">
-                        <h2 className="text-lg font-bold text-teal-800">📓 Daily Ledger</h2>
-                        <p className="text-xs text-teal-700 mt-1">Record walk-in tenant payments (inflow) and daily expenses (outflow). Inflows auto-settle the oldest pending invoice.</p>
+                {/* Subheader: Global Month Selector & Navigation Tabs */}
+                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 border-t border-gray-100 py-2 flex flex-wrap justify-between items-center gap-2">
+                    {/* Navigation Tabs Bar */}
+                    <div className="flex items-center gap-1.5 overflow-x-auto py-1 max-w-full">
+                        <TabButton isActive={activeTab === "overview"} onClick={() => setActiveTab("overview")} label="📊 Overview" />
+                        <TabButton isActive={activeTab === "buildings"} onClick={() => setActiveTab("buildings")} label="🏢 Buildings" count={buildings.length} />
+                        <TabButton isActive={activeTab === "tenants"} onClick={() => setActiveTab("tenants")} label="👥 Tenants" count={occupiedUnits.length} />
+                        <TabButton isActive={activeTab === "invoices"} onClick={() => setActiveTab("invoices")} label="💳 Invoices" count={pendingInvoices.length} />
+                        <TabButton isActive={activeTab === "expenses"} onClick={() => setActiveTab("expenses")} label="💸 Expenses" />
+                        <TabButton isActive={activeTab === "ledger"} onClick={() => setActiveTab("ledger")} label="📑 Ledger" />
+                        <TabButton isActive={activeTab === "daily"} onClick={() => setActiveTab("daily")} label="📅 Daily Ledger" />
+                        <TabButton isActive={activeTab === "users"} onClick={() => setActiveTab("users")} label="👤 Users" count={allUsers.length} />
+                        <TabButton isActive={activeTab === "maintenance"} onClick={() => setActiveTab("maintenance")} label="🛠️ Repairs" count={maintenanceTickets.filter(t => t.status !== "resolved").length} />
+                        <TabButton isActive={activeTab === "applications"} onClick={() => setActiveTab("applications")} label="📝 Applications" count={applications.length} />
+                        <TabButton isActive={activeTab === "announcements"} onClick={() => setActiveTab("announcements")} label="📢 Notices" />
+                        <TabButton isActive={activeTab === "contacts"} onClick={() => setActiveTab("contacts")} label="📞 Contacts" />
+                        <TabButton isActive={activeTab === "settings"} onClick={() => setActiveTab("settings")} label="⚙️ Settings" />
                     </div>
-                    <div className="p-4">
-                        <DailyLedgerTab
-                            entries={dailyLedgerEntries}
-                            buildings={buildings}
-                            allUnits={allUnits}
-                            allInvoices={[...pendingInvoices, ...unpaidInvoices, ...paidInvoices]}
-                            currentUserEmail={user?.email || undefined}
+
+                    {/* Global Month Picker */}
+                    <div className="flex items-center gap-2">
+                        <label className="text-xs font-bold text-gray-500 uppercase">Period:</label>
+                        <input
+                            type="month"
+                            value={globalMonth}
+                            onChange={(e) => applyGlobalMonth(e.target.value)}
+                            className="bg-gray-50 border border-gray-300 rounded-lg px-2.5 py-1 text-xs font-bold text-gray-700 outline-none focus:border-blue-500"
                         />
                     </div>
                 </div>
+            </header>
 
-                {/* INCOME & EXPENSE DASHBOARD */}
-                {(() => {
-                    let filteredCollections: typeof paidInvoices = [];
-                    let filteredExpensesList: typeof expenses = [];
+            {/* Main Content Area */}
+            <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 w-full flex-1">
+                {activeTab === "overview" && (
+                    <AdminOverviewTab
+                        paidInvoices={paidInvoices}
+                        unpaidInvoices={unpaidInvoices}
+                        pendingInvoices={pendingInvoices}
+                        expenses={expenses}
+                        dashboardMonth={dashboardMonth}
+                        setDashboardMonth={setDashboardMonth}
+                        dashboardPeriods={dashboardPeriods}
+                        exportMonth={exportMonth}
+                        setExportMonth={setExportMonth}
+                        handleExportFinancials={handleExportFinancials}
+                        isExporting={isExporting}
+                    />
+                )}
 
-                    if (dashboardViewMode === "day") {
-                        filteredCollections = paidInvoices.filter(inv => inv.paidAt && inv.paidAt.startsWith(dashboardDate));
-                        filteredExpensesList = expenses.filter(exp => exp.date && exp.date.startsWith(dashboardDate));
-                    } else {
-                        // month mode: dashboardDate is "YYYY-MM-DD", extract "YYYY-MM"
-                        const ym = dashboardDate.substring(0, 7);
-                        filteredCollections = paidInvoices.filter(inv => inv.paidAt && inv.paidAt.startsWith(ym));
-                        filteredExpensesList = expenses.filter(exp => exp.date && exp.date.startsWith(ym));
-                    }
+                {activeTab === "buildings" && (
+                    <AdminBuildingsTab buildings={buildings} allUnits={allUnits} />
+                )}
 
-                    const rentCollected = filteredCollections.reduce((sum, inv) => sum + Number(inv.baseRent || 0), 0);
-                    const elecCollected = filteredCollections.reduce((sum, inv) => sum + Number(inv.electricityCharge || 0), 0);
-                    const totalCollected = filteredCollections.reduce((sum, inv) => sum + Number(inv.totalAmount || 0), 0);
-                    const expenseTotal = filteredExpensesList.reduce((sum, exp) => sum + Number(exp.amount || 0), 0);
-                    const netForPeriod = totalCollected - expenseTotal;
+                {activeTab === "tenants" && (
+                    <AdminTenantsTab occupiedUnits={occupiedUnits} />
+                )}
 
-                    const periodLabel = dashboardViewMode === "day"
-                        ? new Date(dashboardDate + "T00:00:00").toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
-                        : new Date(dashboardDate + "T00:00:00").toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+                {activeTab === "invoices" && (
+                    <AdminInvoicesTab
+                        pendingInvoices={pendingInvoices}
+                        unpaidInvoices={unpaidInvoices}
+                        paidInvoices={paidInvoices}
+                        occupiedUnits={occupiedUnits}
+                        allInvoicesForDashboard={allInvoicesForDashboard}
+                    />
+                )}
 
-                    return (
-                        <div className="bg-white rounded-lg shadow-sm border border-emerald-200 overflow-hidden">
-                            <div className="bg-emerald-50 px-6 py-4 border-b border-emerald-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-                                <h2 className="text-lg font-bold text-emerald-800">📅 Income &amp; Expense Preview</h2>
-                                <div className="flex items-center gap-2 flex-wrap">
-                                    <div className="flex bg-white border border-emerald-300 rounded-md overflow-hidden">
-                                        <button onClick={() => setDashboardViewMode("day")} className={`px-3 py-1.5 text-xs font-bold transition ${dashboardViewMode === "day" ? "bg-emerald-600 text-white" : "text-emerald-700 hover:bg-emerald-100"}`}>Day</button>
-                                        <button onClick={() => setDashboardViewMode("month")} className={`px-3 py-1.5 text-xs font-bold transition ${dashboardViewMode === "month" ? "bg-emerald-600 text-white" : "text-emerald-700 hover:bg-emerald-100"}`}>Month</button>
-                                    </div>
-                                    {dashboardViewMode === "day" ? (
-                                        <input type="date" value={dashboardDate} onChange={(e) => { setDashboardDate(e.target.value); applyGlobalMonth(e.target.value.substring(0, 7)); }} className="px-3 py-1.5 border border-emerald-300 rounded-md text-sm font-medium" />
-                                    ) : (
-                                        <input type="month" value={dashboardDate.substring(0, 7)} onChange={(e) => { setDashboardDate(e.target.value + "-01"); applyGlobalMonth(e.target.value); }} className="px-3 py-1.5 border border-emerald-300 rounded-md text-sm font-medium" />
-                                    )}
-                                </div>
-                            </div>
-                            <div className="p-6 space-y-4">
-                                <p className="text-sm text-emerald-700 font-medium">{periodLabel}</p>
-                                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-                                    <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                                        <p className="text-[10px] font-bold text-green-600 uppercase">Rent</p>
-                                        <p className="text-lg font-bold text-green-800 mt-1">₹{rentCollected.toLocaleString()}</p>
-                                    </div>
-                                    <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-                                        <p className="text-[10px] font-bold text-yellow-600 uppercase">Electricity</p>
-                                        <p className="text-lg font-bold text-yellow-800 mt-1">₹{elecCollected.toLocaleString()}</p>
-                                    </div>
-                                    <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
-                                        <p className="text-[10px] font-bold text-emerald-600 uppercase">Total Income</p>
-                                        <p className="text-lg font-bold text-emerald-800 mt-1">₹{totalCollected.toLocaleString()}</p>
-                                    </div>
-                                    <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-                                        <p className="text-[10px] font-bold text-red-600 uppercase">Expenses</p>
-                                        <p className="text-lg font-bold text-red-800 mt-1">₹{expenseTotal.toLocaleString()}</p>
-                                    </div>
-                                    <div className={`border rounded-lg p-4 ${netForPeriod >= 0 ? "bg-blue-50 border-blue-200" : "bg-red-50 border-red-200"}`}>
-                                        <p className={`text-[10px] font-bold uppercase ${netForPeriod >= 0 ? "text-blue-600" : "text-red-600"}`}>Net</p>
-                                        <p className={`text-lg font-bold mt-1 ${netForPeriod >= 0 ? "text-blue-800" : "text-red-800"}`}>{netForPeriod >= 0 ? "+" : ""}₹{netForPeriod.toLocaleString()}</p>
-                                    </div>
-                                </div>
+                {activeTab === "expenses" && (
+                    <AdminExpensesTab expenses={expenses} currentUserEmail={user?.email || "admin"} />
+                )}
 
-                                {(filteredCollections.length > 0 || filteredExpensesList.length > 0) && (
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                        {filteredCollections.length > 0 && (
-                                            <div className="border border-green-200 rounded-lg overflow-hidden">
-                                                <div className="bg-green-50 px-4 py-2 border-b border-green-100">
-                                                    <h3 className="text-xs font-bold text-green-800 uppercase">Collections ({filteredCollections.length})</h3>
-                                                </div>
-                                                <div className="divide-y divide-gray-100 max-h-56 overflow-y-auto">
-                                                    {filteredCollections.map(inv => (
-                                                        <div key={inv.id} className="px-4 py-2 flex justify-between items-center text-sm">
-                                                            <div>
-                                                                <p className="font-medium text-gray-900">{inv.unitNumber}</p>
-                                                                <p className="text-[10px] text-gray-500">{inv.tenantEmail}</p>
-                                                            </div>
-                                                            <p className="font-bold text-green-700">₹{Number(inv.totalAmount || 0).toLocaleString()}</p>
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        )}
-                                        {filteredExpensesList.length > 0 && (
-                                            <div className="border border-red-200 rounded-lg overflow-hidden">
-                                                <div className="bg-red-50 px-4 py-2 border-b border-red-100">
-                                                    <h3 className="text-xs font-bold text-red-800 uppercase">Expenses ({filteredExpensesList.length})</h3>
-                                                </div>
-                                                <div className="divide-y divide-gray-100 max-h-56 overflow-y-auto">
-                                                    {filteredExpensesList.map(exp => (
-                                                        <div key={exp.id} className="px-4 py-2 flex justify-between items-center text-sm">
-                                                            <div>
-                                                                <p className="font-medium text-gray-900">{exp.category}</p>
-                                                                <p className="text-[10px] text-gray-500">{exp.description}</p>
-                                                            </div>
-                                                            <p className="font-bold text-red-700">₹{Number(exp.amount || 0).toLocaleString()}</p>
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        )}
-                                    </div>
-                                )}
+                {activeTab === "ledger" && (
+                    <AdminLedgerTab ledgerEntries={allLedgerEntries} currentUserEmail={user?.email || "admin"} />
+                )}
 
-                                {filteredCollections.length === 0 && filteredExpensesList.length === 0 && (
-                                    <p className="text-sm text-gray-500 text-center py-4">No collections or expenses for this period.</p>
-                                )}
-                            </div>
-                        </div>
-                    );
-                })()}
+                {activeTab === "daily" && (
+                    <DailyLedgerTab
+                        entries={dailyLedgerEntries}
+                        buildings={buildings}
+                        allUnits={allUnits}
+                        allInvoices={allInvoicesForDashboard}
+                        currentUserEmail={user?.email || "admin"}
+                    />
+                )}
 
-                {/* MONTHLY DASHBOARD */}
-                {(() => {
-                    const monthInvoices = allInvoicesForDashboard.filter(inv => inv.billingPeriod === dashboardMonth && !inv.isCustom);
-                    const totalRent = monthInvoices.reduce((sum, inv) => sum + Number(inv.baseRent || 0), 0);
-                    const totalElectricity = monthInvoices.reduce((sum, inv) => sum + Number(inv.electricityCharge || 0), 0);
-                    const monthPaid = monthInvoices.filter(inv => inv.status === "paid");
-                    const rentCollected = monthPaid.reduce((sum, inv) => sum + Number(inv.baseRent || 0), 0);
-                    const electricityCollected = monthPaid.reduce((sum, inv) => sum + Number(inv.electricityCharge || 0), 0);
-                    const monthPending = monthInvoices.filter(inv => inv.status === "unpaid" || inv.status === "pending");
-                    const pendingRent = monthPending.reduce((sum, inv) => sum + Number(inv.baseRent || 0), 0);
-                    const pendingElectricity = monthPending.reduce((sum, inv) => sum + Number(inv.electricityCharge || 0), 0);
-                    const totalPending = pendingRent + pendingElectricity;
+                {activeTab === "users" && (
+                    <AdminUsersTab users={allUsers} currentUserId={user?.uid} />
+                )}
 
-                    return (
-                        <div className="bg-white rounded-lg shadow-sm border border-indigo-200 overflow-hidden">
-                            <div className="bg-indigo-50 px-6 py-4 border-b border-indigo-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-                                <h2 className="text-lg font-bold text-indigo-800">📊 Monthly Dashboard</h2>
-                                <select value={dashboardMonth} onChange={(e) => { setDashboardMonth(e.target.value); applyGlobalMonthFromLabel(e.target.value); }} className="px-3 py-2 border border-indigo-300 rounded-md text-sm font-medium bg-white">
-                                    {dashboardPeriods.length === 0 ? <option>No invoices yet</option> : dashboardPeriods.map(p => <option key={p} value={p}>{p}</option>)}
-                                </select>
-                            </div>
-                            <div className="p-6 space-y-4">
-                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4"><p className="text-xs font-bold text-blue-600 uppercase">Month&apos;s Rent</p><p className="text-xl font-bold text-gray-900 mt-1">₹{totalRent.toLocaleString()}</p></div>
-                                    <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4"><p className="text-xs font-bold text-yellow-600 uppercase">Month&apos;s Electricity</p><p className="text-xl font-bold text-gray-900 mt-1">₹{totalElectricity.toLocaleString()}</p></div>
-                                    <div className="bg-green-50 border border-green-200 rounded-lg p-4"><p className="text-xs font-bold text-green-600 uppercase">Rent Collected</p><p className="text-xl font-bold text-green-700 mt-1">₹{rentCollected.toLocaleString()}</p></div>
-                                    <div className="bg-green-50 border border-green-200 rounded-lg p-4"><p className="text-xs font-bold text-green-600 uppercase">Electricity Collected</p><p className="text-xl font-bold text-green-700 mt-1">₹{electricityCollected.toLocaleString()}</p></div>
-                                </div>
-                                {monthPending.length > 0 && (
-                                    <div className="border border-red-200 rounded-lg overflow-hidden">
-                                        <div className="bg-red-50 px-4 py-3 border-b border-red-100 flex justify-between items-center">
-                                            <h3 className="text-sm font-bold text-red-800">⏳ Pending Payments</h3>
-                                            <span className="text-xs font-bold bg-red-100 text-red-700 px-2 py-1 rounded-full">₹{totalPending.toLocaleString()}</span>
-                                        </div>
-                                        <div className="divide-y divide-gray-100 max-h-60 overflow-y-auto">
-                                            {monthPending.map(inv => (
-                                                <div key={inv.id} className="px-4 py-3 flex justify-between items-center hover:bg-gray-50">
-                                                    <div><p className="font-bold text-gray-900 text-sm">{inv.unitNumber}</p><p className="text-xs text-gray-500">{inv.tenantEmail}</p></div>
-                                                    <div className="text-right">
-                                                        <p className="font-bold text-red-600 text-sm">₹{Number(inv.totalAmount || 0).toLocaleString()}</p>
-                                                        <p className="text-[10px] text-gray-400">Rent: ₹{inv.baseRent || 0} + Elec: ₹{inv.electricityCharge || 0}</p>
-                                                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${inv.status === 'pending' ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'}`}>{inv.status === 'pending' ? 'VERIFICATION PENDING' : 'UNPAID'}</span>
-                                                    </div>
-                                                </div>
-                                            ))}
-                                        </div>
-                                        <div className="bg-gray-50 px-4 py-2 border-t border-gray-200 text-center">
-                                            <p className="text-xs text-gray-500">Pending Rent: <strong>₹{pendingRent.toLocaleString()}</strong> | Pending Electricity: <strong>₹{pendingElectricity.toLocaleString()}</strong></p>
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    );
-                })()}
+                {activeTab === "maintenance" && (
+                    <AdminMaintenanceTab tickets={maintenanceTickets} currentUserEmail={user?.email || "admin"} />
+                )}
 
-                <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden"><div className="bg-gray-50 px-6 py-4 border-b border-gray-200 flex justify-between items-center"><h2 className="text-lg font-bold text-gray-800">👥 Tenant Directory & Leases</h2><span className="bg-gray-200 text-gray-800 text-xs font-bold px-3 py-1 rounded-full">{occupiedUnits.length} Occupied</span></div><div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="bg-gray-50 text-gray-500 border-b border-gray-200"><tr><th className="px-6 py-3 font-medium">Unit & Tenant</th><th className="px-6 py-3 font-medium">Contact Details</th><th className="px-6 py-3 font-medium">Lease Status</th><th className="px-6 py-3 font-medium text-right">Actions</th></tr></thead><tbody className="divide-y divide-gray-100">{occupiedUnits.length === 0 ? <tr><td colSpan={4} className="px-6 py-8 text-center text-gray-500">No active tenants.</td></tr> : (occupiedUnits.map((unit) => { const status = getLeaseStatus(unit.leaseEnd); return (<tr key={unit.id} className="hover:bg-gray-50 transition"><td className="px-6 py-4"><p className="font-bold text-gray-900 text-base">{unit.unitNumber}</p><p className="text-blue-600 font-medium">{unit.tenantEmail}</p></td><td className="px-6 py-4 text-gray-600"><p>📱 {unit.tenantPhone || <span className="text-gray-400 italic">Not provided</span>}</p><p className="text-xs mt-1">🆘 {unit.emergencyContact || <span className="text-gray-400 italic">No emergency contact</span>}</p></td><td className="px-6 py-4"><span className={`px-2.5 py-1 rounded-full text-xs font-bold ${status.color}`}>{status.label}</span>{unit.leaseEnd && <p className="text-xs text-gray-500 mt-1 font-mono">{unit.leaseStart} to {unit.leaseEnd}</p>}</td><td className="px-6 py-4 text-right"><button onClick={() => { setSelectedUnitForLease(unit); setTenantPhone(unit.tenantPhone || ""); setEmergencyContact(unit.emergencyContact || ""); setLeaseStart(unit.leaseStart || ""); setLeaseEnd(unit.leaseEnd || ""); setIsLeaseModalOpen(true); }} className="text-sm bg-white border border-gray-300 px-3 py-1.5 rounded hover:bg-gray-50 text-gray-700 font-medium shadow-sm">Edit Profile</button></td></tr>); }))}</tbody></table></div></div>
+                {activeTab === "applications" && (
+                    <AdminApplicationsTab applications={applications} />
+                )}
 
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                    <div className="space-y-8">
-                        <div className="bg-white rounded-lg shadow-sm border border-indigo-200 overflow-hidden"><div className="bg-indigo-50 px-6 py-4 border-b border-indigo-200 flex justify-between items-center"><h2 className="text-lg font-bold text-indigo-800">📢 Active Announcements</h2></div><div className="divide-y divide-gray-200 max-h-64 overflow-y-auto">{announcements.length === 0 ? <p className="p-6 text-sm text-gray-500 text-center">No active announcements.</p> : (announcements.map((ann) => (<div key={ann.id} className="p-4 bg-white hover:bg-gray-50 flex justify-between items-start"><div><div className="flex items-center gap-2 mb-1"><span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${ann.target === 'all' ? 'bg-indigo-100 text-indigo-800' : 'bg-gray-200 text-gray-700'}`}>{ann.target === 'all' ? 'All Buildings' : buildings.find(b => b.id === ann.target)?.name || 'Specific Building'}</span><span className="text-xs text-gray-400">{new Date(ann.createdAt).toLocaleDateString()}</span></div><p className="font-bold text-gray-800 text-sm">{ann.title}</p><p className="text-sm text-gray-600 mt-1 line-clamp-2">{ann.message}</p></div><button onClick={() => handleDeleteNotice(ann.id)} className="text-gray-400 hover:text-red-600 text-xs ml-4">🗑️</button></div>)))}</div></div>
-                        <div className="bg-white rounded-lg shadow-sm border border-orange-200 overflow-hidden"><div className="bg-orange-50 px-6 py-4 border-b border-orange-200 flex justify-between items-center"><h2 className="text-lg font-bold text-orange-800">🔧 Maintenance Board</h2>{activeTicketsCount > 0 && <span className="bg-orange-200 text-orange-800 text-xs font-bold px-3 py-1 rounded-full">{activeTicketsCount} Active</span>}</div><div className="divide-y divide-gray-200 max-h-125 overflow-y-auto">{maintenanceTickets.length === 0 ? <p className="p-6 text-sm text-gray-500 text-center">No maintenance requests.</p> : (maintenanceTickets.map((ticket) => (<div key={ticket.id} className={`p-6 flex flex-col gap-3 transition ${ticket.status === 'resolved' ? 'bg-gray-50 opacity-75' : 'bg-white'}`}><div className="flex justify-between items-start"><div><span className="text-xs font-bold uppercase tracking-wider text-gray-500">{ticket.category}</span><p className="font-bold text-gray-900 text-lg">{ticket.unitNumber}</p><p className="text-xs text-gray-500">{ticket.buildingName}</p></div><span className={`px-3 py-1 rounded-full text-xs font-bold ${ticket.status === 'pending' ? 'bg-red-100 text-red-800' : ticket.status === 'in-progress' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'}`}>{ticket.status.toUpperCase()}</span></div><div className="bg-gray-100 p-3 rounded-md text-sm text-gray-700 border border-gray-200"><strong>Issue:</strong> {ticket.description}</div>{ticket.comments && ticket.comments.length > 0 && (<div className="bg-yellow-50 p-3 rounded border border-yellow-200"><p className="text-xs font-bold text-yellow-800 mb-1">Staff Notes:</p>{ticket.comments.map((c: { author: string; text: string }, i: number) => (<p key={i} className="text-xs text-gray-700 border-b border-yellow-100 pb-1 mb-1 last:border-0 last:mb-0 last:pb-0"><span className="font-semibold">{c.author}:</span> {c.text}</p>))}</div>)}<div className="flex gap-4 mt-2">{ticket.photoUrl && <a href={ticket.photoUrl} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline">📷 Issue Photo</a>}{ticket.resolutionPhotoUrl && <a href={ticket.resolutionPhotoUrl} target="_blank" rel="noopener noreferrer" className="text-sm text-green-600 font-bold hover:underline">✅ Proof of Fix</a>}</div>{ticket.status !== 'resolved' && (<div className="flex gap-2 mt-2 pt-3 border-t border-gray-100"><button onClick={() => handleUpdateTicketStatus(ticket.id, 'resolved')} className="flex-1 py-2 bg-green-50 text-green-700 border border-green-200 rounded-md text-sm font-medium hover:bg-green-100">Force Resolve</button></div>)}</div>)))}</div></div>
-                        {(() => {
-                            const norm = (bp: string | undefined) => (bp || "").replace(/\s*\(.+\)\s*$/, "").trim();
-                            const filteredPending = verifyMonth === "all" ? pendingInvoices : pendingInvoices.filter(inv => norm(inv.billingPeriod) === verifyMonth);
-                            const verifiedForMonth = verifyMonth === "all" ? [] : paidInvoices.filter(inv => norm(inv.billingPeriod) === verifyMonth);
-                            const verifiedTotal = verifiedForMonth.reduce((s, inv) => s + Number(inv.totalAmount || 0), 0);
-                            const pendingTotal = filteredPending.reduce((s, inv) => s + Number(inv.totalAmount || 0), 0);
-                            const showBlock = pendingInvoices.length > 0 || verifyMonth !== "all";
-                            if (!showBlock) return null;
-                            return (
-                                <div className="bg-white rounded-lg shadow-sm border border-green-300 overflow-hidden">
-                                    <div className="bg-green-50 px-6 py-4 border-b border-green-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-                                        <div>
-                                            <h2 className="text-lg font-bold text-green-800">💸 Payment Verifications</h2>
-                                            <p className="text-[11px] text-green-700 mt-0.5">
-                                                {filteredPending.length} pending · ₹{pendingTotal.toLocaleString()}
-                                                {verifyMonth !== "all" && ` · ${verifiedForMonth.length} verified · ₹${verifiedTotal.toLocaleString()}`}
-                                            </p>
-                                        </div>
-                                        <select value={verifyMonth} onChange={(e) => { setVerifyMonth(e.target.value); if (e.target.value !== "all") applyGlobalMonthFromLabel(e.target.value); }} className="px-3 py-2 border border-green-300 rounded-md text-sm font-medium bg-white">
-                                            <option value="all">All Months</option>
-                                            {dashboardPeriods.map(p => <option key={p} value={p}>{p}</option>)}
-                                        </select>
-                                    </div>
-                                    {filteredPending.length === 0 ? (
-                                        <p className="p-6 text-sm text-gray-500 text-center">No pending verifications{verifyMonth !== "all" ? ` for ${verifyMonth}` : ""}.</p>
-                                    ) : (
-                                        <div className="divide-y divide-gray-200 max-h-125 overflow-y-auto">
-                                            {filteredPending.map((inv) => (
-                                                <div key={inv.id} className="p-6 flex flex-col gap-3 hover:bg-gray-50">
-                                                    <div>
-                                                        <p className="text-sm text-gray-500 mb-1">Unit <strong className="text-gray-800 text-lg">{inv.unitNumber}</strong> • {inv.billingPeriod}</p>
-                                                        <p className="font-medium text-gray-700">{inv.tenantEmail}</p>
-                                                        <div className="mt-2 bg-gray-50 border border-gray-200 rounded-md p-3 space-y-1 text-sm">
-                                                            <div className="flex justify-between"><span className="text-gray-500">Invoice Amount:</span><span className="font-bold">₹{inv.totalAmount}</span></div>
-                                                            <div className="flex justify-between"><span className="text-gray-500">Amount Paid:</span><span className="font-bold text-green-700">₹{inv.amountPaid || inv.totalAmount}</span></div>
-                                                            <div className="flex justify-between"><span className="text-gray-500">Transaction ID:</span><span className="font-mono text-xs text-gray-800">{inv.transactionId || 'N/A'}</span></div>
-                                                            {inv.paymentScreenshotUrl && <a href={inv.paymentScreenshotUrl} target="_blank" rel="noopener noreferrer" className="inline-block mt-1 text-blue-600 hover:underline text-xs font-bold">📷 View Payment Screenshot →</a>}
-                                                        </div>
-                                                    </div>
-                                                    <div className="flex gap-2 w-full mt-2">
-                                                        <button onClick={() => handleRejectInvoice(inv.id)} className="flex-1 py-2 border border-red-200 text-red-600 rounded-md text-sm">Reject</button>
-                                                        <button onClick={() => handleApproveInvoice(inv.id)} className="flex-1 py-2 bg-green-600 text-white rounded-md text-sm">Verify & Paid</button>
-                                                    </div>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    )}
-                                    {verifyMonth !== "all" && verifiedForMonth.length > 0 && (
-                                        <details className="border-t border-green-200">
-                                            <summary className="px-6 py-3 bg-green-50/50 text-sm font-bold text-green-800 cursor-pointer hover:bg-green-50">
-                                                ✅ Already Verified — {verifiedForMonth.length} · ₹{verifiedTotal.toLocaleString()}
-                                            </summary>
-                                            <div className="divide-y divide-gray-100 max-h-72 overflow-y-auto">
-                                                {verifiedForMonth
-                                                    .slice()
-                                                    .sort((a, b) => String(a.unitNumber || "").localeCompare(String(b.unitNumber || ""), undefined, { numeric: true, sensitivity: "base" }))
-                                                    .map(inv => (
-                                                    <div key={inv.id} className="px-6 py-3 flex justify-between items-center text-sm">
-                                                        <div className="min-w-0">
-                                                            <p className="font-bold text-gray-900">{inv.unitNumber} <span className="text-[10px] font-normal text-gray-500">· {inv.tenantEmail}</span></p>
-                                                            <p className="text-[10px] text-gray-500">Txn: <span className="font-mono">{inv.transactionId || "—"}</span>{inv.paidAt ? ` · ${new Date(inv.paidAt).toLocaleDateString()}` : ""}</p>
-                                                        </div>
-                                                        <div className="text-right shrink-0">
-                                                            <p className="font-bold text-green-700">₹{Number(inv.totalAmount || 0).toLocaleString()}</p>
-                                                            {inv.paymentScreenshotUrl && <a href={inv.paymentScreenshotUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] text-blue-600 hover:underline">📷 Proof</a>}
-                                                        </div>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        </details>
-                                    )}
-                                </div>
-                            );
-                        })()}
-                        {applications.length > 0 && (<div className="bg-white rounded-lg shadow-sm border border-blue-200 overflow-hidden"><div className="bg-blue-50 px-6 py-4 border-b border-blue-200 flex justify-between items-center"><h2 className="text-lg font-bold text-blue-800">📥 New Applications</h2></div><div className="divide-y divide-gray-200">{applications.map((app) => (<div key={app.id} className="p-6 flex flex-col gap-3 hover:bg-gray-50"><div><p className="text-sm text-gray-500">Unit: <strong className="text-gray-800">{app.unitNumber}</strong></p><p className="font-medium text-blue-600">{app.tenantEmail}</p></div><div className="flex gap-2 w-full mt-2"><button onClick={() => handleRejectApp(app.id)} className="flex-1 py-2 border border-red-200 text-red-600 rounded-md text-sm">Reject</button><button onClick={() => handleApproveApp(app.id, app.unitId, app.tenantEmail)} className="flex-1 py-2 bg-blue-600 text-white rounded-md text-sm">Approve</button></div></div>))}</div></div>)}
-                    </div>
+                {activeTab === "announcements" && (
+                    <AdminAnnouncementsTab announcements={announcements} currentUserEmail={user?.email || "admin"} />
+                )}
 
-                    <div className="space-y-8">
-                        {/* --- NEW: FINANCIAL EXPORT CARD --- */}
-                        <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-                            <h2 className="text-lg font-semibold text-gray-800 mb-2">📊 Financial Export</h2>
-                            <p className="text-sm text-gray-600 mb-4">Download a CSV report of all income and expenses for tax season.</p>
-                            <div className="flex flex-col sm:flex-row gap-3">
-                                <input
-                                    type="month"
-                                    value={exportMonth}
-                                    onChange={(e) => { setExportMonth(e.target.value); if (e.target.value) applyGlobalMonth(e.target.value); }}
-                                    className="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm"
-                                />
-                                <button
-                                    onClick={handleExportFinancials}
-                                    disabled={isExporting || !exportMonth}
-                                    className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 text-sm font-medium shadow-sm disabled:bg-green-300 transition whitespace-nowrap"
-                                >
-                                    {isExporting ? "Generating..." : "Download CSV"}
-                                </button>
-                            </div>
-                        </div>
+                {activeTab === "contacts" && (
+                    <AdminContactsTab contacts={contacts} />
+                )}
 
-                        {/* --- TENANT PAYMENT LEDGER --- */}
-                        <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-                            <h2 className="text-lg font-semibold text-gray-800 mb-3">📒 Tenant Payment Ledger</h2>
-                            <select value={ledgerFilter} onChange={(e) => setLedgerFilter(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm mb-4">
-                                <option value="">All Tenants</option>
-                                {[...new Set(allLedgerEntries.map(e => e.tenantEmail))].map(email => <option key={email} value={email}>{email}</option>)}
-                            </select>
-                            {(() => {
-                                const filtered = ledgerFilter ? allLedgerEntries.filter(e => e.tenantEmail === ledgerFilter) : allLedgerEntries;
-                                if (filtered.length === 0) return <p className="text-sm text-gray-500">No payment records yet.</p>;
-                                // Group by tenant for summary
-                                const tenantBalances: Record<string, { email: string; unitNumber: string; balance: number; count: number }> = {};
-                                filtered.forEach(entry => {
-                                    if (!tenantBalances[entry.tenantEmail]) tenantBalances[entry.tenantEmail] = { email: entry.tenantEmail, unitNumber: entry.unitNumber, balance: 0, count: 0 };
-                                    tenantBalances[entry.tenantEmail].balance += Number(entry.balance || 0);
-                                    tenantBalances[entry.tenantEmail].count++;
-                                });
-                                return (
-                                    <div className="space-y-2 max-h-80 overflow-y-auto">
-                                        {!ledgerFilter ? (
-                                            Object.values(tenantBalances).map(t => (
-                                                <div key={t.email} className="flex justify-between items-center border border-gray-100 p-3 rounded-md bg-gray-50 hover:bg-gray-100 cursor-pointer" onClick={() => setLedgerFilter(t.email)}>
-                                                    <div><p className="font-medium text-gray-800 text-sm">{t.unitNumber}</p><p className="text-xs text-gray-500">{t.email}</p></div>
-                                                    <div className="text-right"><span className={`font-bold text-sm ${t.balance >= 0 ? 'text-green-700' : 'text-red-700'}`}>{t.balance >= 0 ? `₹${t.balance} CR` : `₹${Math.abs(t.balance)} DUE`}</span><p className="text-[10px] text-gray-400">{t.count} payments</p></div>
-                                                </div>
-                                            ))
-                                        ) : (
-                                            <div>
-                                                <div className={`mb-3 p-3 rounded-lg border ${tenantBalances[ledgerFilter]?.balance >= 0 ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
-                                                    <div className="flex justify-between items-center"><span className="text-sm font-medium">Net Balance</span><span className={`font-bold ${tenantBalances[ledgerFilter]?.balance >= 0 ? 'text-green-700' : 'text-red-700'}`}>{tenantBalances[ledgerFilter]?.balance >= 0 ? `₹${tenantBalances[ledgerFilter]?.balance} Credit` : `₹${Math.abs(tenantBalances[ledgerFilter]?.balance || 0)} Due`}</span></div>
-                                                </div>
-                                                <table className="w-full text-xs">
-                                                    <thead><tr className="border-b text-gray-500"><th className="pb-1 text-left">Date</th><th className="pb-1 text-left">Period</th><th className="pb-1 text-right">Invoice</th><th className="pb-1 text-right">Paid</th><th className="pb-1 text-right">Bal</th><th className="pb-1 text-right">Actions</th></tr></thead>
-                                                    <tbody>{filtered.map(entry => (<tr key={entry.id} className="border-b border-gray-100"><td className="py-1.5">{new Date(entry.createdAt).toLocaleDateString()}</td><td className="py-1.5">{entry.billingPeriod}{entry.correctionNote && <span title={`Corrected: ${entry.correctionNote}`} className="ml-1 text-amber-500">✎</span>}</td><td className="py-1.5 text-right">₹{entry.invoiceAmount}</td><td className="py-1.5 text-right text-green-700">₹{entry.amountPaid}</td><td className={`py-1.5 text-right font-bold ${Number(entry.balance) >= 0 ? 'text-green-700' : 'text-red-700'}`}>{Number(entry.balance) >= 0 ? '+' : ''}₹{entry.balance}</td><td className="py-1.5 text-right"><button onClick={() => handleEditLedgerOpen(entry)} className="text-blue-600 hover:underline mr-2" title="Edit">✏️</button><button onClick={() => handleDeleteLedger(entry)} className="text-red-500 hover:underline" title="Delete">🗑️</button></td></tr>))}</tbody>
-                                                </table>
-                                            </div>
-                                        )}
-                                    </div>
-                                );
-                            })()}
-                        </div>
-
-                        {/* --- LEDGER EDIT MODAL --- */}
-                        {editLedger && (
-                            <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setEditLedger(null)}>
-                                <div className="bg-white p-6 rounded-lg shadow-xl max-w-md w-full mx-4 space-y-4" onClick={(e) => e.stopPropagation()}>
-                                    <h3 className="text-lg font-semibold text-gray-800">✏️ Rectify Ledger Entry</h3>
-                                    <div className="bg-gray-50 p-3 rounded-md text-sm space-y-1">
-                                        <p><span className="text-gray-500">Period:</span> <span className="font-medium">{editLedger.billingPeriod}</span></p>
-                                        <p><span className="text-gray-500">Tenant:</span> <span className="font-medium">{editLedger.tenantEmail}</span></p>
-                                        <p><span className="text-gray-500">Invoice Amount:</span> <span className="font-medium">₹{editLedger.invoiceAmount}</span></p>
-                                        <p><span className="text-gray-500">Original Amount Paid:</span> <span className="font-medium">₹{editLedger.originalAmountPaid ?? editLedger.amountPaid}</span></p>
-                                    </div>
-                                    <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Corrected Amount Paid (₹)</label>
-                                        <input type="number" value={editLedgerAmount} onChange={(e) => setEditLedgerAmount(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" min="0" />
-                                        {editLedgerAmount && <p className="text-xs text-gray-500 mt-1">New balance: <span className={Number(editLedgerAmount) - Number(editLedger.invoiceAmount) >= 0 ? 'text-green-700' : 'text-red-700'}>₹{Number(editLedgerAmount) - Number(editLedger.invoiceAmount)}</span></p>}
-                                    </div>
-                                    <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Reason for Correction *</label>
-                                        <textarea value={editLedgerNote} onChange={(e) => setEditLedgerNote(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" rows={2} placeholder="e.g. Incorrect amount entered, bank confirmation shows ₹5000" />
-                                    </div>
-                                    <div className="flex gap-2">
-                                        <button onClick={() => setEditLedger(null)} className="flex-1 py-2 border border-gray-300 rounded-md text-sm text-gray-600">Cancel</button>
-                                        <button onClick={handleEditLedgerSave} className="flex-1 py-2 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700">Save Correction</button>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-
-                        <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-                            <div className="flex justify-between items-center mb-4">
-                                <h2 className="text-lg font-semibold text-gray-800">📄 Document Vault</h2>
-                                <button onClick={() => setIsDocModalOpen(true)} className="bg-blue-600 text-white px-3 py-1.5 rounded-md hover:bg-blue-700 text-sm font-medium shadow-sm">
-                                    + Upload Doc
-                                </button>
-                            </div>
-                            <div className="space-y-3 max-h-64 overflow-y-auto">
-                                {documents.length === 0 ? (
-                                    <p className="text-sm text-gray-500">No documents uploaded.</p>
-                                ) : (
-                                    documents.map(doc => (
-                                        <div key={doc.id} className="flex justify-between items-center border border-gray-100 p-3 rounded-md bg-gray-50 hover:bg-gray-100 transition">
-                                            <div className="truncate pr-4">
-                                                <div className="flex items-center gap-2 mb-1">
-                                                    <span className="text-[10px] font-bold text-gray-500 uppercase bg-gray-200 px-1.5 py-0.5 rounded">Unit {doc.unitNumber}</span>
-                                                    <span className="text-xs text-gray-400">{new Date(doc.createdAt).toLocaleDateString()}</span>
-                                                </div>
-                                                <p className="font-medium text-gray-800 text-sm truncate">{doc.title}</p>
-                                            </div>
-                                            <div className="flex items-center gap-3">
-                                                <a href={doc.fileUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline text-xs font-bold">View</a>
-                                                <button onClick={() => handleDeleteDocument(doc.id)} className="text-gray-400 hover:text-red-500 text-xs">🗑️</button>
-                                            </div>
-                                        </div>
-                                    ))
-                                )}
-                            </div>
-                        </div>
-
-                        {/* --- USER MANAGEMENT --- */}
-                        <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-                            <h2 className="text-lg font-semibold text-gray-800 mb-4">👥 User Management</h2>
-                            <div className="space-y-3 max-h-80 overflow-y-auto">
-                                {allUsers.length === 0 ? (
-                                    <p className="text-sm text-gray-500">No registered users.</p>
-                                ) : (
-                                    allUsers.map(u => (
-                                        <div key={u.id} className="flex flex-col sm:flex-row justify-between sm:items-center gap-2 border border-gray-100 p-3 rounded-md bg-gray-50">
-                                            <div className="min-w-0">
-                                                <p className="font-medium text-gray-800 text-sm truncate">{u.email}</p>
-                                                <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${u.role === 'admin' ? 'bg-purple-100 text-purple-700' : u.role === 'employee' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>{u.role}</span>
-                                            </div>
-                                            <div className="flex items-center gap-2 shrink-0">
-                                                <select
-                                                    value={u.role}
-                                                    onChange={(e) => handleChangeUserRole(u.id, u.email || "", e.target.value)}
-                                                    disabled={u.email === user?.email}
-                                                    className="text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white disabled:opacity-50"
-                                                >
-                                                    <option value="admin">Admin</option>
-                                                    <option value="employee">Employee</option>
-                                                    <option value="tenant">Tenant</option>
-                                                </select>
-                                                {u.email !== user?.email && (
-                                                    <button onClick={() => handleDeleteUser(u.id, u.email || "")} className="text-gray-400 hover:text-red-500 text-xs" title="Remove user">🗑️</button>
-                                                )}
-                                            </div>
-                                        </div>
-                                    ))
-                                )}
-                            </div>
-                        </div>
-
-                        <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200"><h2 className="text-lg font-semibold text-gray-800 mb-4">Payment Settings (UPI)</h2><form onSubmit={handleSaveSettings} className="space-y-4"><div><label className="block text-sm font-medium text-gray-700 mb-1">Company / Payee Name</label><input type="text" value={payeeName} onChange={(e) => setPayeeName(e.target.value)} required className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" placeholder="e.g. Acme Properties" /></div><div><label className="block text-sm font-medium text-gray-700 mb-1">Company UPI ID</label><input type="text" value={upiId} onChange={(e) => setUpiId(e.target.value)} required className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm font-mono" placeholder="e.g. company@ybl" /></div><button type="submit" disabled={isSubmittingSettings} className="w-full bg-blue-600 text-white py-2 rounded-md hover:bg-blue-700 text-sm font-medium">{isSubmittingSettings ? "Saving..." : "Save Payment Details"}</button></form></div>
-                        <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200"><div className="flex justify-between items-center mb-4"><h2 className="text-lg font-semibold text-gray-800">Expense Ledger</h2><button onClick={() => setIsExpenseModalOpen(true)} className="bg-gray-800 text-white px-3 py-1.5 rounded-md hover:bg-gray-900 text-sm font-medium">+ Log Expense</button></div><div className="space-y-3 max-h-64 overflow-y-auto">{expenses.length === 0 ? <p className="text-sm text-gray-500">No expenses recorded.</p> : (expenses.map(exp => (<div key={exp.id} className="flex justify-between items-center border border-gray-100 p-3 rounded-md bg-gray-50"><div><div className="flex items-center gap-2 mb-1"><span className="text-[10px] font-bold text-gray-500 uppercase bg-gray-200 px-1.5 py-0.5 rounded">{categoryEmoji(exp.category)} {exp.category}</span><span className="text-xs text-gray-400">{exp.date}</span></div><p className="font-medium text-gray-800 text-sm">{exp.description}</p></div><div className="flex items-center gap-3"><span className="font-bold text-red-600">-₹{exp.amount}</span><button onClick={() => handleDeleteExpense(exp.id)} className="text-gray-400 hover:text-red-500 text-xs">🗑️</button></div></div>)))}</div></div>
-                        <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200"><h2 className="text-lg font-semibold text-gray-800 mb-4">Service Contacts</h2><form onSubmit={handleAddContact} className="flex flex-col sm:flex-row gap-2 mb-6"><select value={contactRole} onChange={(e) => setContactRole(e.target.value)} className="px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 text-sm"><option>Plumber</option><option>Electrician</option><option>HVAC</option><option>Cleaner</option><option>Other</option></select><input type="text" placeholder="Name" required value={contactName} onChange={(e) => setContactName(e.target.value)} className="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm" /><input type="text" placeholder="Phone" required value={contactPhone} onChange={(e) => setContactPhone(e.target.value)} className="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm" /><button type="submit" disabled={isSubmittingContact} className="bg-gray-800 text-white px-4 py-2 rounded-md hover:bg-gray-900 text-sm">+</button></form><div className="space-y-3 max-h-64 overflow-y-auto">{contacts.length === 0 ? <p className="text-sm text-gray-500">No contacts saved.</p> : (contacts.map(c => (<div key={c.id} className="flex justify-between items-center border border-gray-100 p-3 rounded-md bg-gray-50"><div><span className="text-xs font-bold text-gray-500 uppercase">{c.role}</span><p className="font-medium text-gray-800">{c.name}</p><p className="text-sm text-blue-600">{c.phone}</p></div><button onClick={() => handleDeleteContact(c.id)} className="text-red-500 hover:text-red-700 text-xs">🗑️</button></div>)))}</div></div>
-                        <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200"><h2 className="text-lg font-semibold text-gray-800 mb-4">Your Portfolio</h2><div className="grid grid-cols-1 sm:grid-cols-2 gap-4">{buildings.map((bldg) => (<div key={bldg.id} className="border border-gray-200 rounded-lg p-4 hover:border-blue-300 transition shadow-sm"><h3 className="font-bold text-gray-800 truncate">{bldg.name}</h3><p className="text-xs text-gray-500 mt-1 truncate">{bldg.address}</p><div className="mt-4 pt-3 border-t border-gray-100 flex items-center justify-between text-sm"><span className="bg-gray-100 text-gray-700 px-2 py-1 rounded text-xs font-bold">{bldg.totalUnits} Units</span><button onClick={() => router.push(`/admin/buildings/${bldg.id}`)} className="text-blue-600 hover:underline font-medium text-xs">Manage &rarr;</button></div></div>))}</div></div>
-                        <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200"><h2 className="text-lg font-semibold text-gray-800 mb-4">Add New Building</h2><form onSubmit={handleAddBuilding} className="space-y-4"><div><label className="block text-sm font-medium text-gray-700 mb-1">Building Name</label><input type="text" value={name} onChange={(e) => setName(e.target.value)} required className="w-full px-3 py-2 border border-gray-300 rounded-md" /></div><div><label className="block text-sm font-medium text-gray-700 mb-1">Address</label><input type="text" value={address} onChange={(e) => setAddress(e.target.value)} required className="w-full px-3 py-2 border border-gray-300 rounded-md" /></div><div><label className="block text-sm font-medium text-gray-700 mb-1">Total Units</label><input type="number" min="1" value={totalUnits} onChange={(e) => setTotalUnits(e.target.value)} required className="w-full px-3 py-2 border border-gray-300 rounded-md" /></div><button type="submit" disabled={isSubmitting} className="w-full bg-blue-600 text-white py-2 rounded-md hover:bg-blue-700">{isSubmitting ? "Adding..." : "Add Building"}</button></form></div>
-                    </div>
-                </div>
+                {activeTab === "settings" && (
+                    <AdminSettingsTab initialUpiId={upiId} initialPayeeName={payeeName} />
+                )}
             </main>
-
-            {isLateFeeModalOpen && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
-                    <div className="bg-white rounded-lg p-6 max-w-md w-full shadow-xl">
-                        <h2 className="text-xl font-bold mb-2 text-red-600">🚨 Enforce Late Fees</h2>
-                        <p className="text-sm text-gray-600 mb-4">This will automatically generate a custom penalty invoice for any tenant who currently has an unpaid standard rent bill.</p>
-
-                        <div className="bg-red-50 border border-red-100 rounded p-4 mb-4 text-center">
-                            <span className="block text-3xl font-bold text-red-800 mb-1">
-                                {unpaidInvoices.filter(inv => !inv.isCustom).length}
-                            </span>
-                            <span className="text-sm text-red-700 uppercase tracking-wide font-semibold">Tenants Currently Overdue</span>
-                        </div>
-
-                        <form onSubmit={handleApplyLateFees} className="space-y-4">
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Late Fee Penalty Amount (₹)</label>
-                                <input type="number" required min="1" value={lateFeeAmount} onChange={(e) => setLateFeeAmount(Number(e.target.value))} className="w-full px-3 py-2 border border-gray-300 rounded-md font-mono" />
-                            </div>
-                            <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-gray-100">
-                                <button type="button" onClick={() => setIsLateFeeModalOpen(false)} disabled={isApplyingLateFees} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-md">Cancel</button>
-                                <button type="submit" disabled={isApplyingLateFees || unpaidInvoices.filter(inv => !inv.isCustom).length === 0} className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:bg-red-300 disabled:cursor-not-allowed">
-                                    {isApplyingLateFees ? "Generating..." : "Apply Penalties"}
-                                </button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            )}
-
-            {/* MODALS */}
-            {isNoticeModalOpen && (<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto"><div className="bg-white rounded-lg p-6 max-w-md w-full shadow-xl"><h2 className="text-xl font-bold mb-2">📢 Broadcast Notice</h2><p className="text-sm text-gray-600 mb-4">Post an announcement to the tenant dashboards.</p><form onSubmit={handleBroadcastNotice} className="space-y-4"><div><label className="block text-sm font-medium text-gray-700 mb-1">Target Audience</label><select value={noticeTarget} onChange={(e) => setNoticeTarget(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md"><option value="all">Everyone (All Buildings)</option>{buildings.map(b => <option key={b.id} value={b.id}>Only {b.name}</option>)}</select></div><div><label className="block text-sm font-medium text-gray-700 mb-1">Subject / Title</label><input type="text" required value={noticeTitle} onChange={(e) => setNoticeTitle(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md" placeholder="e.g., Water Shutoff Tomorrow" /></div><div><label className="block text-sm font-medium text-gray-700 mb-1">Message</label><textarea required rows={4} value={noticeMessage} onChange={(e) => setNoticeMessage(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md" placeholder="Type your full announcement here..." /></div><div className="flex justify-end gap-3 mt-6 pt-4 border-t border-gray-100"><button type="button" onClick={() => setIsNoticeModalOpen(false)} disabled={isSubmittingNotice} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-md">Cancel</button><button type="submit" disabled={isSubmittingNotice} className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700">{isSubmittingNotice ? "Broadcasting..." : "Post Notice"}</button></div></form></div></div>)}
-            {isCustomInvModalOpen && (<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto"><div className="bg-white rounded-lg p-6 max-w-md w-full shadow-xl"><h2 className="text-xl font-bold mb-2">Create Custom Charge</h2><p className="text-sm text-gray-600 mb-4">Bill a tenant outside of the regular monthly cycle.</p><form onSubmit={handleCreateCustomInvoice} className="space-y-4"><div><label className="block text-sm font-medium text-gray-700 mb-1">Select Tenant / Unit</label><select required value={customInvUnit} onChange={(e) => setCustomInvUnit(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md"><option value="" disabled>Select an occupied unit...</option>{occupiedUnits.map(u => <option key={u.id} value={u.id}>{u.unitNumber} - {u.tenantEmail}</option>)}</select></div><div><label className="block text-sm font-medium text-gray-700 mb-1">Charge Title / Reason</label><input type="text" required value={customInvTitle} onChange={(e) => setCustomInvTitle(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md" placeholder="e.g. Lost Key Fee, Noise Fine" /></div><div><label className="block text-sm font-medium text-gray-700 mb-1">Amount (₹)</label><input type="number" required min="1" value={customInvAmount} onChange={(e) => setCustomInvAmount(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md" placeholder="500" /></div><div className="flex justify-end gap-3 mt-6 pt-4 border-t border-gray-100"><button type="button" onClick={() => setIsCustomInvModalOpen(false)} disabled={isSubmittingCustomInv} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-md">Cancel</button><button type="submit" disabled={isSubmittingCustomInv} className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">{isSubmittingCustomInv ? "Sending..." : "Send Invoice"}</button></div></form></div></div>)}
-            {isExpenseModalOpen && (<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50"><div className="bg-white rounded-lg p-6 max-w-md w-full shadow-xl"><h2 className="text-xl font-bold mb-4">Log New Expense</h2><form onSubmit={handleAddExpense} className="space-y-4"><div><label className="block text-sm font-medium text-gray-700 mb-1">Amount (₹)</label><input type="number" required min="1" value={expenseAmount} onChange={(e) => setExpenseAmount(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md" /></div><div><label className="block text-sm font-medium text-gray-700 mb-1">Category</label><select value={expenseCategory} onChange={(e) => setExpenseCategory(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md">{EXPENSE_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.emoji} {c.value}</option>)}</select></div><div><label className="block text-sm font-medium text-gray-700 mb-1">Description</label><input type="text" required value={expenseDesc} onChange={(e) => setExpenseDesc(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md" /></div><div><label className="block text-sm font-medium text-gray-700 mb-1">Date</label><input type="date" value={expenseDate} onChange={(e) => setExpenseDate(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md" /></div><div className="flex justify-end gap-3 mt-6 pt-4 border-t border-gray-100"><button type="button" onClick={() => setIsExpenseModalOpen(false)} disabled={isSubmittingExpense} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-md">Cancel</button><button type="submit" disabled={isSubmittingExpense} className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700">{isSubmittingExpense ? "Saving..." : "Save Expense"}</button></div></form></div></div>)}
-            {isLeaseModalOpen && selectedUnitForLease && (<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto"><div className="bg-white rounded-lg p-6 max-w-md w-full shadow-xl"><h2 className="text-xl font-bold mb-2">Edit Tenant Profile</h2><form onSubmit={handleUpdateLease} className="space-y-4"><div><label className="block text-sm font-medium text-gray-700 mb-1">Tenant Phone Number</label><input type="text" value={tenantPhone} onChange={(e) => setTenantPhone(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md" /></div><div><label className="block text-sm font-medium text-gray-700 mb-1">Emergency Contact Info</label><input type="text" value={emergencyContact} onChange={(e) => setEmergencyContact(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md" /></div><div className="grid grid-cols-2 gap-4"><div><label className="block text-sm font-medium text-gray-700 mb-1">Lease Start</label><input type="date" value={leaseStart} onChange={(e) => setLeaseStart(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" /></div><div><label className="block text-sm font-medium text-gray-700 mb-1">Lease End</label><input type="date" value={leaseEnd} onChange={(e) => setLeaseEnd(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" /></div></div><div className="flex justify-end gap-3 mt-6 pt-4 border-t border-gray-100"><button type="button" onClick={() => setIsLeaseModalOpen(false)} disabled={isUpdatingLease} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-md">Cancel</button><button type="submit" disabled={isUpdatingLease} className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">{isUpdatingLease ? "Saving..." : "Save Profile"}</button></div></form></div></div>)}
-            {isInvoiceModalOpen && (<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto"><div className="bg-white rounded-lg p-6 max-w-2xl w-full shadow-xl my-8"><h2 className="text-xl font-bold text-gray-900 mb-2">Generate Monthly Invoices</h2><form onSubmit={handleConfirmInvoices}><div className="mb-6 bg-blue-50 border border-blue-200 p-4 rounded-md flex justify-between"><div><label className="block text-sm font-bold text-blue-900 mb-1">Electricity Rate</label></div><input type="number" step="0.01" required value={electricityRate} onChange={(e) => setElectricityRate(Number(e.target.value))} className="w-24 px-3 py-2 border border-gray-300 rounded-md" /></div><div className="max-h-96 overflow-y-auto border border-gray-200 rounded-md mb-6"><table className="min-w-full divide-y divide-gray-200 text-sm"><tbody className="bg-white divide-y divide-gray-200">{occupiedUnits.map((unit) => (<tr key={unit.id} className="hover:bg-gray-50"><td className="px-4 py-3"><p className="font-bold">{unit.unitNumber}</p></td><td className="px-4 py-3 text-right"><input type="number" required min={unit.lastMeterReading || 0} value={meterReadings[unit.id] !== undefined ? meterReadings[unit.id] : ''} onChange={(e) => handleReadingChange(unit.id, e.target.value)} className="w-24 px-2 py-1 border border-gray-300 rounded-md text-right font-mono" /></td></tr>))}</tbody></table></div><div className="flex justify-end gap-3"><button type="button" onClick={() => setIsInvoiceModalOpen(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-md">Cancel</button><button type="submit" disabled={isGeneratingInvoices || occupiedUnits.length === 0} className="px-6 py-2 bg-gray-900 text-white rounded-md hover:bg-gray-800 disabled:bg-gray-400">Generate & Send Bills</button></div></form></div></div>)}
-
-            {/* --- NEW: DOCUMENT VAULT MODAL --- */}
-            {isDocModalOpen && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
-                    <div className="bg-white rounded-lg p-6 max-w-md w-full shadow-xl">
-                        <h2 className="text-xl font-bold mb-2">Upload Document</h2>
-                        <p className="text-sm text-gray-600 mb-4">Securely share a lease agreement, addendum, or receipt with a tenant.</p>
-                        <form onSubmit={handleUploadDocument} className="space-y-4">
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Assign to Unit</label>
-                                <select required value={docTargetUnit} onChange={(e) => setDocTargetUnit(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md">
-                                    <option value="" disabled>Select a unit...</option>
-                                    {occupiedUnits.map(u => <option key={u.id} value={u.id}>{u.unitNumber} - {u.tenantEmail}</option>)}
-                                </select>
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Document Name / Title</label>
-                                <input type="text" required value={docTitle} onChange={(e) => setDocTitle(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md" placeholder="e.g., 2024 Signed Lease Agreement" />
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">File (PDF or Image)</label>
-                                <input type="file" required accept=".pdf,image/*" onChange={(e) => setDocFile(e.target.files ? e.target.files[0] : null)} className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:bg-blue-50 file:text-blue-700" />
-                            </div>
-                            {isUploading && <UploadProgressBar progress={uploadProgress} />}
-                            <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-gray-100">
-                                <button type="button" onClick={() => setIsDocModalOpen(false)} disabled={isUploadingDoc || isUploading} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-md">Cancel</button>
-                                <button type="submit" disabled={isUploadingDoc || isUploading} className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-blue-300">{isUploadingDoc ? "Uploading..." : "Upload to Vault"}</button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            )}
-
-            {/* SINGLE INVOICE MODAL */}
-            {isSingleInvModalOpen && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
-                    <div className="bg-white rounded-lg p-6 max-w-md w-full shadow-xl">
-                        <h2 className="text-xl font-bold text-gray-900 mb-2">⚡ Generate Single Invoice</h2>
-                        <p className="text-sm text-gray-600 mb-4">Create an invoice for a specific unit and month.</p>
-                        <form onSubmit={handleGenerateSingleInvoice} className="space-y-4">
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Select Unit</label>
-                                <select required value={singleInvUnit} onChange={(e) => setSingleInvUnit(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md">
-                                    <option value="" disabled>Choose an occupied unit...</option>
-                                    {occupiedUnits.map(u => <option key={u.id} value={u.id}>{u.unitNumber} — {u.tenantEmail} (Last: {u.lastMeterReading || 0})</option>)}
-                                </select>
-                            </div>
-                            {singleInvUnit && (() => {
-                                const u = occupiedUnits.find(x => x.id === singleInvUnit);
-                                if (!u) return null;
-                                return (
-                                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-800 space-y-1">
-                                        <p><strong>Unit:</strong> {u.unitNumber} | <strong>Tenant:</strong> {u.tenantEmail}</p>
-                                        <p><strong>Last Meter Reading:</strong> {u.lastMeterReading || 0} | <strong>Base Rent:</strong> ₹{u.baseRent || 0}</p>
-                                    </div>
-                                );
-                            })()}
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Billing Month</label>
-                                <input type="month" required value={singleInvMonth} onChange={(e) => setSingleInvMonth(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md" />
-                            </div>
-
-                            {/* Charge Type: rent only / electricity only / both */}
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Charge Type</label>
-                                <div className="grid grid-cols-3 gap-2">
-                                    {([
-                                        { key: "both", label: "🏠⚡ Rent + Electricity" },
-                                        { key: "rent", label: "🏠 Rent only" },
-                                        { key: "electricity", label: "⚡ Electricity only" },
-                                    ] as const).map(opt => (
-                                        <button
-                                            key={opt.key}
-                                            type="button"
-                                            onClick={() => setSingleInvChargeType(opt.key)}
-                                            className={`px-2 py-2 rounded-md text-xs font-bold border transition ${singleInvChargeType === opt.key ? "bg-purple-600 text-white border-purple-700" : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"}`}
-                                        >
-                                            {opt.label}
-                                        </button>
-                                    ))}
-                                </div>
-                                <p className="text-[10px] text-gray-500 mt-1">
-                                    {singleInvChargeType === "rent" && "Only base rent is billed. Meter fields are hidden and the unit's stored reading will not change."}
-                                    {singleInvChargeType === "electricity" && "Only electricity is billed. Base rent is excluded."}
-                                    {singleInvChargeType === "both" && "Rent and electricity are combined into a single invoice."}
-                                </p>
-                            </div>
-
-                            {/* Meter Changed Toggle — only when electricity is billed */}
-                            {singleInvChargeType !== "rent" && (
-                                <div className="flex items-center gap-3 bg-yellow-50 border border-yellow-200 rounded-lg p-3">
-                                    <input type="checkbox" id="adminMeterChanged" checked={singleInvMeterChanged} onChange={(e) => setSingleInvMeterChanged(e.target.checked)} className="w-4 h-4 accent-yellow-600" />
-                                    <label htmlFor="adminMeterChanged" className="text-sm text-yellow-800 font-medium cursor-pointer">⚠️ Meter was changed / replaced</label>
-                                </div>
-                            )}
-
-                            {singleInvChargeType !== "rent" && (!singleInvMeterChanged ? (
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">Current Meter Reading</label>
-                                    <input type="number" required min="0" value={singleInvReading} onChange={(e) => setSingleInvReading(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md" placeholder="e.g. 1250" />
-                                </div>
-                            ) : (
-                                <div className="space-y-3 bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-                                    <p className="text-xs text-yellow-700 font-medium">Enter units consumed manually (from old + new meter final readings)</p>
-                                    <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Units Consumed</label>
-                                        <input type="number" required min="0" value={singleInvUnitsConsumed} onChange={(e) => setSingleInvUnitsConsumed(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md" placeholder="e.g. 120" />
-                                    </div>
-                                    <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">New Meter Reading (starting reading of new meter)</label>
-                                        <input type="number" min="0" value={singleInvNewReading} onChange={(e) => setSingleInvNewReading(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md" placeholder="e.g. 0" />
-                                        <p className="text-xs text-gray-500 mt-1">Saved as last reading for next month</p>
-                                    </div>
-                                </div>
-                            ))}
-
-                            {/* Live preview */}
-                            {singleInvUnit && (singleInvChargeType === "rent" || (singleInvMeterChanged ? singleInvUnitsConsumed : singleInvReading)) && (() => {
-                                const u = occupiedUnits.find(x => x.id === singleInvUnit);
-                                if (!u) return null;
-                                const prev = Number(u.lastMeterReading) || 0;
-                                const consumed = singleInvChargeType === "rent"
-                                    ? 0
-                                    : (singleInvMeterChanged ? Number(singleInvUnitsConsumed) : Math.max(0, Number(singleInvReading) - prev));
-                                const elecCharge = consumed * electricityRate;
-                                const rentApplied = singleInvChargeType === "electricity" ? 0 : Number(u.baseRent || 0);
-                                const total = rentApplied + elecCharge;
-                                return (
-                                    <div className="bg-purple-50 border border-purple-200 rounded-md p-3 text-sm">
-                                        {singleInvMeterChanged && singleInvChargeType !== "rent" && <div className="bg-yellow-50 border border-yellow-200 rounded p-2 text-xs text-yellow-800 mb-2">⚠️ Meter changed — units entered manually</div>}
-                                        {singleInvChargeType !== "electricity" && <div className="flex justify-between"><span>Rent:</span><span>₹{rentApplied}</span></div>}
-                                        {singleInvChargeType !== "rent" && <div className="flex justify-between"><span>Electricity ({consumed} units × ₹{electricityRate}):</span><span>₹{elecCharge}</span></div>}
-                                        <div className="flex justify-between font-bold border-t border-purple-200 mt-2 pt-2"><span>Total:</span><span>₹{total}</span></div>
-                                    </div>
-                                );
-                            })()}
-                            <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-gray-100">
-                                <button type="button" onClick={() => setIsSingleInvModalOpen(false)} disabled={isGeneratingSingleInv} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-md">Cancel</button>
-                                <button type="submit" disabled={isGeneratingSingleInv} className="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:bg-purple-300">{isGeneratingSingleInv ? "Generating..." : "Generate Invoice"}</button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            )}
-
         </div>
     );
 }

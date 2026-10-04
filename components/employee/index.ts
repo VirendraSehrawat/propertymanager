@@ -10,5 +10,6 @@ export { ExpensesTab } from "./ExpensesTab";
 export { MonthCollectionsCard } from "./MonthCollectionsCard";
 export { HomeTab } from "./HomeTab";
 export { ChecklistTab } from "./ChecklistTab";
+export { UnitsTab } from "./UnitsTab";
 export { SettlePaymentModal } from "./modals/SettlePaymentModal";
 export { SettleMasterInvoiceModal } from "./modals/SettleMasterInvoiceModal";
