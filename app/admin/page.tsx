@@ -27,6 +27,7 @@ import type {
     AppUser,
     Application,
     Unit,
+    MasterInvoice,
 } from "@/types";
 import { TabButton } from "@/components/ui";
 import { DailyLedgerTab } from "@/components/employee";
@@ -81,6 +82,7 @@ export default function AdminDashboard() {
     const [allLedgerEntries, setAllLedgerEntries] = useState<LedgerEntry[]>([]);
     const [allUsers, setAllUsers] = useState<AppUser[]>([]);
     const [dailyLedgerEntries, setDailyLedgerEntries] = useState<DailyLedgerEntry[]>([]);
+    const [masterInvoices, setMasterInvoices] = useState<MasterInvoice[]>([]);
 
     // Settings States
     const [upiId, setUpiId] = useState("");
@@ -251,6 +253,10 @@ export default function AdminDashboard() {
             setDailyLedgerEntries(mapSnapshot<DailyLedgerEntry>(snapshot).sort((a, b) => (b.date || "").localeCompare(a.date || "")));
         });
 
+        const unsubMasterInvoices = onSnapshot(collection(db, "masterInvoices"), (snapshot) => {
+            setMasterInvoices(mapSnapshot<MasterInvoice>(snapshot));
+        });
+
         const unsubAllUnits = onSnapshot(collection(db, "units"), (snapshot) => {
             setAllUnits(mapSnapshot<Unit>(snapshot));
         });
@@ -268,6 +274,7 @@ export default function AdminDashboard() {
             unsubLedger();
             unsubUsers();
             unsubDailyLedger();
+            unsubMasterInvoices();
             unsubAllUnits();
         };
     }, [role]);
@@ -377,7 +384,7 @@ export default function AdminDashboard() {
                 )}
 
                 {activeTab === "ledger" && (
-                    <AdminLedgerTab ledgerEntries={allLedgerEntries} currentUserEmail={user?.email || "admin"} />
+                    <AdminLedgerTab ledgerEntries={allLedgerEntries} currentUserEmail={user?.email || "admin"} allInvoices={allInvoicesForDashboard} masterInvoices={masterInvoices} />
                 )}
 
                 {activeTab === "daily" && (

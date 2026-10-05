@@ -1,16 +1,24 @@
 "use client";
 
 import { useState } from "react";
-import { doc, updateDoc, deleteDoc } from "firebase/firestore";
+import { doc, deleteDoc, writeBatch } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import type { LedgerEntry } from "@/types";
+import type { Invoice, LedgerEntry, MasterInvoice } from "@/types";
+import {
+    syncInvoiceFromLedger,
+    syncMasterFromChildren,
+} from "@/lib/ledgerSync";
 
 interface AdminLedgerTabProps {
     ledgerEntries: LedgerEntry[];
     currentUserEmail: string;
+    /** All invoices — used to recompute the linked invoice when a ledger row is corrected. */
+    allInvoices?: Invoice[];
+    /** All master invoices — used to recompute a corporate master when a child invoice changes. */
+    masterInvoices?: MasterInvoice[];
 }
 
-export function AdminLedgerTab({ ledgerEntries, currentUserEmail }: AdminLedgerTabProps) {
+export function AdminLedgerTab({ ledgerEntries, currentUserEmail, allInvoices = [], masterInvoices = [] }: AdminLedgerTabProps) {
     const [filter, setFilter] = useState("");
     const [editLedger, setEditLedger] = useState<LedgerEntry | null>(null);
     const [editAmount, setEditAmount] = useState("");
@@ -31,7 +39,10 @@ export function AdminLedgerTab({ ledgerEntries, currentUserEmail }: AdminLedgerT
         const newBalance = newAmountPaid - Number(editLedger.invoiceAmount);
         setIsSaving(true);
         try {
-            await updateDoc(doc(db, "ledger", editLedger.id), {
+            const batch = writeBatch(db);
+
+            // 1. Correct the ledger row itself (with audit trail).
+            batch.update(doc(db, "ledger", editLedger.id), {
                 amountPaid: newAmountPaid,
                 balance: newBalance,
                 correctedAt: new Date().toISOString(),
@@ -39,6 +50,55 @@ export function AdminLedgerTab({ ledgerEntries, currentUserEmail }: AdminLedgerT
                 correctedBy: currentUserEmail || "admin",
                 originalAmountPaid: editLedger.originalAmountPaid ?? editLedger.amountPaid,
             });
+
+            // 2. Propagate the correction to the linked apartment invoice so its
+            //    amountPaid / status reflect the corrected ledger total. The
+            //    invoice's paid total is the SUM of all its ledger rows, with
+            //    this row overridden to the corrected value.
+            const invoice = editLedger.invoiceId
+                ? allInvoices.find(i => i.id === editLedger.invoiceId)
+                : undefined;
+            let correctedInvoice: { amountPaid: number } | undefined;
+            if (invoice) {
+                const invPatch = syncInvoiceFromLedger(
+                    Number(invoice.totalAmount || 0),
+                    ledgerEntries,
+                    invoice.id,
+                    { id: editLedger.id, amountPaid: newAmountPaid },
+                );
+                correctedInvoice = { amountPaid: invPatch.amountPaid };
+                batch.update(doc(db, "invoices", invoice.id), {
+                    amountPaid: invPatch.amountPaid,
+                    status: invPatch.status,
+                    ...(invPatch.fullyPaid
+                        ? { paidAt: invoice.paidAt || new Date().toISOString() }
+                        : {}),
+                });
+
+                // 3. If this invoice rolls up into a corporate master invoice,
+                //    recompute the master's amountPaid / status from its
+                //    children (using the corrected child amount).
+                const master = invoice.masterInvoiceId
+                    ? masterInvoices.find(m => m.id === invoice.masterInvoiceId)
+                    : undefined;
+                if (master) {
+                    const children = allInvoices
+                        .filter(i => master.childInvoiceIds.includes(i.id))
+                        .map(i => i.id === invoice.id
+                            ? { ...i, amountPaid: correctedInvoice!.amountPaid }
+                            : i);
+                    const masterPatch = syncMasterFromChildren(Number(master.totalAmount || 0), children);
+                    batch.update(doc(db, "masterInvoices", master.id), {
+                        amountPaid: masterPatch.amountPaid,
+                        status: masterPatch.status,
+                        ...(masterPatch.fullyPaid
+                            ? { paidAt: master.paidAt || new Date().toISOString() }
+                            : {}),
+                    });
+                }
+            }
+
+            await batch.commit();
             setEditLedger(null);
         } catch (error) {
             console.error("Failed to update ledger entry:", error);
