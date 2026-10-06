@@ -5,6 +5,7 @@ import {
     computeCarryForward,
     composeInvoiceTotal,
     carryForwardFromInvoices,
+    carryForwardBreakdown,
     carryForwardItems,
     previousMonthLabel,
     stripBillingPeriodSuffix,
@@ -295,6 +296,63 @@ describe("carryForwardFromInvoices", () => {
         );
         // Both previous months carry forward — October is excluded but nothing belongs to October.
         expect(cf).toBe(3000);
+    });
+});
+
+describe("carryForwardBreakdown", () => {
+    it("returns one entry per contributing unpaid/pending invoice", () => {
+        const rows = carryForwardBreakdown([
+            { id: "a", status: "unpaid", totalAmount: 5000, amountPaid: 0, billingPeriod: "September 2026" },
+            { id: "b", status: "pending", totalAmount: 3000, amountPaid: 1000, billingPeriod: "August 2026" },
+        ]);
+        expect(rows).toEqual([
+            { invoiceId: "b", billingPeriod: "August 2026", amount: 2000 },
+            { invoiceId: "a", billingPeriod: "September 2026", amount: 5000 },
+        ]);
+    });
+
+    it("sorts oldest-first by billing period", () => {
+        const rows = carryForwardBreakdown([
+            { id: "a", status: "unpaid", totalAmount: 1000, amountPaid: 0, billingPeriod: "December 2026" },
+            { id: "b", status: "unpaid", totalAmount: 1000, amountPaid: 0, billingPeriod: "January 2026" },
+        ]);
+        expect(rows.map((r) => r.billingPeriod)).toEqual(["January 2026", "December 2026"]);
+    });
+
+    it("skips paid, written-off, zero-due and excluded invoices", () => {
+        const rows = carryForwardBreakdown(
+            [
+                { id: "self", status: "unpaid", totalAmount: 10000, amountPaid: 0, billingPeriod: "October 2026" },
+                { id: "paid", status: "paid", totalAmount: 5000, amountPaid: 5000, billingPeriod: "September 2026" },
+                { id: "wo", status: "written-off", totalAmount: 4000, amountPaid: 0, billingPeriod: "August 2026" },
+                { id: "over", status: "unpaid", totalAmount: 1000, amountPaid: 2000, billingPeriod: "July 2026" },
+                { id: "due", status: "unpaid", totalAmount: 2988, amountPaid: 0, billingPeriod: "June 2026" },
+            ],
+            { excludeInvoiceId: "self", excludeBillingPeriod: "October 2026" },
+        );
+        expect(rows).toEqual([
+            { invoiceId: "due", billingPeriod: "June 2026", amount: 2988 },
+        ]);
+    });
+
+    it("falls back to a label when billingPeriod is missing", () => {
+        const rows = carryForwardBreakdown([
+            { id: "a", status: "unpaid", totalAmount: 1000, amountPaid: 0 },
+        ]);
+        expect(rows[0].billingPeriod).toBe("Previous period");
+    });
+
+    it("returns an empty array when nothing is outstanding", () => {
+        expect(carryForwardBreakdown([])).toEqual([]);
+    });
+
+    it("breakdown sum matches carryForwardFromInvoices", () => {
+        const invoices = [
+            { id: "a", status: "unpaid" as const, totalAmount: 5000, amountPaid: 0, billingPeriod: "September 2026" },
+            { id: "b", status: "pending" as const, totalAmount: 3000, amountPaid: 1000, billingPeriod: "August 2026" },
+        ];
+        const total = carryForwardBreakdown(invoices).reduce((s, r) => s + r.amount, 0);
+        expect(total).toBe(carryForwardFromInvoices(invoices));
     });
 });
 

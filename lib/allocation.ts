@@ -264,6 +264,59 @@ export function carryForwardFromInvoices(
     return Math.round(owed);
 }
 
+/** A single source invoice contributing to a carry-forward balance. */
+export interface CarryForwardSource {
+    /** The source invoice id. */
+    invoiceId: string;
+    /** Human-readable billing period the balance is owed for, e.g. "September 2026". */
+    billingPeriod: string;
+    /** Outstanding amount (₹) still due on that invoice. */
+    amount: number;
+}
+
+/**
+ * Itemised breakdown of a carry-forward balance — which previous month(s)
+ * the outstanding dues come from. Mirrors the filtering of
+ * {@link carryForwardFromInvoices} but returns one entry per contributing
+ * invoice (oldest-first) instead of a single sum.
+ *
+ * Persist this alongside the invoice so the billing UI can show "Previous
+ * Balance Due (September 2026): +₹2,500" instead of an opaque number.
+ */
+export function carryForwardBreakdown(
+    invoices: CarryForwardInvoice[],
+    opts: {
+        excludeInvoiceId?: string;
+        excludeBillingPeriod?: string;
+    } = {},
+): CarryForwardSource[] {
+    const { excludeInvoiceId, excludeBillingPeriod } = opts;
+    const sources: CarryForwardSource[] = [];
+    for (const inv of invoices) {
+        if (!inv) continue;
+        if (excludeInvoiceId && inv.id === excludeInvoiceId) continue;
+        if (excludeBillingPeriod && inv.billingPeriod === excludeBillingPeriod) continue;
+        const status = inv.status || "unpaid";
+        if (status !== "unpaid" && status !== "pending") continue;
+        const total = Number(inv.totalAmount || 0);
+        const paid = Number(inv.amountPaid || 0);
+        const due = Math.round(Math.max(0, total - paid));
+        if (due <= 0) continue;
+        sources.push({
+            invoiceId: inv.id,
+            billingPeriod: inv.billingPeriod || "Previous period",
+            amount: due,
+        });
+    }
+    // Oldest-first so the earliest unpaid month shows at the top.
+    return sources.sort((a, b) => {
+        const da = new Date(a.billingPeriod).getTime();
+        const db = new Date(b.billingPeriod).getTime();
+        if (isNaN(da) || isNaN(db)) return 0;
+        return da - db;
+    });
+}
+
 /**
  * Compose the final total for a new monthly invoice.
  *

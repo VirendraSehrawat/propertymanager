@@ -89,6 +89,8 @@ export interface Invoice {
     electricityRate?: number;
     electricityCharge?: number;
     carryForward?: number;
+    /** Source-month breakdown of the carry-forward balance (which months the dues come from). */
+    carryForwardDetails?: { billingPeriod: string; amount: number }[];
     meterChanged?: boolean;
     manualUnitsReason?: string;
     isCustom?: boolean;

@@ -4,7 +4,7 @@ import { useState } from "react";
 import { doc, getDoc, writeBatch, deleteField } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { computeRentPeriod, computeElectricityPeriod } from "@/lib/billingPeriods";
-import { carryForwardFromInvoices, composeInvoiceTotal } from "@/lib/allocation";
+import { carryForwardFromInvoices, carryForwardBreakdown, composeInvoiceTotal } from "@/lib/allocation";
 import { notifyInvoiceCreated } from "@/lib/notify";
 import type { Unit, Invoice } from "@/types";
 
@@ -108,6 +108,10 @@ export function MeterTab({ occupiedUnits, allInvoices, electricityRate }: MeterT
                 allInvoices.filter((i) => (i.tenantEmail || "") === (unit.tenantEmail || "")),
                 { excludeInvoiceId: invoiceId, excludeBillingPeriod: monthName },
             );
+            const carryForwardDetails = carryForwardBreakdown(
+                allInvoices.filter((i) => (i.tenantEmail || "") === (unit.tenantEmail || "")),
+                { excludeInvoiceId: invoiceId, excludeBillingPeriod: monthName },
+            ).map((s) => ({ billingPeriod: s.billingPeriod, amount: s.amount }));
             const baseRent = Number(unit.baseRent || 0);
             const { total: totalAmount } = composeInvoiceTotal({ baseRent, electricityCharge, carryForward });
 
@@ -125,6 +129,7 @@ export function MeterTab({ occupiedUnits, allInvoices, electricityRate }: MeterT
                 ...(meterChanged ? { meterChanged: true } : { meterChanged: deleteField() }),
                 ...(manualOverrideNote ? { manualUnitsReason: manualOverrideNote } : { manualUnitsReason: deleteField() }),
                 ...(carryForward !== 0 ? { carryForward } : { carryForward: deleteField() }),
+                ...(carryForwardDetails.length > 0 ? { carryForwardDetails } : { carryForwardDetails: deleteField() }),
                 totalAmount,
                 billingPeriod: monthName,
                 rentPeriod: computeRentPeriod(billingMonth, Number(unit.paymentDay) || undefined),
@@ -287,6 +292,10 @@ export function MeterTab({ occupiedUnits, allInvoices, electricityRate }: MeterT
                         allInvoices.filter((i) => (i.tenantEmail || "") === (selectedUnit.tenantEmail || "")),
                         { excludeInvoiceId: previewInvoiceId, excludeBillingPeriod: previewMonthName },
                     );
+                    const carryForwardSources = carryForwardBreakdown(
+                        allInvoices.filter((i) => (i.tenantEmail || "") === (selectedUnit.tenantEmail || "")),
+                        { excludeInvoiceId: previewInvoiceId, excludeBillingPeriod: previewMonthName },
+                    );
                     const rent = Number(selectedUnit.baseRent || 0);
                     const { total } = composeInvoiceTotal({ baseRent: rent, electricityCharge: elecCharge, carryForward });
                     return (
@@ -323,7 +332,15 @@ export function MeterTab({ occupiedUnits, allInvoices, electricityRate }: MeterT
                             </div>
                             <div className="flex justify-between border-t border-gray-300 pt-2 mt-2"><span className="font-bold text-gray-900">Total Invoice:</span><span className="font-bold text-lg text-green-700">₹{total.toLocaleString()}</span></div>
                             {carryForward > 0 && (
-                                <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">Includes ₹{carryForward.toLocaleString()} carried forward from unpaid previous invoices.</p>
+                                <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 space-y-0.5">
+                                    <p className="font-medium">Includes ₹{carryForward.toLocaleString()} carried forward from unpaid previous invoices:</p>
+                                    {carryForwardSources.map((s) => (
+                                        <div key={s.invoiceId} className="flex justify-between">
+                                            <span>• {s.billingPeriod}</span>
+                                            <span className="font-mono">+₹{s.amount.toLocaleString()}</span>
+                                        </div>
+                                    ))}
+                                </div>
                             )}
                         </div>
                     );
