@@ -1,9 +1,9 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
 import { useMemo, useState } from "react";
 import { addDoc, collection, doc, updateDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { COL } from "@/lib/collections";
 import { Modal } from "@/components/ui";
 import { useUploadWithProgress, UploadProgressBar } from "@/lib/useUpload";
 import { allocateLumpSum } from "@/lib/payments";
@@ -28,6 +28,7 @@ interface DailyLedgerEntry {
     createdBy?: string;
     createdAt: string;
     deleted?: boolean;
+    expenseId?: string;
 }
 
 interface Building { id: string; name: string; }
@@ -114,7 +115,7 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
 
             const bldg = buildings.find(b => b.id === buildingId);
             const unit = allUnits.find(u => u.id === unitId);
-            const payload: any = {
+            const payload: Record<string, unknown> = {
                 date: entryDate || todayISO(),
                 direction,
                 category,
@@ -137,7 +138,7 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
                 payload.quantity = quantity ? Number(quantity) : 0;
                 payload.vendor = vendor || "";
             }
-            const ledgerRef = await addDoc(collection(db, "dailyLedger"), payload);
+            const ledgerRef = await addDoc(collection(db, COL.dailyLedger), payload);
 
             // Merge: an "outflow" in the Daily Ledger is the same thing as an
             // Expense. Mirror it to the `expenses` collection so it appears in
@@ -145,7 +146,7 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
             // via `expenseId` / `dailyLedgerId` so soft-delete cascades.
             if (direction === "outflow") {
                 try {
-                    const expenseRef = await addDoc(collection(db, "expenses"), {
+                    const expenseRef = await addDoc(collection(db, COL.expenses), {
                         amount: Number(amount),
                         category,
                         description: description || category,
@@ -158,7 +159,7 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
                         createdBy: currentUserEmail || "",
                         createdAt: new Date().toISOString(),
                     });
-                    await updateDoc(doc(db, "dailyLedger", ledgerRef.id), { expenseId: expenseRef.id });
+                    await updateDoc(doc(db, COL.dailyLedger, ledgerRef.id), { expenseId: expenseRef.id });
                 } catch (mirrorErr) {
                     console.warn("Expense mirror write failed", mirrorErr);
                 }
@@ -192,7 +193,7 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
                             ? baseRent + inferredElectricity
                             : paying; // maintenance → treat whole amount as base
                     const monthName = new Date((entryDate || todayISO()) + "T00:00:00").toLocaleString("default", { month: "long", year: "numeric" });
-                    const newInvRef = await addDoc(collection(db, "invoices"), {
+                    const newInvRef = await addDoc(collection(db, COL.invoices), {
                         unitId,
                         unitNumber: unit?.unitNumber || "",
                         tenantEmail: unit?.tenantEmail || "",
@@ -229,7 +230,7 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
                 for (const line of result.lines) {
                     const inv = pool.find(i => i.id === line.invoiceId)!;
                     if (line.fullySettled) {
-                        await updateDoc(doc(db, "invoices", line.invoiceId), {
+                        await updateDoc(doc(db, COL.invoices, line.invoiceId), {
                             status: "paid",
                             paidAt: nowIso,
                             amountPaid: line.newAmountPaid,
@@ -237,13 +238,13 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
                         });
                         settledLabels.push(`${inv.billingPeriod}`);
                     } else {
-                        await updateDoc(doc(db, "invoices", line.invoiceId), {
+                        await updateDoc(doc(db, COL.invoices, line.invoiceId), {
                             amountPaid: line.newAmountPaid,
                         });
                         partialLabels.push(`${inv.billingPeriod} (₹${line.remaining.toLocaleString()} left)`);
                     }
 
-                    await addDoc(collection(db, "ledger"), {
+                    await addDoc(collection(db, COL.ledger), {
                         tenantEmail: inv.tenantEmail || unit?.tenantEmail || "",
                         unitId: inv.unitId,
                         unitNumber: inv.unitNumber || unit?.unitNumber || "",
@@ -262,7 +263,7 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
 
                 // Record any unallocated remainder as a tenant credit / advance.
                 if (result.leftover > 0) {
-                    await addDoc(collection(db, "ledger"), {
+                    await addDoc(collection(db, COL.ledger), {
                         tenantEmail: unit?.tenantEmail || "",
                         unitId,
                         unitNumber: unit?.unitNumber || "",
@@ -309,10 +310,9 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
                 deletedBy: currentUserEmail || "",
                 deletedAt: new Date().toISOString(),
             } as const;
-            await updateDoc(doc(db, "dailyLedger", entry.id), patch);
-            const anyEntry = entry as any;
-            if (anyEntry.expenseId) {
-                await updateDoc(doc(db, "expenses", anyEntry.expenseId), patch);
+            await updateDoc(doc(db, COL.dailyLedger, entry.id), patch);
+            if (entry.expenseId) {
+                await updateDoc(doc(db, COL.expenses, entry.expenseId), patch);
             }
         }
         catch (err) { console.error(err); alert("Failed to delete."); }

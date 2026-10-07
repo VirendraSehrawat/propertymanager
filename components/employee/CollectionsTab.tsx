@@ -1,9 +1,9 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
 import { useState } from "react";
 import { doc, updateDoc, addDoc, collection, deleteField, writeBatch } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { COL } from "@/lib/collections";
 import type { Invoice, LedgerEntry, MasterInvoice, Unit } from "@/types";
 import { buildTransactionId } from "@/lib/payments";
 import {
@@ -40,7 +40,7 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
     const [isSettling, setIsSettling] = useState("");
 
     const [isEditInvoiceOpen, setIsEditInvoiceOpen] = useState(false);
-    const [editInvoice, setEditInvoice] = useState<any>(null);
+    const [editInvoice, setEditInvoice] = useState<Invoice | null>(null);
 
     // Master-invoice settle modal state
     const [settleMaster, setSettleMaster] = useState<MasterInvoice | null>(null);
@@ -69,7 +69,7 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
     async function handleCloseAlreadyPaid(inv: Invoice) {
         setIsSettling(inv.id);
         try {
-            await updateDoc(doc(db, "invoices", inv.id), {
+            await updateDoc(doc(db, COL.invoices, inv.id), {
                 status: "paid",
                 paidAt: new Date().toISOString(),
             });
@@ -89,7 +89,7 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
         if (!reason || !reason.trim()) return;
         setWritingOff(inv.id);
         try {
-            await updateDoc(doc(db, "invoices", inv.id), {
+            await updateDoc(doc(db, COL.invoices, inv.id), {
                 status: "written-off",
                 writtenOff: true,
                 writtenOffAt: new Date().toISOString(),
@@ -110,7 +110,7 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
             const priorPaid = Number(inv.amountPaid || 0);
             const total = Number(inv.totalAmount || 0);
             const nextStatus = priorPaid <= 0 ? "unpaid" : priorPaid >= total ? "paid" : "pending";
-            await updateDoc(doc(db, "invoices", inv.id), {
+            await updateDoc(doc(db, COL.invoices, inv.id), {
                 status: nextStatus,
                 writtenOff: deleteField(),
                 writtenOffAt: deleteField(),
@@ -237,14 +237,14 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
         setIsSettling(inv.id);
         try {
             const txnId = buildTransactionId(mode, reference);
-            await updateDoc(doc(db, "invoices", inv.id), {
+            await updateDoc(doc(db, COL.invoices, inv.id), {
                 amountPaid: alloc.newAmountPaid,
                 status: alloc.status,
                 ...(alloc.fullyPaid ? { paidAt: new Date().toISOString() } : {}),
                 transactionId: txnId,
                 ...(note.trim() ? { paymentNote: note.trim() } : {}),
             });
-            const ledgerRef = await addDoc(collection(db, "ledger"), {
+            const ledgerRef = await addDoc(collection(db, COL.ledger), {
                 tenantEmail: inv.tenantEmail,
                 unitId: inv.unitId,
                 unitNumber: inv.unitNumber,
@@ -329,7 +329,7 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
             const existingPaid = Number(editInvoice.amountPaid || 0);
             const shouldClose = existingPaid > 0 && existingPaid >= totalAmount - 0.5;
 
-            await updateDoc(doc(db, "invoices", editInvoice.id), {
+            await updateDoc(doc(db, COL.invoices, editInvoice.id), {
                 baseRent,
                 electricityRate: rate,
                 electricityConsumed: units,
@@ -343,7 +343,7 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
             });
 
             if (editInvoice.unitId && currReading !== Number(editInvoice.currentReading || 0)) {
-                await updateDoc(doc(db, "units", editInvoice.unitId), { lastMeterReading: currReading });
+                await updateDoc(doc(db, COL.units, editInvoice.unitId), { lastMeterReading: currReading });
             }
 
             alert("Invoice updated!\n\nRent: \u20B9" + baseRent + "\nElectricity: " + units + " \u00D7 \u20B9" + rate + " = \u20B9" + electricityCharge + "\nTotal: \u20B9" + totalAmount);
@@ -377,7 +377,7 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
             const batch = writeBatch(db);
 
             // Update master
-            batch.update(doc(db, "masterInvoices", m.id), {
+            batch.update(doc(db, COL.masterInvoices, m.id), {
                 amountPaid: result.newMasterAmountPaid,
                 status: result.masterStatus,
                 paidAt: result.masterStatus === "paid" ? nowIso : m.paidAt || null,
@@ -390,7 +390,7 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
             // Update each child + write ledger row per child
             for (const alloc of result.perChild) {
                 if (alloc.appliedNow <= 0) continue;
-                batch.update(doc(db, "invoices", alloc.invoiceId), {
+                batch.update(doc(db, COL.invoices, alloc.invoiceId), {
                     amountPaid: alloc.newAmountPaid,
                     status: alloc.status,
                     paidAt: alloc.status === "paid" ? nowIso : null,
@@ -405,7 +405,7 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
             for (const alloc of result.perChild) {
                 if (alloc.appliedNow <= 0) continue;
                 const child = children.find(c => c.id === alloc.invoiceId)!;
-                await addDoc(collection(db, "ledgerEntries"), {
+                await addDoc(collection(db, COL.ledgerEntries), {
                     tenantEmail: child.tenantEmail,
                     unitId: child.unitId,
                     unitNumber: child.unitNumber,
@@ -424,7 +424,7 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                 });
             }
             // Single dailyLedger inflow representing the real cash movement
-            await addDoc(collection(db, "dailyLedger"), {
+            await addDoc(collection(db, COL.dailyLedger), {
                 date: nowIso.slice(0, 10),
                 direction: "inflow",
                 category: "Rent (Master)",
@@ -692,8 +692,8 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                             shown.forEach(inv => {
                                 const src = inv._effectiveDate;
                                 const day = src ? src.slice(0, 10) : "unknown";
-                                if (!groups.has(day)) groups.set(day, [] as any);
-                                (groups.get(day) as any).push(inv);
+                                if (!groups.has(day)) groups.set(day, []);
+                                groups.get(day)!.push(inv);
                             });
                             const dayKeys = Array.from(groups.keys()).sort((a, b) => b.localeCompare(a));
                             return dayKeys.map(day => {
@@ -735,17 +735,17 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                                             </div>
                                             <p className="text-xs text-gray-500 truncate">{inv.tenantEmail}</p>
                                             <p className={`text-xs font-medium mt-0.5 ${isPartial ? "text-orange-700" : "text-green-700"}`}>{inv.billingPeriod}</p>
-                                            {((inv as any).rentPeriod || (inv as any).electricityPeriod) && (
+                                            {(inv.rentPeriod || inv.electricityPeriod) && (
                                                 <p className="text-[10px] text-gray-500 mt-0.5 truncate">
-                                                    {(inv as any).rentPeriod && <>🏠 {(inv as any).rentPeriod}</>}
-                                                    {(inv as any).rentPeriod && (inv as any).electricityPeriod && " · "}
-                                                    {(inv as any).electricityPeriod && <>⚡ {(inv as any).electricityPeriod}</>}
+                                                    {inv.rentPeriod && <>🏠 {inv.rentPeriod}</>}
+                                                    {inv.rentPeriod && inv.electricityPeriod && " · "}
+                                                    {inv.electricityPeriod && <>⚡ {inv.electricityPeriod}</>}
                                                 </p>
                                             )}
                                             <div className="text-[10px] text-gray-500 mt-1 flex gap-2 flex-wrap">
                                                 <span>📅 {paidStr}</span>
                                                 {ref && <span title="Reference">🔖 {ref}</span>}
-                                                {(inv as any).paymentNote && <span>📝 {(inv as any).paymentNote}</span>}
+                                                {inv.paymentNote && <span>📝 {inv.paymentNote}</span>}
                                             </div>
                                         </div>
                                         <div className="text-right shrink-0 flex flex-col items-end gap-1.5">
