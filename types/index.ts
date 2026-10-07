@@ -99,6 +99,11 @@ export interface Invoice {
     paidAt?: string;
     paymentScreenshotUrl?: string;
     paymentNote?: string;
+    /** Identity of the person who submitted the payment for verification
+     *  (may be a co-tenant, not necessarily the invoice's assigned tenant). */
+    submittedBy?: string;
+    submittedByName?: string;
+    submittedAt?: string;
     /** Bookkeeping fields set when an invoice is marked uncollectible
      *  (tenant absconded / cannot be recovered). Preserves the audit
      *  trail without polluting pending collections. */

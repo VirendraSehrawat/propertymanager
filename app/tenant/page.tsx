@@ -169,6 +169,8 @@ export default function TenantDashboard() {
                 transactionId: payTxnId,
                 amountPaid,
                 paymentScreenshotUrl: screenshotUrl,
+                submittedBy: user!.email?.toLowerCase() || "",
+                submittedByName: user!.displayName || "",
                 submittedAt: new Date().toISOString()
             });
 

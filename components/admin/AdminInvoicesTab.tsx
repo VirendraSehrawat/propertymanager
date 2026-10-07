@@ -334,7 +334,15 @@ export function AdminInvoicesTab({
                             {(subTab === "pending" ? pendingInvoices : subTab === "unpaid" ? unpaidInvoices : paidInvoices).map(inv => (
                                 <tr key={inv.id} className="hover:bg-gray-50">
                                     <td className="px-4 py-3 font-bold text-gray-900">{inv.unitNumber}</td>
-                                    <td className="px-4 py-3">{inv.tenantEmail}</td>
+                                    <td className="px-4 py-3">
+                                        <div>{inv.tenantEmail}</div>
+                                        {subTab === "pending" && (inv.submittedByName || inv.submittedBy) && (
+                                            <div className="text-[10px] text-amber-700 mt-0.5">
+                                                🙋 Requested by: {inv.submittedByName || inv.submittedBy}
+                                                {inv.submittedByName && inv.submittedBy ? ` (${inv.submittedBy})` : ""}
+                                            </div>
+                                        )}
+                                    </td>
                                     <td className="px-4 py-3">{inv.billingPeriod}</td>
                                     <td className="px-4 py-3 text-right">₹{Number(inv.baseRent || 0).toLocaleString()}</td>
                                     <td className="px-4 py-3 text-right">₹{Number(inv.electricityCharge || 0).toLocaleString()}</td>
