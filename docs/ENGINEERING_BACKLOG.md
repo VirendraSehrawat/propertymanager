@@ -62,35 +62,74 @@ Current suite: `allocation`, `lumpsum`, `payments`, `masterAllocation`,
 `transfer`, `telegram`, `cloudinary`, `ledgerSync`, `expenses`, `integration`.
 Strong on pure allocation math; thin on API routes, rules, and UI flows.
 
-| ID | Title | Type | Priority | Size |
-|----|-------|------|----------|------|
-| B1 | Add Firestore **security-rules tests** (`@firebase/rules-unit-testing`) covering tenant self-settle guard, soft-delete tamper, role escalation | 🧪🔒 | P0 | L |
-| B2 | Integration test: lump-sum inflow through Daily Ledger iterating multiple invoices (noted pending in REFACTOR_PLAN §1) | 🧪 | P1 | M |
-| B3 | Unit tests for API routes (`/api/notifications/*`, `/api/telegram/*`, `/api/uploads/cloudinary`) incl. auth & error paths | 🧪 | P1 | M |
-| B4 | Add coverage reporting (`vitest --coverage`) with a threshold gate in CI | 🧪⚙️ | P2 | S |
-| B5 | Component tests for `CollectionsTab` settle flow & carry-forward preview (React Testing Library) | 🧪 | P2 | M |
-| B6 | Expand CI workflow to also run `lint` and (optionally) full emulator `test` on PRs | ⚙️ | P1 | S |
+| ID | Title | Type | Priority | Size | Status |
+|----|-------|------|----------|------|--------|
+| B1 | Add Firestore **security-rules tests** (`@firebase/rules-unit-testing`) covering tenant self-settle guard, soft-delete tamper, role escalation | 🧪🔒 | P0 | L | 🟡 Partial — `__tests__/rules.test.ts` covers financial soft-delete/provenance (C5); tenant self-settle + role escalation still to add |
+| B2 | Integration test: lump-sum inflow through Daily Ledger iterating multiple invoices (noted pending in REFACTOR_PLAN §1) | 🧪 | P1 | M | ⏳ Open |
+| B3 | Unit tests for API routes (`/api/notifications/*`, `/api/telegram/*`, `/api/uploads/cloudinary`) incl. auth & error paths | 🧪 | P1 | M | ⏳ Open |
+| B4 | Add coverage reporting (`vitest --coverage`) with a threshold gate in CI | 🧪⚙️ | P2 | S | ⏳ Open |
+| B5 | Component tests for `CollectionsTab` settle flow & carry-forward preview (React Testing Library) | 🧪 | P2 | M | ✅ Done |
+| B6 | Expand CI workflow to also run `lint` and (optionally) full emulator `test` on PRs | ⚙️ | P1 | S | ⏳ Open |
 
 **B1 acceptance:** rule tests assert a tenant cannot set `status:"paid"`,
 cannot exceed `totalAmount`, cannot edit financial fields, and cannot change
 their own `role`.
 
+### B5 — this pass (changelog)
+
+- Added React Testing Library toolchain: `@testing-library/react`,
+  `@testing-library/jest-dom`, `@testing-library/user-event`, `jsdom`
+  (devDependencies).
+- `vitest.config.mts` now loads `__tests__/setup.ts`, a jsdom-guarded setup
+  that registers jest-dom matchers + RTL auto-cleanup only when a DOM exists —
+  so the node-based emulator suites are unaffected.
+- `__tests__/CollectionsTab.test.tsx` (4 tests, jsdom via docblock):
+  - full settlement → invoice flipped to `paid`, ledger row written, Telegram
+    notification fired with the right amount;
+  - partial payment → invoice stays `pending`, `partial-payment` ledger row,
+    `fully:false` notification;
+  - carry-forward preview surfaces a previous-month unpaid invoice for the
+    correct unit/period;
+  - empty-state when there are no previous-month dues.
+- Firestore + notify side-effects are mocked, so tests assert on produced
+  payloads, not real writes.
+- Added the component test to the fast `npm run test:unit` script.
+
 ---
 
 ## Epic C — Security & Access Control
 
-| ID | Title | Type | Priority | Size |
-|----|-------|------|----------|------|
-| C1 | Remove hardcoded `admin@test.com` / `employee@test.com` backdoors from `firestore.rules` and rules helpers before production | 🔒 | P0 | S |
-| C2 | Move role authority to **Firebase custom claims** only; stop trusting `users/{uid}.role` reads in rules | 🔒 | P1 | M |
-| C3 | Verify & lock down API routes with `lib/serverAuth.ts` — ensure every route checks ID token + role server-side | 🔒 | P0 | M |
-| C4 | Validate & sanitize all request bodies (zod) in API routes incl. Telegram webhook signature verification | 🔒 | P1 | M |
-| C5 | Harden rules so soft-delete/financial audit fields (`deletedBy`, `settledBy`, `amountPaid`) cannot be client-tampered | 🔒 | P1 | M |
-| C6 | Add granular roles (e.g. read-only `accountant`) per IMPROVEMENT_PLAN #16 | ✨🔒 | P3 | M |
-| C7 | Secrets audit: confirm Cloudinary/Firebase Admin creds are server-only; add `.env.example` if missing | 🔒📚 | P1 | S |
+| ID | Title | Type | Priority | Size | Status |
+|----|-------|------|----------|------|--------|
+| C1 | Remove hardcoded `admin@test.com` / `employee@test.com` backdoors from `firestore.rules` and rules helpers before production | 🔒 | P0 | S | ⏳ Open |
+| C2 | Move role authority to **Firebase custom claims** only; stop trusting `users/{uid}.role` reads in rules | 🔒 | P1 | M | ⏳ Open |
+| C3 | Verify & lock down API routes with `lib/serverAuth.ts` — ensure every route checks ID token + role server-side | 🔒 | P0 | M | ⏳ Open |
+| C4 | Validate & sanitize all request bodies (zod) in API routes incl. Telegram webhook signature verification | 🔒 | P1 | M | ⏳ Open |
+| C5 | Harden rules so soft-delete/financial audit fields (`deletedBy`, `settledBy`, `amountPaid`) cannot be client-tampered | 🔒 | P1 | M | ✅ Done |
+| C6 | Add granular roles (e.g. read-only `accountant`) per IMPROVEMENT_PLAN #16 | ✨🔒 | P3 | M | ⏳ Open |
+| C7 | Secrets audit: confirm Cloudinary/Firebase Admin creds are server-only; add `.env.example` if missing | 🔒📚 | P1 | S | ⏳ Open |
 
 **C1 is a release blocker** — the test-email bypass grants admin to anyone
 able to authenticate with those addresses.
+
+### C5 — this pass (changelog)
+
+- Added financial/audit-integrity helpers to `firestore.rules`: `keeps(key)`,
+  `provenanceIntact()`, `wasSoftDeleted()`, `willBeSoftDeleted()`,
+  `softDeleteAudited()`, `financialUpdateOk()`.
+- Hardened `expenses`, `dailyLedger`, `ledger` and `ledgerEntries`:
+  - provenance (`createdAt`/`createdBy`) is immutable on update;
+  - every transition into `deleted:true` must carry `deletedBy` + `deletedAt`;
+  - already-deleted rows are frozen for staff (admin may restore);
+  - physical deletes are **admin-only** so the default path is a reversible
+    soft-delete;
+  - `ledger`/`ledgerEntries` pin `settledBy`, `tenantEmail`, `invoiceId` and
+    `invoiceAmount` so corrections can only touch `amountPaid`/`balance`/the
+    correction audit fields.
+- Fixed a latent gap: `ledgerEntries` (written by the corporate master-invoice
+  flow) had **no rule** and was denied by default — now covered.
+- Added `__tests__/rules.test.ts` (11 `@firebase/rules-unit-testing` cases,
+  all green against the emulator).
 
 ---
 

@@ -137,6 +137,59 @@ service cloud.firestore {
     }
 
     // ===============================================================
+    // Financial / audit-integrity helpers
+    // ===============================================================
+    //
+    // These guard the soft-delete + audit-trail fields on financial
+    // collections (expenses, ledger, ledgerEntries, dailyLedger) so that a
+    // compromised or buggy client cannot silently rewrite history. Staff
+    // still own these collections, but the rules below pin the immutable
+    // provenance fields and make soft-deletes tamper-evident.
+
+    // True when `key` is NOT in the set of fields this write changes — i.e.
+    // the field is being preserved unchanged.
+    function keeps(key) {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny([key]);
+    }
+
+    // All provenance fields that must never change after creation remain
+    // untouched by this update.
+    function provenanceIntact() {
+      return keeps('createdAt') && keeps('createdBy');
+    }
+
+    // Soft-delete state of the stored document (defaults to false when unset).
+    function wasSoftDeleted() {
+      return resource.data.get('deleted', false) == true;
+    }
+
+    // Soft-delete state the write is trying to set.
+    function willBeSoftDeleted() {
+      return request.resource.data.get('deleted', false) == true;
+    }
+
+    // When a write flips `deleted` to true it MUST carry an audit trail
+    // (who + when). Writes that don't touch deletion are unaffected.
+    function softDeleteAudited() {
+      return !willBeSoftDeleted() || (
+        request.resource.data.deletedBy is string &&
+        request.resource.data.deletedAt is string
+      );
+    }
+
+    // A staff update to a financial doc is allowed when:
+    //   • provenance (createdAt/createdBy) is preserved,
+    //   • any transition into the deleted state is audited, and
+    //   • an already-deleted doc is immutable (admin may still override to
+    //     correct a mistaken deletion / restore).
+    function financialUpdateOk() {
+      return isStaff() &&
+        provenanceIntact() &&
+        softDeleteAudited() &&
+        (!wasSoftDeleted() || isAdmin());
+    }
+
+    // ===============================================================
     // Collection Rules
     // ===============================================================
 
@@ -262,19 +315,56 @@ service cloud.firestore {
     }
 
     // --- Financial & Internal Operations (Staff Only) ---
-    match /expenses/{document=**} {
-      allow read, write: if isStaff();
-    }
+    //
+    // Soft-delete + audit integrity: provenance fields are immutable, every
+    // soft-delete carries a who/when audit trail, deleted rows are frozen
+    // (admin can still override to restore), and physical deletes are
+    // admin-only so the default path is always a reversible soft-delete.
 
-    match /documents/{document=**} {
-      allow read, write: if isStaff();
+    match /expenses/{document=**} {
+      allow read: if isStaff();
+      allow create: if isStaff() && softDeleteAudited();
+      allow update: if financialUpdateOk();
+      allow delete: if isAdmin();
     }
 
     match /ledger/{document=**} {
-      allow read, write: if isStaff();
+      // Payment-history rows. Corrections may change amountPaid/balance and
+      // the correction audit fields, but the row's provenance and the actor
+      // who settled it (settledBy) are pinned.
+      allow read: if isStaff();
+      allow create: if isStaff();
+      allow update: if isStaff() &&
+        keeps('createdAt') &&
+        keeps('settledBy') &&
+        keeps('tenantEmail') &&
+        keeps('invoiceId') &&
+        keeps('invoiceAmount');
+      allow delete: if isAdmin();
+    }
+
+    match /ledgerEntries/{document=**} {
+      // Per-child payment-history rows written by the corporate master-invoice
+      // flow. Same provenance pinning as `ledger`.
+      allow read: if isStaff();
+      allow create: if isStaff();
+      allow update: if isStaff() &&
+        keeps('createdAt') &&
+        keeps('settledBy') &&
+        keeps('tenantEmail') &&
+        keeps('invoiceId') &&
+        keeps('invoiceAmount');
+      allow delete: if isAdmin();
     }
 
     match /dailyLedger/{document=**} {
+      allow read: if isStaff();
+      allow create: if isStaff() && softDeleteAudited();
+      allow update: if financialUpdateOk();
+      allow delete: if isAdmin();
+    }
+
+    match /documents/{document=**} {
       allow read, write: if isStaff();
     }
 

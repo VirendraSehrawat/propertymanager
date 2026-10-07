@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "npx firebase emulators:exec --only firestore 'npx vitest run'",
-    "test:unit": "npx vitest run __tests__/allocation.test.ts __tests__/lumpsum.test.ts __tests__/payments.test.ts __tests__/masterAllocation.test.ts __tests__/telegram.test.ts __tests__/transfer.test.ts __tests__/cloudinary.test.ts __tests__/ledgerSync.test.ts",
+    "test:unit": "npx vitest run __tests__/allocation.test.ts __tests__/lumpsum.test.ts __tests__/payments.test.ts __tests__/masterAllocation.test.ts __tests__/telegram.test.ts __tests__/transfer.test.ts __tests__/cloudinary.test.ts __tests__/ledgerSync.test.ts __tests__/money.test.ts __tests__/CollectionsTab.test.tsx",
     "typecheck": "tsc --noEmit",
     "deploy:vercel": "npx vercel --prod"
   },
@@ -22,11 +22,15 @@
   "devDependencies": {
     "@firebase/rules-unit-testing": "^5.0.1",
     "@tailwindcss/postcss": "^4",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.7",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.4",
+    "jsdom": "^30.1.2",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^4.1.10"
