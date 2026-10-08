@@ -96,6 +96,8 @@ export default function EmployeeDashboard() {
     const [transferCustomAmount, setTransferCustomAmount] = useState("");
     const [transferCustomNote, setTransferCustomNote] = useState("");
     const [transferLastReading, setTransferLastReading] = useState("");
+    const [transferCurrentRent, setTransferCurrentRent] = useState("");
+    const [transferNewRent, setTransferNewRent] = useState("");
     const [isTransferring, setIsTransferring] = useState(false);
     // When the source unit has co-tenants, employee can choose to leave
     // them in the old room (true) or move them with the primary tenant
@@ -363,6 +365,8 @@ export default function EmployeeDashboard() {
         setTransferCustomAmount("");
         setTransferCustomNote("");
         setTransferLastReading(String(unit.lastMeterReading || 0));
+        setTransferCurrentRent(String(unit.baseRent || ""));
+        setTransferNewRent("");
         setCoTenantsStay(false);
         setPromoteCoTenantIdx(0);
         setIsTransferModalOpen(true);
@@ -406,7 +410,8 @@ export default function EmployeeDashboard() {
                     const startOfMonth = new Date(tDate.getFullYear(), tDate.getMonth(), 1);
                     const effectiveStart = moveIn > startOfMonth ? moveIn : startOfMonth;
                     const daysStayed = Math.max(1, Math.ceil((tDate.getTime() - effectiveStart.getTime()) / (1000 * 60 * 60 * 24)));
-                    const proratedRent = Math.round((Number(transferSourceUnit.baseRent || 0) / daysInMonth) * daysStayed);
+                    const currentRoomRent = transferCurrentRent !== "" ? Number(transferCurrentRent) : Number(transferSourceUnit.baseRent || 0);
+                    const proratedRent = Math.round((currentRoomRent / daysInMonth) * daysStayed);
 
                     // Electricity: if last reading provided, use difference
                     const prevReading = Number(transferSourceUnit.lastMeterReading || 0);
@@ -460,7 +465,11 @@ export default function EmployeeDashboard() {
             });
 
             // --- Assign tenant to destination unit ---
-            batch.update(doc(db, "units", transferDestUnit), plan.destUpdate);
+            const destUpdate: Record<string, unknown> = { ...plan.destUpdate };
+            if (transferNewRent !== "") {
+                destUpdate.baseRent = Number(transferNewRent);
+            }
+            batch.update(doc(db, "units", transferDestUnit), destUpdate);
 
             await batch.commit();
             const hasCoTenants = (transferSourceUnit.coTenants?.length ?? 0) > 0;
@@ -1002,12 +1011,28 @@ export default function EmployeeDashboard() {
                         <form onSubmit={handleTransferTenant} className="space-y-3">
                             <div>
                                 <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Destination Unit *</label>
-                                <select required value={transferDestUnit} onChange={(e) => setTransferDestUnit(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm">
+                                <select required value={transferDestUnit} onChange={(e) => {
+                                    setTransferDestUnit(e.target.value);
+                                    const u = allUnits.find(x => x.id === e.target.value);
+                                    setTransferNewRent(u ? String(u.baseRent || "") : "");
+                                }} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm">
                                     <option value="" disabled>Choose a vacant unit...</option>
                                     {allUnits.filter(u => u.status === "vacant" && u.id !== transferSourceUnit.id).map(u => (
                                         <option key={u.id} value={u.id}>{u.unitNumber} (Rent: ₹{u.baseRent || 0})</option>
                                     ))}
                                 </select>
+                            </div>
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Rent — Current Room</label>
+                                    <input type="number" min="0" value={transferCurrentRent} onChange={(e) => setTransferCurrentRent(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" placeholder="Old room rent" />
+                                    <p className="text-[10px] text-gray-400 mt-0.5">Used to pro-rate old unit invoice.</p>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Rent — New Room</label>
+                                    <input type="number" min="0" value={transferNewRent} onChange={(e) => setTransferNewRent(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" placeholder="New room rent" disabled={!transferDestUnit} />
+                                    <p className="text-[10px] text-gray-400 mt-0.5">Applied to destination unit.</p>
+                                </div>
                             </div>
                             <div>
                                 <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Transfer Date</label>
