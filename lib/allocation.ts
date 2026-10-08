@@ -219,16 +219,47 @@ export function computeCarryForward(runningBalance: number): number {
  *     to apply credit can subtract it separately, but the common case
  *     — outstanding debt from prior partials — is fully covered.
  *
- *   carryForward = Σ (totalAmount − amountPaid)   for open invoices
+ *   carryForward = Σ (ownCharges − amountPaid)   for open invoices
+ *
+ * IMPORTANT — why `ownCharges`, not `totalAmount`:
+ * Each monthly invoice already rolls the previous balance into its own
+ * `totalAmount` (`total = rent + electricity + carryForward`). Summing
+ * `totalAmount` across every open invoice therefore counts the oldest dues
+ * once per subsequent month — a compounding bug that inflated balances
+ * (e.g. a 9,372 month showing 22,188 pending). We instead sum each
+ * invoice's OWN charges (`baseRent + electricityCharge`), so every month's
+ * dues are counted exactly once. For legacy rows that never stored the
+ * split fields we fall back to `totalAmount`.
  */
 export interface CarryForwardInvoice {
     id: string;
     status?: string;
     totalAmount?: number;
     amountPaid?: number;
+    /** This invoice's own rent charge (excludes any carried-forward balance). */
+    baseRent?: number;
+    /** This invoice's own electricity charge (excludes any carried-forward balance). */
+    electricityCharge?: number;
     /** Human-readable billing period label, e.g. "October 2026". Used to
      *  exclude same-month invoices when `excludeBillingPeriod` is supplied. */
     billingPeriod?: string;
+}
+
+/**
+ * Outstanding amount contributed by a single invoice toward a tenant's
+ * carry-forward, using the invoice's OWN charges (never `totalAmount`, which
+ * already embeds prior carry-forwards and would double-count).
+ *
+ * Falls back to `totalAmount` only for legacy rows that never stored the
+ * `baseRent` / `electricityCharge` split.
+ */
+export function invoiceOwnDue(inv: CarryForwardInvoice): number {
+    const hasSplit = inv.baseRent !== undefined || inv.electricityCharge !== undefined;
+    const ownCharges = hasSplit
+        ? Math.max(0, Number(inv.baseRent || 0)) + Math.max(0, Number(inv.electricityCharge || 0))
+        : Number(inv.totalAmount || 0);
+    const paid = Number(inv.amountPaid || 0);
+    return Math.max(0, ownCharges - paid);
 }
 
 export function carryForwardFromInvoices(
@@ -256,10 +287,7 @@ export function carryForwardFromInvoices(
         if (excludeBillingPeriod && inv.billingPeriod === excludeBillingPeriod) continue;
         const status = inv.status || "unpaid";
         if (status !== "unpaid" && status !== "pending") continue;
-        const total = Number(inv.totalAmount || 0);
-        const paid = Number(inv.amountPaid || 0);
-        const due = Math.max(0, total - paid);
-        owed += due;
+        owed += invoiceOwnDue(inv);
     }
     return Math.round(owed);
 }
@@ -298,9 +326,7 @@ export function carryForwardBreakdown(
         if (excludeBillingPeriod && inv.billingPeriod === excludeBillingPeriod) continue;
         const status = inv.status || "unpaid";
         if (status !== "unpaid" && status !== "pending") continue;
-        const total = Number(inv.totalAmount || 0);
-        const paid = Number(inv.amountPaid || 0);
-        const due = Math.round(Math.max(0, total - paid));
+        const due = Math.round(invoiceOwnDue(inv));
         if (due <= 0) continue;
         sources.push({
             invoiceId: inv.id,

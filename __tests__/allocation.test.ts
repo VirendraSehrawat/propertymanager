@@ -272,6 +272,54 @@ describe("carryForwardFromInvoices", () => {
         expect(cf).toBe(0);
     });
 
+    it("SA-206 regression: does NOT compound when multiple months are unpaid", () => {
+        // Each monthly invoice already rolls the previous balance into its own
+        // `totalAmount`. Summing `totalAmount` across open invoices would count
+        // the oldest dues once per later month (the 9,372 → 22,188 bug). Using
+        // each invoice's OWN charges counts every month exactly once.
+        //
+        // Chain for one tenant (rent 9000 + elec 372 = 9372/month):
+        //   Aug: own 9372, total 9372              (unpaid)
+        //   Sep: own 9372, total 18744 (incl. Aug) (unpaid)
+        //   Oct: being generated now
+        const tenantInvoices = [
+            { id: "aug", status: "unpaid", billingPeriod: "August 2026", baseRent: 9000, electricityCharge: 372, totalAmount: 9372, amountPaid: 0 },
+            { id: "sep", status: "unpaid", billingPeriod: "September 2026", baseRent: 9000, electricityCharge: 372, totalAmount: 18744, amountPaid: 0 },
+        ];
+        const cf = carryForwardFromInvoices(tenantInvoices, {
+            excludeInvoiceId: "oct",
+            excludeBillingPeriod: "October 2026",
+        });
+        // Two unpaid months × 9,372 own charges = 18,744 — NOT 9372 + 18744.
+        expect(cf).toBe(18744);
+
+        const composed = composeInvoiceTotal({ baseRent: 9000, electricityCharge: 372, carryForward: cf });
+        // Oct own 9,372 + 2 prior months 18,744 = 28,116 (three unpaid months).
+        expect(composed.total).toBe(28116);
+    });
+
+    it("SA-206 regression: single prior unpaid month rolls forward once (9,372 not 22,188)", () => {
+        const cf = carryForwardFromInvoices(
+            [
+                { id: "prev", status: "unpaid", billingPeriod: "September 2026", baseRent: 9000, electricityCharge: 372, totalAmount: 9372, amountPaid: 0 },
+            ],
+            { excludeInvoiceId: "curr", excludeBillingPeriod: "October 2026" },
+        );
+        expect(cf).toBe(9372);
+        const composed = composeInvoiceTotal({ baseRent: 9000, electricityCharge: 372, carryForward: cf });
+        expect(composed.total).toBe(18744); // this month + one unpaid month — never 22,188
+    });
+
+    it("carry-forward respects partial payments on a prior month's own charges", () => {
+        const cf = carryForwardFromInvoices(
+            [
+                { id: "prev", status: "pending", billingPeriod: "September 2026", baseRent: 9000, electricityCharge: 372, totalAmount: 9372, amountPaid: 4000 },
+            ],
+            { excludeInvoiceId: "curr", excludeBillingPeriod: "October 2026" },
+        );
+        expect(cf).toBe(5372); // 9372 own − 4000 paid
+    });
+
     it("excludes same-month invoices when excludeBillingPeriod is supplied", () => {
         // Simulates October 2026: the current month's own unpaid invoice should
         // NOT count as carry forward for another October 2026 invoice.
