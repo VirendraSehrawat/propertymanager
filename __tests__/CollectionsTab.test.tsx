@@ -33,6 +33,11 @@ const updateDoc = vi.fn<(ref: unknown, data: Record<string, unknown>) => Promise
 const addDoc = vi.fn<(ref: unknown, data: Record<string, unknown>) => Promise<{ id: string }>>(
     () => Promise.resolve({ id: "ledger1" }),
 );
+// Captures for the atomic batch path (commitPaymentPlan): every batch.update /
+// batch.set is recorded so the settle tests can assert on the committed writes.
+const batchUpdate = vi.fn<(ref: unknown, data: Record<string, unknown>) => void>();
+const batchSet = vi.fn<(ref: unknown, data: Record<string, unknown>) => void>();
+const batchCommit = vi.fn(() => Promise.resolve());
 vi.mock("firebase/firestore", () => ({
     doc: vi.fn(() => ({ __doc: true })),
     collection: vi.fn(() => ({ __collection: true })),
@@ -40,8 +45,9 @@ vi.mock("firebase/firestore", () => ({
     addDoc: (ref: unknown, data: Record<string, unknown>) => addDoc(ref, data),
     deleteField: vi.fn(() => "__delete__"),
     writeBatch: vi.fn(() => ({
-        update: vi.fn(),
-        commit: vi.fn(() => Promise.resolve()),
+        update: (ref: unknown, data: Record<string, unknown>) => batchUpdate(ref, data),
+        set: (ref: unknown, data: Record<string, unknown>) => batchSet(ref, data),
+        commit: () => batchCommit(),
     })),
 }));
 
@@ -114,19 +120,20 @@ describe("CollectionsTab — settle flow", () => {
         // Default kind = full, received = remaining (6000). Save it.
         await user.click(screen.getByRole("button", { name: /Save ₹6,000/ }));
 
-        // Invoice doc updated: fully paid + full amount.
-        expect(updateDoc).toHaveBeenCalledTimes(1);
-        const invoicePatch = updateDoc.mock.calls[0][1] as Record<string, unknown>;
+        // Atomic commit: invoice patch via batch.update, ledger row via batch.set.
+        expect(batchUpdate).toHaveBeenCalledTimes(1);
+        const invoicePatch = batchUpdate.mock.calls[0][1] as Record<string, unknown>;
         expect(invoicePatch.status).toBe("paid");
         expect(invoicePatch.amountPaid).toBe(6000);
         expect(invoicePatch).toHaveProperty("paidAt");
 
-        // Ledger row written for the full amount.
-        expect(addDoc).toHaveBeenCalledTimes(1);
-        const ledgerRow = addDoc.mock.calls[0][1] as Record<string, unknown>;
+        // Ledger row written for the full amount in the same batch.
+        expect(batchSet).toHaveBeenCalledTimes(1);
+        const ledgerRow = batchSet.mock.calls[0][1] as Record<string, unknown>;
         expect(ledgerRow.amountPaid).toBe(6000);
         expect(ledgerRow.invoiceId).toBe("inv-current");
         expect(ledgerRow.type).toBe("payment");
+        expect(batchCommit).toHaveBeenCalledTimes(1);
 
         // Notification fired with the right amount.
         expect(notifyPaymentRecorded).toHaveBeenCalledTimes(1);
@@ -150,12 +157,12 @@ describe("CollectionsTab — settle flow", () => {
 
         await user.click(screen.getByRole("button", { name: /Save ₹2,000/ }));
 
-        const invoicePatch = updateDoc.mock.calls[0][1] as Record<string, unknown>;
+        const invoicePatch = batchUpdate.mock.calls[0][1] as Record<string, unknown>;
         expect(invoicePatch.status).toBe("pending");
         expect(invoicePatch.amountPaid).toBe(2000);
         expect(invoicePatch).not.toHaveProperty("paidAt");
 
-        const ledgerRow = addDoc.mock.calls[0][1] as Record<string, unknown>;
+        const ledgerRow = batchSet.mock.calls[0][1] as Record<string, unknown>;
         expect(ledgerRow.type).toBe("partial-payment");
         expect(notifyPaymentRecorded.mock.calls[0][0]).toMatchObject({ amount: 2000, fully: false });
     });

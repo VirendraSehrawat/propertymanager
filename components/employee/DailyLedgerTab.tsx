@@ -1,12 +1,14 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { addDoc, collection, doc, updateDoc } from "firebase/firestore";
+import { collection, doc, updateDoc, setDoc, writeBatch } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { COL } from "@/lib/collections";
 import { Modal } from "@/components/ui";
 import { useUploadWithProgress, UploadProgressBar } from "@/lib/useUpload";
 import { allocateLumpSum } from "@/lib/payments";
+import { buildInflowPlan, type InflowInvoice } from "@/lib/paymentPlan";
+import { commitPaymentPlan } from "@/lib/commitPaymentPlan";
 
 interface DailyLedgerEntry {
     id: string;
@@ -138,31 +140,34 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
                 payload.quantity = quantity ? Number(quantity) : 0;
                 payload.vendor = vendor || "";
             }
-            const ledgerRef = await addDoc(collection(db, COL.dailyLedger), payload);
+            const ledgerRef = doc(collection(db, COL.dailyLedger));
 
             // Merge: an "outflow" in the Daily Ledger is the same thing as an
             // Expense. Mirror it to the `expenses` collection so it appears in
             // the Expenses tab, fund summary and reports. Both docs are linked
             // via `expenseId` / `dailyLedgerId` so soft-delete cascades.
+            // Pre-minted ids let the dailyLedger row, the expense mirror, and
+            // the back-link commit in ONE atomic batch (Phase 4, Unit A).
             if (direction === "outflow") {
-                try {
-                    const expenseRef = await addDoc(collection(db, COL.expenses), {
-                        amount: Number(amount),
-                        category,
-                        description: description || category,
-                        date: entryDate || todayISO(),
-                        buildingId: buildingId || "",
-                        buildingName: bldg?.name || "General",
-                        dailyLedgerId: ledgerRef.id,
-                        source: "dailyLedger",
-                        ...(receiptUrl ? { receiptUrl } : {}),
-                        createdBy: currentUserEmail || "",
-                        createdAt: new Date().toISOString(),
-                    });
-                    await updateDoc(doc(db, COL.dailyLedger, ledgerRef.id), { expenseId: expenseRef.id });
-                } catch (mirrorErr) {
-                    console.warn("Expense mirror write failed", mirrorErr);
-                }
+                const expenseRef = doc(collection(db, COL.expenses));
+                const batch = writeBatch(db);
+                batch.set(ledgerRef, { ...payload, expenseId: expenseRef.id });
+                batch.set(expenseRef, {
+                    amount: Number(amount),
+                    category,
+                    description: description || category,
+                    date: entryDate || todayISO(),
+                    buildingId: buildingId || "",
+                    buildingName: bldg?.name || "General",
+                    dailyLedgerId: ledgerRef.id,
+                    source: "dailyLedger",
+                    ...(receiptUrl ? { receiptUrl } : {}),
+                    createdBy: currentUserEmail || "",
+                    createdAt: new Date().toISOString(),
+                });
+                await batch.commit();
+            } else {
+                await setDoc(ledgerRef, payload);
             }
 
             // Auto-settle matching invoice(s): inflow + specific unit + settlement-eligible category.
@@ -181,9 +186,10 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
                 const paying = Number(amount);
 
                 // Build the pool to waterfall across. When nothing is pending,
-                // create an on-the-fly invoice for the current month and seed
-                // the pool with it.
-                let pool: Invoice[] = pendingInvoicesForUnit;
+                // prepare an auto-created invoice draft (with a pre-minted id)
+                // so it can be created AND settled inside the same atomic batch.
+                const pool: InflowInvoice[] = pendingInvoicesForUnit;
+                let autoInvoice: Parameters<typeof buildInflowPlan>[0]["autoInvoice"];
                 if (pool.length === 0) {
                     const baseRent = Number(unit?.baseRent || 0);
                     const inferredElectricity = category === "electricity" ? paying : 0;
@@ -193,98 +199,68 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
                             ? baseRent + inferredElectricity
                             : paying; // maintenance → treat whole amount as base
                     const monthName = new Date((entryDate || todayISO()) + "T00:00:00").toLocaleString("default", { month: "long", year: "numeric" });
-                    const newInvRef = await addDoc(collection(db, COL.invoices), {
-                        unitId,
-                        unitNumber: unit?.unitNumber || "",
-                        tenantEmail: unit?.tenantEmail || "",
-                        baseRent,
-                        electricityCharge: inferredElectricity,
+                    // Mint the invoice id client-side so the create + settle +
+                    // ledger row all land in one batch.
+                    const newInvId = doc(collection(db, COL.invoices)).id;
+                    autoInvoice = {
+                        invoiceId: newInvId,
                         totalAmount,
                         billingPeriod: monthName,
-                        status: "unpaid",
-                        isCustom: false,
-                        autoCreated: true,
-                        autoCreatedReason: `Auto-created from Daily Ledger inflow (${category})`,
-                        transactionId: "",
-                        createdBy: currentUserEmail || "",
-                        createdAt: new Date().toISOString(),
-                    });
-                    pool = [{
-                        id: newInvRef.id,
-                        unitId,
-                        unitNumber: unit?.unitNumber,
-                        tenantEmail: unit?.tenantEmail,
-                        totalAmount,
-                        amountPaid: 0,
-                        billingPeriod: monthName,
-                        status: "unpaid",
-                    }];
+                        data: {
+                            unitId,
+                            unitNumber: unit?.unitNumber || "",
+                            tenantEmail: unit?.tenantEmail || "",
+                            baseRent,
+                            electricityCharge: inferredElectricity,
+                            totalAmount,
+                            billingPeriod: monthName,
+                            status: "unpaid",
+                            isCustom: false,
+                            autoCreated: true,
+                            autoCreatedReason: `Auto-created from Daily Ledger inflow (${category})`,
+                            transactionId: "",
+                            createdBy: currentUserEmail || "",
+                            createdAt: new Date().toISOString(),
+                        },
+                    };
                 }
 
-                // Waterfall the payment across the pool, oldest-first.
-                const result = allocateLumpSum(paying, pool, unitId, category);
+                // Build the full write-set (optional invoice create + per-invoice
+                // patches + per-invoice ledger rows + leftover credit) and commit
+                // it atomically. See docs/ATOMIC_TRANSACTIONS_PLAN.md (Phase 4).
                 const nowIso = new Date().toISOString();
+                const plan = buildInflowPlan({
+                    amount: paying,
+                    pool,
+                    unitId,
+                    category,
+                    now: nowIso,
+                    tenantEmail: unit?.tenantEmail || "",
+                    unitNumber: unit?.unitNumber || "",
+                    autoInvoice,
+                });
+                await commitPaymentPlan(db, plan);
+
+                // Summarise what happened for the user (derived from the plan's
+                // ledger rows so UI and persistence share one source of truth).
                 const settledLabels: string[] = [];
                 const partialLabels: string[] = [];
-
-                for (const line of result.lines) {
-                    const inv = pool.find(i => i.id === line.invoiceId)!;
-                    if (line.fullySettled) {
-                        await updateDoc(doc(db, COL.invoices, line.invoiceId), {
-                            status: "paid",
-                            paidAt: nowIso,
-                            amountPaid: line.newAmountPaid,
-                            transactionId: "DAILY_LEDGER_AUTOSETTLE",
-                        });
-                        settledLabels.push(`${inv.billingPeriod}`);
-                    } else {
-                        await updateDoc(doc(db, COL.invoices, line.invoiceId), {
-                            amountPaid: line.newAmountPaid,
-                        });
-                        partialLabels.push(`${inv.billingPeriod} (₹${line.remaining.toLocaleString()} left)`);
+                let creditAmount = 0;
+                for (const row of plan.ledgerRows) {
+                    if (row.type === "payment") {
+                        settledLabels.push(`${row.billingPeriod}`);
+                    } else if (row.type === "partial-payment") {
+                        const remaining = Math.max(0, -Number(row.balance || 0));
+                        partialLabels.push(`${row.billingPeriod} (₹${remaining.toLocaleString()} left)`);
+                    } else if (row.type === "credit") {
+                        creditAmount += Number(row.amountPaid || 0);
                     }
-
-                    await addDoc(collection(db, COL.ledger), {
-                        tenantEmail: inv.tenantEmail || unit?.tenantEmail || "",
-                        unitId: inv.unitId,
-                        unitNumber: inv.unitNumber || unit?.unitNumber || "",
-                        invoiceId: inv.id,
-                        billingPeriod: inv.billingPeriod || "Ad-Hoc",
-                        invoiceAmount: Number(inv.totalAmount || 0),
-                        amountPaid: line.applied,
-                        balance: line.remaining === 0 ? 0 : -line.remaining,
-                        transactionId: "DAILY_LEDGER_AUTOSETTLE",
-                        type: line.fullySettled ? "payment" : "partial-payment",
-                        settledBy: "employee-daily-ledger",
-                        category,
-                        createdAt: nowIso,
-                    });
                 }
 
-                // Record any unallocated remainder as a tenant credit / advance.
-                if (result.leftover > 0) {
-                    await addDoc(collection(db, COL.ledger), {
-                        tenantEmail: unit?.tenantEmail || "",
-                        unitId,
-                        unitNumber: unit?.unitNumber || "",
-                        invoiceId: "",
-                        billingPeriod: "Advance / Credit",
-                        invoiceAmount: 0,
-                        amountPaid: result.leftover,
-                        balance: result.leftover,
-                        transactionId: "DAILY_LEDGER_AUTOSETTLE",
-                        type: "credit",
-                        settledBy: "employee-daily-ledger",
-                        category,
-                        createdAt: nowIso,
-                    });
-                }
-
-                // Summarise what happened for the user.
                 const parts: string[] = [];
                 if (settledLabels.length) parts.push(`✅ Settled: ${settledLabels.join(", ")}`);
                 if (partialLabels.length) parts.push(`💵 Partial: ${partialLabels.join(", ")}`);
-                if (result.leftover > 0) parts.push(`🪙 Credit ₹${result.leftover.toLocaleString()} recorded as advance`);
+                if (creditAmount > 0) parts.push(`🪙 Credit ₹${creditAmount.toLocaleString()} recorded as advance`);
                 if (parts.length) alert(parts.join("\n"));
             }
 

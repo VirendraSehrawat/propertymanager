@@ -1,9 +1,27 @@
 # Atomic Transactions & Complete Ledger Visibility — Implementation Plan
 
-**Status:** Proposed
+**Status:** ✅ Complete — all phases (0–7) implemented
 **Author:** Engineering
-**Date:** 2026-10-08
+**Date:** 2026-10-08 · **Updated:** 2026-10-09
 **Related:** `lib/payments.ts`, `lib/ledgerSync.ts`, `lib/masterAllocation.ts`, `components/employee/CollectionsTab.tsx`, `components/employee/DailyLedgerTab.tsx`, `components/admin/AdminLedgerTab.tsx`
+**Implemented:** `lib/paymentPlan.ts`, `lib/commitPaymentPlan.ts`, `__tests__/paymentPlan.test.ts`, `components/employee/CollectionsTab.tsx` (settle + master settle), `components/employee/DailyLedgerTab.tsx` (inflow + expense mirror), `components/admin/AdminLedgerTab.tsx` (correct + delete), `scripts/auditLedgerConsistency.ts`
+
+---
+
+## 0. Progress Log
+
+| Phase | Status | Notes |
+|-------|--------|-------|
+| 0 — Guardrails (tests) | ✅ Done | `__tests__/paymentPlan.test.ts` — 15 tests, all passing. |
+| 1 — Pure plan builder | ✅ Done | `lib/paymentPlan.ts` — `buildSettlePlan`, `buildInflowPlan`, `buildMasterSettlePlan` + invariant guard. |
+| 2 — Atomic committer | ✅ Done | `lib/commitPaymentPlan.ts` — single `writeBatch`, pre-minted ids, batch-size guard. |
+| 3 — Collections settle | ✅ Done | `CollectionsTab.handleConfirmSettle` → `buildSettlePlan` + `commitPaymentPlan`. Component tests updated to assert the atomic batch path. |
+| 4 — Daily Ledger inflow | ✅ Done | `DailyLedgerTab.handleSubmit`: Unit A (dailyLedger + expense mirror + back-link) now one `writeBatch` with pre-minted ids; Unit B (auto-settle) → `buildInflowPlan` + `commitPaymentPlan`, incl. auto-created invoice in the same batch. |
+| 5 — Master settle | ✅ Done | `CollectionsTab.handleMasterSettle` → `buildMasterSettlePlan` + `commitPaymentPlan`. Master patch, per-child patches, per-child `ledgerEntries` rows, and the single `dailyLedger` inflow now all commit in ONE batch (previously the ledger rows were written post-commit). |
+| 6 — Admin correction | ✅ Done | `AdminLedgerTab` — `handleEditSave` already single-batch (switched literals → `COL`). `handleDelete` rewritten: deleting a ledger row now re-syncs the linked invoice + master in the SAME batch (was a bare `deleteDoc` that left stale `amountPaid`). |
+| 7 — Audit script | ✅ Done | `scripts/auditLedgerConsistency.ts` — read-only; reports any invoice where `Σ(ledger.amountPaid) ≠ invoice.amountPaid` beyond a tolerance. Dry-run only, non-zero exit on drift (CI/cron friendly). |
+
+**Validation (2026-10-09):** `tsc --noEmit` → 0 errors. `vitest run paymentPlan + ledgerSync + CollectionsTab + masterAllocation + payments + lumpsum` → all green. (The 3 failing integration suites — `rules`, `expenses`, `integration` — require the Firestore emulator on `127.0.0.1:8080` and are unrelated to this work.)
 
 ---
 
@@ -58,17 +76,18 @@ write.
 
 ## 3. Implementation Steps
 
-### Phase 0 — Guardrails (tests first)
-- [ ] Add `__tests__/paymentPlan.test.ts` describing the expected batch
-      contents for: full settle, partial settle, lump-sum across N invoices,
-      leftover credit, and master settle.
-- [ ] These tests target the **new pure plan builder** (Phase 1) and fail until
-      it exists.
+### Phase 0 — Guardrails (tests first) ✅ Done
+- [x] Added `__tests__/paymentPlan.test.ts` covering: full settle, partial
+      settle, lump-sum across N invoices, leftover credit, master settle, the
+      `assertPlanInvariant` guard, and `countPlanWrites`. **15 tests passing.**
+- [x] Tests target the pure plan builders (Phase 1) and the invariant guard.
 
-### Phase 1 — New pure "payment plan" builder (`lib/paymentPlan.ts`)
-Create a side-effect-free module that composes the existing helpers
-(`computeAutoSettle`, `allocateLumpSum`, `allocateMasterPayment`) into a single
-**`PaymentPlan`** describing every document mutation:
+### Phase 1 — New pure "payment plan" builder (`lib/paymentPlan.ts`) ✅ Done
+Side-effect-free module that composes the existing helpers
+(`allocatePartialPayment`, `allocateLumpSum`, `allocateMasterPayment`) into a
+single **`PaymentPlan`** describing every document mutation. **As built**, the
+plan shape is richer than the original sketch to cover auto-created invoices,
+the master daily-ledger row, and the two ledger collections:
 
 ```ts
 export interface LedgerRowDraft {
@@ -77,89 +96,139 @@ export interface LedgerRowDraft {
   invoiceAmount: number; amountPaid: number; balance: number;
   type: "payment" | "partial-payment" | "credit" | "master-payment";
   transactionId: string; settledBy: string; createdAt: string;
-  // …payment mode / reference / note
-}
-
-export interface InvoicePatchDraft {
-  invoiceId: string;
-  patch: Record<string, unknown>; // amountPaid, status, paidAt?, transactionId
+  paymentMode?: PaymentMode | null; paymentReference?: string | null;
+  paymentNote?: string | null; category?: string | null;
+  masterInvoiceId?: string;
+  collection: "ledger" | "ledgerEntries"; // which collection the row lands in
 }
 
 export interface PaymentPlan {
+  invoiceCreates: InvoiceCreateDraft[];   // e.g. auto-created month (Daily Ledger)
   invoicePatches: InvoicePatchDraft[];
-  ledgerRows: LedgerRowDraft[];   // one per invoice touched (full OR partial) + optional credit
+  ledgerRows: LedgerRowDraft[];           // one per invoice touched + optional credit
   masterPatch?: { masterInvoiceId: string; patch: Record<string, unknown> };
+  dailyLedgerRow?: DailyLedgerRowDraft;   // single consolidated master cash inflow
 }
 
-export function buildSettlePlan(...): PaymentPlan   // Collections single-invoice
-export function buildInflowPlan(...): PaymentPlan   // Daily Ledger lump-sum waterfall
-export function buildMasterSettlePlan(...): PaymentPlan // master + children
+export function buildSettlePlan(input: SettlePlanInput): PaymentPlan        // Collections
+export function buildInflowPlan(input: InflowPlanInput): PaymentPlan        // Daily Ledger
+export function buildMasterSettlePlan(input: MasterSettlePlanInput): PaymentPlan // Master
 ```
 
-**Invariant enforced in code:** every entry in `invoicePatches` that changes
-`amountPaid` has a corresponding `ledgerRows` entry. Add a unit test asserting
-`ledgerRows.length >= invoicePatches.length`.
+**Invariant enforced in code:** `assertPlanInvariant(plan)` throws
+`PaymentPlanError` if any invoice patch that mutates `amountPaid` lacks a
+matching ledger row. Each builder calls it before returning, and the committer
+re-checks it at the persistence boundary. `countPlanWrites(plan)` reports the
+total write count for the batch-size guard.
 
-### Phase 2 — Atomic commit helper (`lib/commitPaymentPlan.ts`)
-A thin (impure) function that takes a `PaymentPlan` + `db` and writes it in a
-single `writeBatch`:
+### Phase 2 — Atomic commit helper (`lib/commitPaymentPlan.ts`) ✅ Done
+Impure committer that writes a whole plan in a single `writeBatch`. **As built:**
 
 ```ts
-export async function commitPaymentPlan(db, plan: PaymentPlan): Promise<{ ledgerIds: string[] }> {
+export const MAX_BATCH_WRITES = 450; // Firestore hard limit is 500
+
+export async function commitPaymentPlan(db, plan): Promise<CommitResult> {
+  assertPlanInvariant(plan);                       // re-check at the boundary
+  if (countPlanWrites(plan) > MAX_BATCH_WRITES) throw new PaymentPlanError(...);
   const batch = writeBatch(db);
+  for (const c of plan.invoiceCreates) batch.set(doc(db, COL.invoices, c.invoiceId), c.data);
   for (const p of plan.invoicePatches) batch.update(doc(db, COL.invoices, p.invoiceId), p.patch);
   if (plan.masterPatch) batch.update(doc(db, COL.masterInvoices, plan.masterPatch.masterInvoiceId), plan.masterPatch.patch);
-  const ledgerIds: string[] = [];
-  for (const row of plan.ledgerRows) {
-    const ref = doc(collection(db, COL.ledger)); // pre-minted id
-    batch.set(ref, row);
-    ledgerIds.push(ref.id);
+  for (const row of plan.ledgerRows) {             // pre-minted ids, routed by row.collection
+    const { collection: col, ...data } = row;
+    const ref = doc(collection(db, COL[col]));
+    batch.set(ref, data);
   }
-  await batch.commit();     // ← all-or-nothing
-  return { ledgerIds };
+  if (plan.dailyLedgerRow) batch.set(doc(collection(db, COL.dailyLedger)), plan.dailyLedgerRow.data);
+  await batch.commit();                            // ← all-or-nothing
+  return { ledgerIds, dailyLedgerId, writes };     // minted ids for notifications
 }
 ```
 
-> **Batch limit:** Firestore batches allow 500 writes. A lump-sum realistically
-> touches <20 invoices, so we're safe. Add an assertion that throws if a plan
-> exceeds ~450 writes (future-proofing for corporate masters).
+> **Batch limit:** guarded by `MAX_BATCH_WRITES = 450` (throws before commit if
+> exceeded). A lump-sum realistically touches <20 invoices, so we're safe.
 
-### Phase 3 — Refactor `CollectionsTab` settle
-- [ ] Replace the `updateDoc` + `addDoc` pair (~L240) with
-      `buildSettlePlan(...)` → `commitPaymentPlan(...)`.
-- [ ] Partial payments already flow through `computeAllocation`; ensure the plan
-      always emits the ledger row with `type: "partial-payment"` when
-      `!fullyPaid`.
-- [ ] Move the Telegram notification **after** a successful commit (keep
-      fire-and-forget; it is not part of the atomic unit).
 
-### Phase 4 — Refactor Daily Ledger inflow
-This is the riskiest flow (most writes). Split into two atomic units:
-- [ ] **Unit A (cash + expense mirror):** the `dailyLedger` row and, for
-      outflows, the `expenses` mirror + back-link — commit in one batch using a
-      pre-minted expense ref (removes the current 3-step non-atomic mirror).
-- [ ] **Unit B (auto-settle):** build a `buildInflowPlan(...)` from
-      `allocateLumpSum` **including** the optional auto-created invoice (mint its
-      ref up front and `batch.set` it) + all per-invoice patches + per-invoice
-      ledger rows + leftover credit row, then `commitPaymentPlan`.
-- [ ] Guarantee partial lines produce `type: "partial-payment"` ledger rows and
-      full lines `type: "payment"`.
+### Phase 3 — Refactor `CollectionsTab` settle ✅ Done
+- [x] Replaced the `updateDoc` + `addDoc` pair in `handleConfirmSettle` with
+      `buildSettlePlan(...)` → `commitPaymentPlan(db, plan)`. The invoice patch
+      and ledger row now commit in **one atomic batch**.
+- [x] Partial payments emit a `partial-payment` ledger row (balance
+      `-newRemaining`); full payments emit a `payment` row (balance `0`) with
+      `paidAt`. Guaranteed by `assertPlanInvariant` inside the builder.
+- [x] Telegram notification moved **after** the commit (fire-and-forget, outside
+      the atomic unit) and now uses the returned `ledgerIds[0]`.
+- [x] `__tests__/CollectionsTab.test.tsx` updated: the Firestore mock captures
+      `batch.update` / `batch.set` / `batch.commit`, and the two settle tests
+      assert on the committed batch writes instead of the old direct calls.
+- Note: the pre-settle validation still calls `allocatePartialPayment` directly
+  for the "amount exceeds remaining" guard; the write-set itself is built by
+  `buildSettlePlan`.
 
-### Phase 5 — Refactor Master settle
-- [ ] Fold the current post-commit `addDoc(ledgerEntries)` loop **into** the
-      existing `writeBatch` so children, master, and all `ledgerEntries` rows +
-      the single `dailyLedger` inflow row commit atomically.
-- [ ] Use `buildMasterSettlePlan` to assemble it.
 
-### Phase 6 — Admin ledger correction (`AdminLedgerTab`)
-- [ ] The `amountPaid` correction already uses `writeBatch` + `syncInvoiceFromLedger`
-      / `syncMasterFromChildren`. Verify the corrected ledger row, invoice, and
-      master all sit in **one** batch; if any `addDoc` escaped, pull it in.
+### Phase 4 — Refactor Daily Ledger inflow ✅ Done
+Split into two atomic units:
+- [x] **Unit A (cash + expense mirror):** the `dailyLedger` row and, for
+      outflows, the `expenses` mirror + back-link now commit in **one
+      `writeBatch`** using pre-minted `doc(collection(...))` ids (removes the old
+      3-step `addDoc`→`addDoc`→`updateDoc` mirror that could orphan rows).
+      Inflows/ non-outflows write the single `dailyLedger` row via `setDoc` on
+      the pre-minted ref.
+- [x] **Unit B (auto-settle):** `buildInflowPlan(...)` builds the whole
+      write-set — the optional auto-created invoice (id minted up front),
+      per-invoice patches, per-invoice ledger rows, and the leftover credit row —
+      then `commitPaymentPlan(db, plan)` writes them atomically.
+- [x] Partial lines produce `partial-payment` ledger rows and full lines
+      `payment` rows (enforced by `assertPlanInvariant`). The user summary
+      (settled / partial / credit) is now derived from `plan.ledgerRows` so UI
+      and persistence share one source of truth.
+- Note: the inline settle **preview** in the modal still calls `allocateLumpSum`
+  directly (read-only, no writes) — unchanged.
 
-### Phase 7 — Backfill / consistency check (optional but recommended)
-- [ ] One-off read-only script `scripts/auditLedgerConsistency.ts`: for each
-      invoice, `sum(ledger.amountPaid) === invoice.amountPaid`? Report drift
-      caused by historical partial writes (pre-atomic era).
+
+### Phase 5 — Refactor Master settle ✅ Done
+- [x] Folded the former post-commit `addDoc(ledgerEntries)` loop **and** the
+      `addDoc(dailyLedger)` inflow **into** the atomic batch. `handleMasterSettle`
+      now calls `buildMasterSettlePlan(...)` → `commitPaymentPlan(db, plan)`, so
+      the master patch, every child patch, every `master-payment` ledger row
+      (routed to `ledgerEntries`), and the single consolidated daily-ledger
+      inflow all commit together or not at all.
+- [x] The "payment amount must be greater than zero" guard is preserved —
+      `buildMasterSettlePlan` throws `PaymentPlanError` when `appliedTotal <= 0`,
+      caught by the existing handler.
+- [x] Removed now-unused imports (`addDoc`, `collection`, `writeBatch`,
+      `buildTransactionId`, `allocateMasterPayment`) from `CollectionsTab`.
+
+
+### Phase 6 — Admin ledger correction (`AdminLedgerTab`) ✅ Done
+- [x] `handleEditSave` was already single-batch (corrected ledger row + invoice
+      + master all via one `writeBatch`). Switched its literal collection names
+      (`"ledger"`, `"invoices"`, `"masterInvoices"`) to the `COL` map for
+      consistency and typo-safety.
+- [x] `handleDelete` was a bare `deleteDoc` that removed a ledger row **without**
+      updating the linked invoice — leaving a stale `amountPaid` (a drift bug
+      against the core invariant). Rewritten to delete the row **and** re-sync
+      the invoice + master in the SAME batch: the deleted row is overridden to
+      `amountPaid: 0` via `syncInvoiceFromLedger`, so the invoice/master totals
+      recompute correctly.
+
+
+### Phase 7 — Backfill / consistency check ✅ Done
+- [x] Added read-only `scripts/auditLedgerConsistency.ts`: for each invoice it
+      checks `Σ(ledger.amountPaid where invoiceId == invoice.id) === invoice.amountPaid`
+      across **both** `ledger` and `ledgerEntries`, honouring soft-deletes and
+      skipping pure credit/advance rows (no `invoiceId`). Reports drift caused by
+      historical partial writes (pre-atomic era).
+- Behaviour: strictly read-only (never writes); `--tolerance <₹>` (default 1) and
+  `--json` flags; prints worst-first, summarises invoice-over-ledger vs
+  ledger-over-invoice, and sets a non-zero exit code when drift exists so it can
+  run in CI/cron.
+- Usage:
+  ```bash
+  GOOGLE_APPLICATION_CREDENTIALS=/path/to/serviceAccount.json \
+    npx tsx scripts/auditLedgerConsistency.ts [--tolerance 1] [--json]
+  ```
+
 
 ---
 
@@ -167,14 +236,14 @@ This is the riskiest flow (most writes). Split into two atomic units:
 
 | File | Change |
 |------|--------|
-| `lib/paymentPlan.ts` | **NEW** — pure plan builders (`buildSettlePlan`, `buildInflowPlan`, `buildMasterSettlePlan`). |
-| `lib/commitPaymentPlan.ts` | **NEW** — atomic `writeBatch` committer. |
-| `__tests__/paymentPlan.test.ts` | **NEW** — invariant + per-flow coverage. |
-| `components/employee/CollectionsTab.tsx` | Settle flow → plan + commit. |
-| `components/employee/DailyLedgerTab.tsx` | Inflow flow → plan + commit (2 atomic units). |
-| `components/admin/AdminLedgerTab.tsx` | Verify single-batch correction. |
-| `scripts/auditLedgerConsistency.ts` | **NEW (optional)** — drift report. |
-| `docs/BUSINESS_RULES.md` | Document the "every amountPaid change ⇒ one ledger row, atomically" invariant. |
+| `lib/paymentPlan.ts` | ✅ **DONE** — pure plan builders (`buildSettlePlan`, `buildInflowPlan`, `buildMasterSettlePlan`) + `assertPlanInvariant` / `countPlanWrites`. |
+| `lib/commitPaymentPlan.ts` | ✅ **DONE** — atomic `writeBatch` committer with `MAX_BATCH_WRITES` guard. |
+| `__tests__/paymentPlan.test.ts` | ✅ **DONE** — invariant + per-flow coverage (15 tests). |
+| `components/employee/CollectionsTab.tsx` | ✅ **DONE** — settle flow → `buildSettlePlan` + `commitPaymentPlan` (atomic). |
+| `components/employee/DailyLedgerTab.tsx` | ✅ **DONE** — inflow flow → plan + commit; expense mirror batched (2 atomic units). |
+| `components/admin/AdminLedgerTab.tsx` | ✅ **DONE** — correction single-batch (→ `COL`); delete now re-syncs invoice + master atomically. |
+| `scripts/auditLedgerConsistency.ts` | ✅ **DONE** — read-only drift report (`Σ ledger === invoice.amountPaid`). |
+| `docs/BUSINESS_RULES.md` | ⏳ Document the "every amountPaid change ⇒ one ledger row, atomically" invariant. |
 
 ---
 

@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "npx firebase emulators:exec --only firestore 'npx vitest run'",
-    "test:unit": "npx vitest run __tests__/allocation.test.ts __tests__/lumpsum.test.ts __tests__/payments.test.ts __tests__/masterAllocation.test.ts __tests__/telegram.test.ts __tests__/transfer.test.ts __tests__/cloudinary.test.ts __tests__/ledgerSync.test.ts __tests__/money.test.ts __tests__/CollectionsTab.test.tsx",
+    "test:unit": "npx vitest run __tests__/allocation.test.ts __tests__/lumpsum.test.ts __tests__/payments.test.ts __tests__/masterAllocation.test.ts __tests__/telegram.test.ts __tests__/transfer.test.ts __tests__/cloudinary.test.ts __tests__/ledgerSync.test.ts __tests__/money.test.ts __tests__/paymentPlan.test.ts __tests__/ledgerAudit.test.ts __tests__/CollectionsTab.test.tsx",
     "typecheck": "tsc --noEmit",
     "deploy:vercel": "npx vercel --prod"
   },

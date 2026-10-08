@@ -1,11 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { doc, updateDoc, addDoc, collection, deleteField, writeBatch } from "firebase/firestore";
+import { doc, updateDoc, deleteField } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { COL } from "@/lib/collections";
 import type { Invoice, LedgerEntry, MasterInvoice, Unit } from "@/types";
-import { buildTransactionId } from "@/lib/payments";
 import {
     allocatePartialPayment,
     composeInvoiceTotal,
@@ -13,7 +12,8 @@ import {
     carryForwardItems,
     pendingSplit,
 } from "@/lib/allocation";
-import { allocateMasterPayment } from "@/lib/masterAllocation";
+import { buildSettlePlan, buildMasterSettlePlan } from "@/lib/paymentPlan";
+import { commitPaymentPlan } from "@/lib/commitPaymentPlan";
 import { notifyPaymentRecorded } from "@/lib/notify";
 import { SettlePaymentModal, type SettlePaymentSubmit } from "./modals/SettlePaymentModal";
 import { SettleMasterInvoiceModal, type SettleMasterSubmit } from "./modals/SettleMasterInvoiceModal";
@@ -236,39 +236,27 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
         if (received > alloc.remaining) { alert(`Amount received (₹${received}) exceeds remaining balance (₹${alloc.remaining}).`); return; }
         setIsSettling(inv.id);
         try {
-            const txnId = buildTransactionId(mode, reference);
-            await updateDoc(doc(db, COL.invoices, inv.id), {
-                amountPaid: alloc.newAmountPaid,
-                status: alloc.status,
-                ...(alloc.fullyPaid ? { paidAt: new Date().toISOString() } : {}),
-                transactionId: txnId,
-                ...(note.trim() ? { paymentNote: note.trim() } : {}),
+            // Build the full write-set (invoice patch + ledger row) and commit
+            // it in a single atomic batch so a partial/full settlement can never
+            // update the invoice without its matching ledger row.
+            // See docs/ATOMIC_TRANSACTIONS_PLAN.md (Phase 3).
+            const plan = buildSettlePlan({
+                invoice: inv,
+                received,
+                mode,
+                reference,
+                note,
+                settledBy: userEmail,
             });
-            const ledgerRef = await addDoc(collection(db, COL.ledger), {
-                tenantEmail: inv.tenantEmail,
-                unitId: inv.unitId,
-                unitNumber: inv.unitNumber,
-                invoiceId: inv.id,
-                billingPeriod: inv.billingPeriod || "Ad-Hoc",
-                invoiceAmount: Number(inv.totalAmount || 0),
-                amountPaid: received,           // this transaction only
-                balance: received - alloc.remaining,  // 0 if fully paid, negative if partial
-                transactionId: txnId,
-                paymentMode: mode,
-                paymentReference: reference.trim() || null,
-                paymentNote: note.trim() || null,
-                type: alloc.fullyPaid ? "payment" : "partial-payment",
-                settledBy: "employee",
-                createdAt: new Date().toISOString(),
-            });
-            // Fire-and-forget Telegram notification.
+            const { ledgerIds } = await commitPaymentPlan(db, plan);
+            // Fire-and-forget Telegram notification (outside the atomic unit).
             notifyPaymentRecorded({
                 invoiceId: inv.id,
                 amount: received,
                 fully: alloc.fullyPaid,
                 mode,
                 reference: reference.trim() || undefined,
-                ledgerId: ledgerRef.id,
+                ledgerId: ledgerIds[0],
             });
             setSettleInvoice(null);
         } catch (error) {
@@ -369,77 +357,20 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
         setIsSettlingMaster(true);
         try {
             const children = allInvoices.filter(inv => m.childInvoiceIds.includes(inv.id));
-            const result = allocateMasterPayment(payload.received, m, children);
-            if (result.appliedTotal <= 0) throw new Error("Payment amount must be greater than zero.");
-
-            const txnId = buildTransactionId(payload.mode, payload.reference);
-            const nowIso = new Date().toISOString();
-            const batch = writeBatch(db);
-
-            // Update master
-            batch.update(doc(db, COL.masterInvoices, m.id), {
-                amountPaid: result.newMasterAmountPaid,
-                status: result.masterStatus,
-                paidAt: result.masterStatus === "paid" ? nowIso : m.paidAt || null,
-                transactionId: txnId,
-                paymentMode: payload.mode,
-                paymentReference: payload.reference || null,
-                paymentNote: payload.note || null,
+            // Build the entire write-set — master patch, per-child patches,
+            // per-child `master-payment` ledger rows, and the single
+            // consolidated daily-ledger inflow — and commit it in ONE atomic
+            // batch. See docs/ATOMIC_TRANSACTIONS_PLAN.md (Phase 5).
+            const plan = buildMasterSettlePlan({
+                master: m,
+                children,
+                received: payload.received,
+                mode: payload.mode,
+                reference: payload.reference,
+                note: payload.note,
+                settledBy: userEmail,
             });
-
-            // Update each child + write ledger row per child
-            for (const alloc of result.perChild) {
-                if (alloc.appliedNow <= 0) continue;
-                batch.update(doc(db, COL.invoices, alloc.invoiceId), {
-                    amountPaid: alloc.newAmountPaid,
-                    status: alloc.status,
-                    paidAt: alloc.status === "paid" ? nowIso : null,
-                    transactionId: txnId,
-                    paymentMode: payload.mode,
-                    paymentReference: payload.reference || null,
-                });
-            }
-            await batch.commit();
-
-            // Post-commit: one dailyLedger row (total), N ledgerEntries rows (per child)
-            for (const alloc of result.perChild) {
-                if (alloc.appliedNow <= 0) continue;
-                const child = children.find(c => c.id === alloc.invoiceId)!;
-                await addDoc(collection(db, COL.ledgerEntries), {
-                    tenantEmail: child.tenantEmail,
-                    unitId: child.unitId,
-                    unitNumber: child.unitNumber,
-                    invoiceId: child.id,
-                    masterInvoiceId: m.id,
-                    billingPeriod: child.billingPeriod,
-                    invoiceAmount: child.totalAmount,
-                    amountPaid: alloc.appliedNow,
-                    balance: Math.max(0, Number(child.totalAmount || 0) - alloc.newAmountPaid),
-                    transactionId: txnId,
-                    type: "master-payment",
-                    paymentMode: payload.mode,
-                    paymentReference: payload.reference || null,
-                    settledBy: userEmail,
-                    createdAt: nowIso,
-                });
-            }
-            // Single dailyLedger inflow representing the real cash movement
-            await addDoc(collection(db, COL.dailyLedger), {
-                date: nowIso.slice(0, 10),
-                direction: "inflow",
-                category: "Rent (Master)",
-                amount: result.appliedTotal,
-                description: `${m.tenantName} · ${m.billingPeriod} · ${result.perChild.filter(c => c.appliedNow > 0).map(c => c.unitNumber).join(", ")}`,
-                tenantName: m.tenantName,
-                invoiceId: m.id,
-                paymentMode: payload.mode,
-                paymentReference: payload.reference || null,
-                note: payload.note || null,
-                recordedBy: userEmail,
-                createdBy: userEmail,
-                createdAt: nowIso,
-            });
-
+            await commitPaymentPlan(db, plan);
             setSettleMaster(null);
         } catch (e) {
             alert(e instanceof Error ? e.message : String(e));
