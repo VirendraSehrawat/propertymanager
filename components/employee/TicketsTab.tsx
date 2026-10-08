@@ -4,7 +4,7 @@ import { useState } from "react";
 import Image from "next/image";
 import { doc, updateDoc, arrayUnion } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { Modal } from "@/components/ui";
+import { Modal, Lightbox, type LightboxItem } from "@/components/ui";
 import { useUploadWithProgress, UploadProgressBar } from "@/lib/useUpload";
 import type { MaintenanceTicket, Unit, Building } from "@/types";
 
@@ -17,7 +17,12 @@ interface TicketsTabProps {
 }
 
 export function TicketsTab({ tickets, isResolved, allUnits, buildings, userEmail }: TicketsTabProps) {
-    const { uploadFile, uploadProgress, isUploading } = useUploadWithProgress();
+    const { uploadFile, uploadFiles, uploadProgress, uploadCount, isUploading } = useUploadWithProgress();
+
+    // Lightbox: the gallery being viewed + the active index.
+    const [lightboxItems, setLightboxItems] = useState<LightboxItem[]>([]);
+    const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+    const openLightbox = (items: LightboxItem[], index: number) => { setLightboxItems(items); setLightboxIndex(index); };
 
     // Resolve modal
     const [isResolveModalOpen, setIsResolveModalOpen] = useState(false);
@@ -31,7 +36,7 @@ export function TicketsTab({ tickets, isResolved, allUnits, buildings, userEmail
     const [reportUnit, setReportUnit] = useState("");
     const [reportCategory, setReportCategory] = useState("Maintenance");
     const [reportDesc, setReportDesc] = useState("");
-    const [reportFile, setReportFile] = useState<File | null>(null);
+    const [reportFiles, setReportFiles] = useState<File[]>([]);
     const [isSubmittingReport, setIsSubmittingReport] = useState(false);
 
     // Comment
@@ -70,22 +75,22 @@ export function TicketsTab({ tickets, isResolved, allUnits, buildings, userEmail
         if (!reportDesc) return;
         setIsSubmittingReport(true);
         try {
-            let photoUrl = "";
-            if (reportFile) {
-                const ts = new Date().getTime();
-                photoUrl = await uploadFile(`maintenance/staff_${ts}_${reportFile.name}`, reportFile);
-            }
+            const attachments = reportFiles.length > 0
+                ? await uploadFiles("maintenance/staff", reportFiles)
+                : [];
+            const firstImage = attachments.find(a => a.type === "image");
             const unit = allUnits.find(u => u.id === reportUnit);
             const { addDoc, collection } = await import("firebase/firestore");
             await addDoc(collection(db, "maintenance"), {
                 tenantEmail: "", reportedBy: userEmail || "Staff",
                 unitId: reportUnit || "", unitNumber: unit?.unitNumber || "Common Area",
                 buildingName: unit ? getBuildingName(unit.buildingId) : "General",
-                category: reportCategory, description: reportDesc, photoUrl,
+                category: reportCategory, description: reportDesc,
+                attachments, photoUrl: firstImage?.url || "",
                 status: "pending", comments: [], createdAt: new Date().toISOString(),
             });
             setIsReportOpen(false);
-            setReportUnit(""); setReportCategory("Maintenance"); setReportDesc(""); setReportFile(null);
+            setReportUnit(""); setReportCategory("Maintenance"); setReportDesc(""); setReportFiles([]);
             alert("Issue reported successfully!");
         } catch (error) { console.error(error); alert("Failed to report issue."); } finally { setIsSubmittingReport(false); }
     };
@@ -149,11 +154,34 @@ export function TicketsTab({ tickets, isResolved, allUnits, buildings, userEmail
                                 {ticket.description}
                             </div>
 
-                            {ticket.photoUrl && (
-                                <a href={ticket.photoUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 text-sm text-blue-600 bg-blue-50 px-3 py-2 rounded-md hover:bg-blue-100 font-medium w-full justify-center border border-blue-200 transition">
-                                    📷 View Photo
-                                </a>
-                            )}
+                            {(() => {
+                                const atts = ticket.attachments && ticket.attachments.length > 0
+                                    ? ticket.attachments
+                                    : ticket.photoUrl
+                                        ? [{ url: ticket.photoUrl, type: "image" as const }]
+                                        : [];
+                                if (atts.length === 0) return null;
+                                const items: LightboxItem[] = atts.map(a => ({ url: a.url, type: a.type, name: a.name }));
+                                return (
+                                    <div>
+                                        <p className="text-xs font-bold text-gray-500 uppercase mb-2">Attachments ({atts.length})</p>
+                                        <div className="grid grid-cols-3 gap-2">
+                                            {atts.map((a, i) => (
+                                                <button key={i} type="button" onClick={() => openLightbox(items, i)} className="relative block group">
+                                                    {a.type === "video" ? (
+                                                        <>
+                                                            <video src={a.url} className="w-full h-24 object-cover rounded-lg border border-gray-200 bg-black pointer-events-none" />
+                                                            <span className="absolute inset-0 flex items-center justify-center text-white text-2xl drop-shadow">▶</span>
+                                                        </>
+                                                    ) : (
+                                                        <Image src={a.url} alt={a.name || "attachment"} width={200} height={96} className="w-full h-24 object-cover rounded-lg border border-gray-200 group-hover:opacity-90 transition" unoptimized />
+                                                    )}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                );
+                            })()}
 
                             {ticket.status !== "resolved" && (
                                 <div className="pt-2 flex flex-col sm:flex-row gap-3">
@@ -266,16 +294,33 @@ export function TicketsTab({ tickets, isResolved, allUnits, buildings, userEmail
                         <textarea required rows={3} value={reportDesc} onChange={(e) => setReportDesc(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" placeholder="Describe the issue in detail..." />
                     </div>
                     <div>
-                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Photo (Optional)</label>
-                        <input type="file" accept="image/*" onChange={(e) => setReportFile(e.target.files?.[0] || null)} className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:bg-red-50 file:text-red-700" />
+                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Photos / Videos (Optional)</label>
+                        <input type="file" accept="image/*,video/*" multiple onChange={(e) => setReportFiles(e.target.files ? Array.from(e.target.files) : [])} className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:bg-red-50 file:text-red-700" />
+                        {reportFiles.length > 0 && (
+                            <ul className="mt-2 space-y-1">
+                                {reportFiles.map((f, i) => (
+                                    <li key={i} className="flex items-center justify-between text-xs bg-gray-50 border border-gray-200 rounded px-2 py-1">
+                                        <span className="truncate mr-2">{f.type.startsWith("video") ? "🎬" : "🖼️"} {f.name}</span>
+                                        <button type="button" onClick={() => setReportFiles(prev => prev.filter((_, idx) => idx !== i))} className="text-red-500 font-bold shrink-0">✕</button>
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
                     </div>
-                    {isUploading && <UploadProgressBar progress={uploadProgress} />}
+                    {isUploading && <UploadProgressBar progress={uploadProgress} count={uploadCount} />}
                     <div className="flex gap-2 pt-2">
                         <button type="button" onClick={() => setIsReportOpen(false)} className="flex-1 py-2 border border-gray-300 rounded-md text-sm text-gray-600">Cancel</button>
                         <button type="submit" disabled={isSubmittingReport || isUploading} className="flex-1 py-2 bg-red-600 text-white rounded-md text-sm font-medium hover:bg-red-700 disabled:bg-red-400">{isSubmittingReport ? "Submitting..." : "Report Issue"}</button>
                     </div>
                 </form>
             </Modal>
+
+            <Lightbox
+                items={lightboxItems}
+                index={lightboxIndex}
+                onClose={() => setLightboxIndex(null)}
+                onIndexChange={setLightboxIndex}
+            />
         </div>
     );
 }

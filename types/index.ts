@@ -127,13 +127,24 @@ export interface MaintenanceTicket {
     reportedBy?: string;
     description: string;
     status: "pending" | "in-progress" | "resolved";
+    /** @deprecated Single-photo field kept for backward compatibility. New
+     *  tickets populate `attachments`; `photoUrl` mirrors the first image. */
     photoUrl?: string;
+    /** Multiple photos/videos attached to the issue report. */
+    attachments?: TicketAttachment[];
     resolutionPhotoUrl?: string;
     resolutionNote?: string;
     resolvedAt?: string;
     resolvedBy?: string;
     comments: TicketComment[];
     createdAt: string;
+}
+
+/** A single photo or video attached to a maintenance ticket. */
+export interface TicketAttachment {
+    url: string;
+    type: "image" | "video";
+    name?: string;
 }
 
 export interface TicketComment {

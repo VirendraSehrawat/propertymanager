@@ -4,7 +4,9 @@ import { verifyAuthToken } from "@/lib/serverAuth";
 
 export const runtime = "nodejs";
 
-const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+// Images are small; short videos (maintenance clips) need more headroom.
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const MAX_VIDEO_BYTES = 50 * 1024 * 1024;
 
 export async function POST(request: Request) {
     try {
@@ -39,9 +41,11 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: "Cannot upload an empty file." }, { status: 400 });
         }
 
-        if (file.size > MAX_UPLOAD_BYTES) {
+        const isVideo = file.type.startsWith("video");
+        const maxBytes = isVideo ? MAX_VIDEO_BYTES : MAX_IMAGE_BYTES;
+        if (file.size > maxBytes) {
             return NextResponse.json(
-                { error: "File too large. Max size is 10MB." },
+                { error: `File too large. Max size is ${isVideo ? "50MB for videos" : "10MB for images"}.` },
                 { status: 413 }
             );
         }
