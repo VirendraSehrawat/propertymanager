@@ -20,6 +20,7 @@
 | 5 — Master settle | ✅ Done | `CollectionsTab.handleMasterSettle` → `buildMasterSettlePlan` + `commitPaymentPlan`. Master patch, per-child patches, per-child `ledgerEntries` rows, and the single `dailyLedger` inflow now all commit in ONE batch (previously the ledger rows were written post-commit). |
 | 6 — Admin correction | ✅ Done | `AdminLedgerTab` — `handleEditSave` already single-batch (switched literals → `COL`). `handleDelete` rewritten: deleting a ledger row now re-syncs the linked invoice + master in the SAME batch (was a bare `deleteDoc` that left stale `amountPaid`). |
 | 7 — Audit script | ✅ Done | `scripts/auditLedgerConsistency.ts` — read-only; reports any invoice where `Σ(ledger.amountPaid) ≠ invoice.amountPaid` beyond a tolerance. Dry-run only, non-zero exit on drift (CI/cron friendly). |
+| 7b — Admin in-app audit | ✅ Done | Shared pure `lib/ledgerAudit.ts` (`computeLedgerDrift`); admin-only `GET /api/admin/audit-ledger` (token + role verified, reads both ledger collections via Admin SDK); "🔍 Run Consistency Audit" button + drift report panel in `AdminLedgerTab`. 7 new tests in `__tests__/ledgerAudit.test.ts`. |
 
 **Validation (2026-10-09):** `tsc --noEmit` → 0 errors. `vitest run paymentPlan + ledgerSync + CollectionsTab + masterAllocation + payments + lumpsum` → all green. (The 3 failing integration suites — `rules`, `expenses`, `integration` — require the Firestore emulator on `127.0.0.1:8080` and are unrelated to this work.)
 
@@ -229,6 +230,23 @@ Split into two atomic units:
     npx tsx scripts/auditLedgerConsistency.ts [--tolerance 1] [--json]
   ```
 
+### Phase 7b — Admin in-app audit ✅ Done
+So admins can run the same check without shell access:
+- [x] **`lib/ledgerAudit.ts`** — extracted the drift maths into a pure,
+      reusable `computeLedgerDrift(invoices, ledgerRows, tolerance)` returning a
+      `LedgerAuditReport`. Both the CLI script and the API route now call it
+      (single source of truth). 7 unit tests in `__tests__/ledgerAudit.test.ts`.
+- [x] **`GET /api/admin/audit-ledger`** (`app/api/admin/audit-ledger/route.ts`)
+      — verifies the Firebase ID token via `verifyAuthToken`, confirms the
+      caller is an **admin** (custom claim or `users/<uid>.role`), then reads all
+      invoices + both ledger collections with the Admin SDK and returns the
+      report. Strictly read-only; 401/403 for non-admins.
+- [x] **UI** — a "🔍 Run Consistency Audit" button in `AdminLedgerTab` calls the
+      route with the user's ID token and renders a report panel: green "ledger is
+      consistent" banner when balanced, or an amber drift table (unit, period,
+      invoice paid, ledger sum, diff, row count) sorted worst-first.
+
+
 
 ---
 
@@ -243,6 +261,9 @@ Split into two atomic units:
 | `components/employee/DailyLedgerTab.tsx` | ✅ **DONE** — inflow flow → plan + commit; expense mirror batched (2 atomic units). |
 | `components/admin/AdminLedgerTab.tsx` | ✅ **DONE** — correction single-batch (→ `COL`); delete now re-syncs invoice + master atomically. |
 | `scripts/auditLedgerConsistency.ts` | ✅ **DONE** — read-only drift report (`Σ ledger === invoice.amountPaid`). |
+| `lib/ledgerAudit.ts` | ✅ **DONE** — pure `computeLedgerDrift` shared by the script + API. |
+| `app/api/admin/audit-ledger/route.ts` | ✅ **DONE** — admin-only read-only audit endpoint. |
+| `__tests__/ledgerAudit.test.ts` | ✅ **DONE** — 7 tests for the drift maths. |
 | `docs/BUSINESS_RULES.md` | ⏳ Document the "every amountPaid change ⇒ one ledger row, atomically" invariant. |
 
 ---

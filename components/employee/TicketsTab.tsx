@@ -70,6 +70,24 @@ export function TicketsTab({ tickets, isResolved, allUnits, buildings, userEmail
         } catch (error) { console.error(error); alert("Failed to submit resolution."); } finally { setIsSubmitting(false); }
     };
 
+    /**
+     * Append newly picked files to the existing selection (de-duped by
+     * name+size) instead of replacing them. Lets users build up a set across
+     * several picker interactions — important on mobile where the picker often
+     * returns one file at a time. Clears the input value so re-picking the same
+     * file fires onChange again.
+     */
+    const appendReportFiles = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const picked = e.target.files ? Array.from(e.target.files) : [];
+        if (picked.length > 0) {
+            setReportFiles(prev => {
+                const seen = new Set(prev.map(f => `${f.name}_${f.size}`));
+                return [...prev, ...picked.filter(f => !seen.has(`${f.name}_${f.size}`))];
+            });
+        }
+        e.target.value = "";
+    };
+
     const handleReportIssue = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!reportDesc) return;
@@ -294,8 +312,8 @@ export function TicketsTab({ tickets, isResolved, allUnits, buildings, userEmail
                         <textarea required rows={3} value={reportDesc} onChange={(e) => setReportDesc(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" placeholder="Describe the issue in detail..." />
                     </div>
                     <div>
-                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Photos / Videos (Optional)</label>
-                        <input type="file" accept="image/*,video/*" multiple onChange={(e) => setReportFiles(e.target.files ? Array.from(e.target.files) : [])} className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:bg-red-50 file:text-red-700" />
+                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Photos / Videos (Optional){reportFiles.length > 0 ? ` — ${reportFiles.length} selected` : ""}</label>
+                        <input type="file" accept="image/*,video/*" multiple onChange={appendReportFiles} className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:bg-red-50 file:text-red-700" />
                         {reportFiles.length > 0 && (
                             <ul className="mt-2 space-y-1">
                                 {reportFiles.map((f, i) => (
