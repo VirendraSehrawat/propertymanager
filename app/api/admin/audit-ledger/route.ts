@@ -21,6 +21,7 @@ export const runtime = "nodejs";
 const LEDGER_COLLECTIONS = ["ledger", "ledgerEntries"] as const;
 
 export async function GET(request: Request) {
+  try {
     // 1. Authenticate.
     const user = await verifyAuthToken(request);
     if (!user) {
@@ -49,35 +50,42 @@ export async function GET(request: Request) {
     const tolRaw = url.searchParams.get("tolerance");
     const tolerance = tolRaw !== null && Number.isFinite(Number(tolRaw)) ? Number(tolRaw) : 1;
 
-    try {
-        // 4. Read ledger rows across both collections + all invoices.
-        const ledgerRows: AuditLedgerRow[] = [];
-        for (const col of LEDGER_COLLECTIONS) {
-            const snap = await db.collection(col).get();
-            for (const d of snap.docs) {
-                ledgerRows.push({
-                    invoiceId: d.get("invoiceId"),
-                    amountPaid: Number(d.get("amountPaid")) || 0,
-                    deleted: d.get("deleted") === true,
-                });
-            }
+    // 4. Read ledger rows across both collections + all invoices.
+    const ledgerRows: AuditLedgerRow[] = [];
+    for (const col of LEDGER_COLLECTIONS) {
+        const snap = await db.collection(col).get();
+        for (const d of snap.docs) {
+            ledgerRows.push({
+                invoiceId: d.get("invoiceId"),
+                amountPaid: Number(d.get("amountPaid")) || 0,
+                deleted: d.get("deleted") === true,
+            });
         }
-
-        const invSnap = await db.collection("invoices").get();
-        const invoices: AuditInvoice[] = invSnap.docs.map((d) => ({
-            id: d.id,
-            unitNumber: d.get("unitNumber"),
-            billingPeriod: d.get("billingPeriod"),
-            status: d.get("status"),
-            amountPaid: Number(d.get("amountPaid")) || 0,
-            deleted: d.get("deleted") === true,
-        }));
-
-        // 5. Compute + return the report.
-        const report = computeLedgerDrift(invoices, ledgerRows, tolerance);
-        return NextResponse.json({ ok: true, generatedAt: new Date().toISOString(), ...report });
-    } catch (e) {
-        console.error("[admin/audit-ledger] failed:", e);
-        return NextResponse.json({ ok: false, error: String(e) }, { status: 500 });
     }
+
+    const invSnap = await db.collection("invoices").get();
+    const invoices: AuditInvoice[] = invSnap.docs.map((d) => ({
+        id: d.id,
+        unitNumber: d.get("unitNumber"),
+        billingPeriod: d.get("billingPeriod"),
+        status: d.get("status"),
+        amountPaid: Number(d.get("amountPaid")) || 0,
+        deleted: d.get("deleted") === true,
+    }));
+
+    // 5. Compute + return the report.
+    const report = computeLedgerDrift(invoices, ledgerRows, tolerance);
+    return NextResponse.json({ ok: true, generatedAt: new Date().toISOString(), ...report });
+  } catch (e) {
+    // Any failure (admin-SDK init, missing credentials, Firestore read, etc.)
+    // is surfaced as JSON so the client shows a real message instead of an
+    // opaque HTML 500. The most common cause in production is a missing /
+    // malformed FIREBASE_SERVICE_ACCOUNT_KEY env var.
+    const message = e instanceof Error ? e.message : String(e);
+    console.error("[admin/audit-ledger] failed:", e);
+    return NextResponse.json(
+        { ok: false, error: `Audit failed: ${message}` },
+        { status: 500 },
+    );
+  }
 }
