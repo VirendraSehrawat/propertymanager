@@ -94,6 +94,38 @@ describe("buildSettlePlan", () => {
         expect(plan.invoicePatches[0].patch.paymentNote).toBe("paid in person");
         expect(plan.ledgerRows[0].paymentNote).toBe("paid in person");
     });
+
+    it("every settlement (full or partial) also produces a Daily Ledger inflow row", () => {
+        const full = buildSettlePlan({
+            invoice: baseInvoice, received: 10000, mode: "upi", reference: "ABC", now: NOW,
+        });
+        expect(full.dailyLedgerRow).toBeDefined();
+        expect(full.dailyLedgerRow!.data.direction).toBe("inflow");
+        expect(full.dailyLedgerRow!.data.amount).toBe(10000);
+        expect(full.dailyLedgerRow!.data.invoiceId).toBe("inv1");
+        expect(full.dailyLedgerRow!.data.category).toBe("rent");
+
+        const partial = buildSettlePlan({
+            invoice: baseInvoice, received: 4000, mode: "cash", now: NOW,
+        });
+        expect(partial.dailyLedgerRow).toBeDefined();
+        expect(partial.dailyLedgerRow!.data.amount).toBe(4000);
+    });
+
+    it("honours a transactionIdOverride and custom category (admin approve flow)", () => {
+        const plan = buildSettlePlan({
+            invoice: baseInvoice,
+            received: 10000,
+            mode: "upi",
+            transactionIdOverride: "TENANT_SUBMITTED_REF",
+            category: "rent",
+            settledBy: "admin",
+            now: NOW,
+        });
+        expect(plan.ledgerRows[0].transactionId).toBe("TENANT_SUBMITTED_REF");
+        expect(plan.invoicePatches[0].patch.transactionId).toBe("TENANT_SUBMITTED_REF");
+        expect(plan.dailyLedgerRow!.data.recordedBy).toBe("admin");
+    });
 });
 
 // ---------------------------------------------------------------------------

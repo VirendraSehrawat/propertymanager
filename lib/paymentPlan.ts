@@ -147,12 +147,22 @@ export interface SettlePlanInput {
     note?: string | null;
     settledBy?: string;
     now?: string;
+    /**
+     * Use this exact transactionId instead of deriving one from `mode` +
+     * `reference` — e.g. the tenant-submitted UPI ref already stored on the
+     * invoice when admin approves a pending payment.
+     */
+    transactionIdOverride?: string;
+    /** Daily Ledger category this inflow is filed under (defaults to "rent"). */
+    category?: string;
 }
 
 /**
- * Build the plan for settling a single invoice (Collections tab). Produces one
- * invoice patch + exactly one ledger row (typed `payment` when fully cleared,
- * `partial-payment` otherwise).
+ * Build the plan for settling a single invoice (Collections tab / Admin
+ * approve). Produces one invoice patch + exactly one ledger row (typed
+ * `payment` when fully cleared, `partial-payment` otherwise) + one Daily
+ * Ledger `inflow` row so the cash movement is visible in the Daily Ledger
+ * the same way an Expense is visible as an `outflow` row.
  */
 export function buildSettlePlan(input: SettlePlanInput): PaymentPlan {
     const { invoice: inv, received, mode } = input;
@@ -160,6 +170,7 @@ export function buildSettlePlan(input: SettlePlanInput): PaymentPlan {
     const reference = (input.reference || "").trim();
     const note = (input.note || "").trim();
     const settledBy = input.settledBy || "employee";
+    const category = input.category || "rent";
 
     const alloc = allocatePartialPayment(received, {
         totalAmount: Number(inv.totalAmount || 0),
@@ -167,7 +178,7 @@ export function buildSettlePlan(input: SettlePlanInput): PaymentPlan {
         baseRent: Number(inv.baseRent || 0),
         electricityCharge: Number(inv.electricityCharge || 0),
     });
-    const txnId = buildTransactionId(mode, reference);
+    const txnId = input.transactionIdOverride || buildTransactionId(mode, reference);
 
     const patch: Record<string, unknown> = {
         amountPaid: alloc.newAmountPaid,
@@ -196,10 +207,34 @@ export function buildSettlePlan(input: SettlePlanInput): PaymentPlan {
         collection: "ledger",
     };
 
+    // Every invoice settlement (full or partial) is a real cash inflow, so it
+    // must show up in the Daily Ledger the same way an Expense shows up as an
+    // `outflow` row. Linked back to the invoice via `invoiceId` for traceability.
+    const dailyLedgerRow: DailyLedgerRowDraft = {
+        data: {
+            date: now.slice(0, 10),
+            direction: "inflow",
+            category,
+            amount: Math.max(0, Number(received) || 0),
+            description: `${inv.unitNumber || "Unit"} · ${inv.billingPeriod || "Ad-Hoc"}`,
+            unitId: inv.unitId || "",
+            unitNumber: inv.unitNumber || "",
+            tenantEmail: inv.tenantEmail || "",
+            invoiceId: inv.id,
+            paymentMode: mode,
+            paymentReference: reference || null,
+            note: note || null,
+            recordedBy: settledBy,
+            createdBy: settledBy,
+            createdAt: now,
+        },
+    };
+
     const plan: PaymentPlan = {
         invoiceCreates: [],
         invoicePatches: [{ invoiceId: inv.id, patch }],
         ledgerRows: [ledgerRow],
+        dailyLedgerRow,
     };
     assertPlanInvariant(plan);
     return plan;

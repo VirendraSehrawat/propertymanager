@@ -4,6 +4,8 @@ import { useState } from "react";
 import { doc, updateDoc, addDoc, collection, getDoc, getDocs, where, query, writeBatch, deleteField } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { carryForwardFromInvoices } from "@/lib/allocation";
+import { buildSettlePlan } from "@/lib/paymentPlan";
+import { commitPaymentPlan } from "@/lib/commitPaymentPlan";
 import type { Invoice, Unit } from "@/types";
 
 interface AdminInvoicesTabProps {
@@ -100,28 +102,27 @@ export function AdminInvoicesTab({
     };
 
     // Handlers
+    // Approving a tenant-submitted payment is a real cash inflow — route it
+    // through the same atomic plan pipeline as Collections "Mark as Paid" so
+    // the invoice patch, its ledger row, AND a Daily Ledger inflow row all
+    // commit together (previously this skipped Daily Ledger entirely).
     const handleApproveInvoice = async (invId: string) => {
         try {
             const inv = pendingInvoices.find(i => i.id === invId);
-            await updateDoc(doc(db, "invoices", invId), { status: "paid", paidAt: new Date().toISOString() });
-            if (inv) {
-                const invoiceAmount = Number(inv.totalAmount || 0);
-                const amountPaid = Number(inv.amountPaid || invoiceAmount);
-                await addDoc(collection(db, "ledger"), {
-                    tenantEmail: inv.tenantEmail,
-                    unitId: inv.unitId,
-                    unitNumber: inv.unitNumber,
-                    invoiceId: invId,
-                    billingPeriod: inv.billingPeriod || "Ad-Hoc",
-                    invoiceAmount,
-                    amountPaid,
-                    balance: amountPaid - invoiceAmount,
-                    transactionId: inv.transactionId || "",
-                    type: "payment",
-                    settledBy: "admin",
-                    createdAt: new Date().toISOString()
-                });
+            if (!inv) {
+                await updateDoc(doc(db, "invoices", invId), { status: "paid", paidAt: new Date().toISOString() });
+                return;
             }
+            const invoiceAmount = Number(inv.totalAmount || 0);
+            const amountPaid = Number(inv.amountPaid || invoiceAmount);
+            const plan = buildSettlePlan({
+                invoice: inv,
+                received: amountPaid,
+                mode: "upi",
+                transactionIdOverride: inv.transactionId || "",
+                settledBy: "admin",
+            });
+            await commitPaymentPlan(db, plan);
         } catch (error) {
             console.error("Failed to approve invoice:", error);
             alert("Failed to approve invoice.");

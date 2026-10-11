@@ -1,10 +1,10 @@
 # Atomic Transactions & Complete Ledger Visibility — Implementation Plan
 
-**Status:** ✅ Complete — all phases (0–7) implemented
+**Status:** ✅ Complete — all phases (0–8) implemented
 **Author:** Engineering
-**Date:** 2026-10-08 · **Updated:** 2026-10-09
-**Related:** `lib/payments.ts`, `lib/ledgerSync.ts`, `lib/masterAllocation.ts`, `components/employee/CollectionsTab.tsx`, `components/employee/DailyLedgerTab.tsx`, `components/admin/AdminLedgerTab.tsx`
-**Implemented:** `lib/paymentPlan.ts`, `lib/commitPaymentPlan.ts`, `__tests__/paymentPlan.test.ts`, `components/employee/CollectionsTab.tsx` (settle + master settle), `components/employee/DailyLedgerTab.tsx` (inflow + expense mirror), `components/admin/AdminLedgerTab.tsx` (correct + delete), `scripts/auditLedgerConsistency.ts`
+**Date:** 2026-10-08 · **Updated:** 2026-10-10
+**Related:** `lib/payments.ts`, `lib/ledgerSync.ts`, `lib/masterAllocation.ts`, `components/employee/CollectionsTab.tsx`, `components/employee/DailyLedgerTab.tsx`, `components/admin/AdminLedgerTab.tsx`, `components/admin/AdminInvoicesTab.tsx`
+**Implemented:** `lib/paymentPlan.ts`, `lib/commitPaymentPlan.ts`, `__tests__/paymentPlan.test.ts`, `components/employee/CollectionsTab.tsx` (settle + master settle), `components/employee/DailyLedgerTab.tsx` (inflow + expense mirror), `components/admin/AdminLedgerTab.tsx` (correct + delete), `components/admin/AdminInvoicesTab.tsx` (approve), `scripts/auditLedgerConsistency.ts`
 
 ---
 
@@ -21,6 +21,8 @@
 | 6 — Admin correction | ✅ Done | `AdminLedgerTab` — `handleEditSave` already single-batch (switched literals → `COL`). `handleDelete` rewritten: deleting a ledger row now re-syncs the linked invoice + master in the SAME batch (was a bare `deleteDoc` that left stale `amountPaid`). |
 | 7 — Audit script | ✅ Done | `scripts/auditLedgerConsistency.ts` — read-only; reports any invoice where `Σ(ledger.amountPaid) ≠ invoice.amountPaid` beyond a tolerance. Dry-run only, non-zero exit on drift (CI/cron friendly). |
 | 7b — Admin in-app audit | ✅ Done | Shared pure `lib/ledgerAudit.ts` (`computeLedgerDrift`); admin-only `GET /api/admin/audit-ledger` (token + role verified, reads both ledger collections via Admin SDK); "🔍 Run Consistency Audit" button + drift report panel in `AdminLedgerTab`. 7 new tests in `__tests__/ledgerAudit.test.ts`. |
+| 8 — Inflow ⇄ Daily Ledger parity | ✅ Done | `buildSettlePlan` now also emits a `dailyLedgerRow` (`direction: "inflow"`, linked via `invoiceId`), so Collections "Mark as Paid" / partial payment **and** Admin "Approve Invoice" show up in the Daily Ledger Inflow section exactly like an Expense shows up as an Outflow row. `AdminInvoicesTab.handleApproveInvoice` migrated from raw `updateDoc`+`addDoc` to `buildSettlePlan` + `commitPaymentPlan` (previously non-atomic and invisible to Daily Ledger). New `transactionIdOverride`/`category` inputs let the admin-approve flow reuse the tenant-submitted reference instead of regenerating one. Tests added to `__tests__/paymentPlan.test.ts`; `__tests__/CollectionsTab.test.tsx` updated to assert the 2nd `batch.set` is the Daily Ledger row. |
+| 8b — Backfill historical settlements | ✅ Done | Phase 8 only affects *new* settlements going forward. `lib/dailyLedgerBackfill.ts` (pure planner) + `scripts/backfillDailyLedgerInflows.ts` (Admin-SDK runner) mirror every **pre-existing** `ledger` (`payment`/`partial-payment`) and `ledgerEntries` (`master-payment`, grouped per settlement) row into a `dailyLedger` inflow row, so historical settled invoices and partial payments now appear in both the Daily and Monthly Daily-Ledger views. Idempotent (dedupe key `invoiceId|amount|createdAt` shared with the live write path) and dry-run by default (`--apply` to commit). 11 tests in `__tests__/dailyLedgerBackfill.test.ts`. |
 
 **Validation (2026-10-09):** `tsc --noEmit` → 0 errors. `vitest run paymentPlan + ledgerSync + CollectionsTab + masterAllocation + payments + lumpsum` → all green. (The 3 failing integration suites — `rules`, `expenses`, `integration` — require the Firestore emulator on `127.0.0.1:8080` and are unrelated to this work.)
 
@@ -283,6 +285,23 @@ MUST contain a row with:
 The tenant ledger view (`app/tenant/page.tsx`) and admin ledger already read
 these rows; no schema change is required — partial rows simply become
 **guaranteed** instead of best-effort.
+
+### 5.1 Daily Ledger inflow/outflow mapping (Phase 8)
+
+The Daily Ledger is not an independent record — every row maps to a real
+underlying entity:
+
+| Daily Ledger `direction` | Underlying entity | Written by |
+|---|---|---|
+| `outflow` | `Expense` (cross-linked via `expenseId` ⇄ `dailyLedgerId`) | `ExpensesTab`, `AdminExpensesTab`, `DailyLedgerTab` (outflow entry) |
+| `inflow` | Invoice settlement / partial payment `ledger` row (linked via `invoiceId`) | `CollectionsTab` settle + master settle, `AdminInvoicesTab` approve, `DailyLedgerTab` (inflow entry, auto-settle) |
+
+`buildSettlePlan` and `buildMasterSettlePlan` both emit a `dailyLedgerRow` so
+every invoice settlement — full, partial, or corporate master — automatically
+appears in the Daily Ledger's Inflow section in the same atomic batch as the
+invoice patch and its ledger row. There is no path where money is recorded
+against an invoice without a corresponding Daily Ledger inflow row, mirroring
+the existing guarantee that every Expense has a Daily Ledger outflow row.
 
 ---
 

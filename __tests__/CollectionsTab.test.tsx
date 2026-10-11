@@ -128,12 +128,19 @@ describe("CollectionsTab — settle flow", () => {
         expect(invoicePatch).toHaveProperty("paidAt");
 
         // Ledger row written for the full amount in the same batch.
-        expect(batchSet).toHaveBeenCalledTimes(1);
+        expect(batchSet).toHaveBeenCalledTimes(2);
         const ledgerRow = batchSet.mock.calls[0][1] as Record<string, unknown>;
         expect(ledgerRow.amountPaid).toBe(6000);
         expect(ledgerRow.invoiceId).toBe("inv-current");
         expect(ledgerRow.type).toBe("payment");
         expect(batchCommit).toHaveBeenCalledTimes(1);
+
+        // Daily Ledger inflow row written in the SAME atomic batch so the
+        // settlement is immediately visible in the Daily Ledger inflow section.
+        const dailyLedgerRow = batchSet.mock.calls[1][1] as Record<string, unknown>;
+        expect(dailyLedgerRow.direction).toBe("inflow");
+        expect(dailyLedgerRow.amount).toBe(6000);
+        expect(dailyLedgerRow.invoiceId).toBe("inv-current");
 
         // Notification fired with the right amount.
         expect(notifyPaymentRecorded).toHaveBeenCalledTimes(1);
@@ -164,6 +171,9 @@ describe("CollectionsTab — settle flow", () => {
 
         const ledgerRow = batchSet.mock.calls[0][1] as Record<string, unknown>;
         expect(ledgerRow.type).toBe("partial-payment");
+        const dailyLedgerRow = batchSet.mock.calls[1][1] as Record<string, unknown>;
+        expect(dailyLedgerRow.direction).toBe("inflow");
+        expect(dailyLedgerRow.amount).toBe(2000);
         expect(notifyPaymentRecorded.mock.calls[0][0]).toMatchObject({ amount: 2000, fully: false });
     });
 });
