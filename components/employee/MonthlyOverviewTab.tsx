@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { collectedSplit, pendingSplit } from "@/lib/allocation";
+import { categoryEmoji } from "@/lib/expenses";
 
 interface Unit {
     id: string;
@@ -32,6 +33,8 @@ interface Props {
     allUnits: Unit[];
     buildings: Building[];
     allInvoices: Invoice[];
+    /** Optional — enables the "Expenses by Category" section for the selected month. */
+    allExpenses?: Array<{ amount: number; category?: string; date?: string; createdAt?: string; buildingId?: string }>;
 }
 
 const currentMonthISO = () => new Date().toISOString().slice(0, 7);
@@ -51,7 +54,7 @@ const GROUP_META: Record<Group, { label: string; emoji: string; color: string; b
     noInvoice: { label: "No Invoice Yet", emoji: "📭", color: "text-gray-700", bg: "bg-gray-50", border: "border-gray-200" },
 };
 
-export function MonthlyOverviewTab({ allUnits, buildings, allInvoices }: Props) {
+export function MonthlyOverviewTab({ allUnits, buildings, allInvoices, allExpenses = [] }: Props) {
     const [selectedMonth, setSelectedMonth] = useState<string>(currentMonthISO());
     const [buildingFilter, setBuildingFilter] = useState<string>("");
     const [expandedGroups, setExpandedGroups] = useState<Record<Group, boolean>>({
@@ -148,6 +151,27 @@ export function MonthlyOverviewTab({ allUnits, buildings, allInvoices }: Props) 
 
     const toggleGroup = (g: Group) => setExpandedGroups(prev => ({ ...prev, [g]: !prev[g] }));
 
+    // Expenses-by-category for the selected month (and building filter), mirroring
+    // the "📊 By Category" breakdown already shown in the Expenses tab.
+    const expenseBreakdown = useMemo(() => {
+        const scoped = allExpenses.filter(e => {
+            const d = e.date || (e.createdAt || "").slice(0, 10);
+            if (!(d || "").startsWith(selectedMonth)) return false;
+            if (buildingFilter && e.buildingId !== buildingFilter) return false;
+            return true;
+        });
+        const byCat = new Map<string, { total: number; count: number }>();
+        scoped.forEach(e => {
+            const key = e.category || "Other";
+            const prev = byCat.get(key) || { total: 0, count: 0 };
+            byCat.set(key, { total: prev.total + Number(e.amount || 0), count: prev.count + 1 });
+        });
+        const rows = Array.from(byCat.entries())
+            .map(([category, v]) => ({ category, ...v }))
+            .sort((a, b) => b.total - a.total);
+        return { rows, total: rows.reduce((s, r) => s + r.total, 0) };
+    }, [allExpenses, selectedMonth, buildingFilter]);
+
     const renderRow = (entry: { unit: Unit; invoice?: Invoice; buildingName: string }, group: Group) => {
         const { unit, invoice, buildingName } = entry;
         return (
@@ -220,6 +244,34 @@ export function MonthlyOverviewTab({ allUnits, buildings, allInvoices }: Props) 
                             <p className="text-[10px] text-gray-500">to bill</p>
                         </div>
                     </div>
+
+                    {/* 💰 Expenses by Category — scoped to the selected month & building filter */}
+                    {expenseBreakdown.rows.length > 0 && (
+                        <details className="bg-indigo-50 border border-indigo-200 rounded-xl p-3" open>
+                            <summary className="text-xs font-bold text-indigo-800 uppercase cursor-pointer flex justify-between items-center">
+                                <span>📊 Expenses by Category — {monthLabel}</span>
+                                <span className="text-[10px] font-normal text-indigo-600">
+                                    {expenseBreakdown.rows.length} categor{expenseBreakdown.rows.length === 1 ? "y" : "ies"} · ₹{expenseBreakdown.total.toLocaleString()}
+                                </span>
+                            </summary>
+                            <div className="mt-2 space-y-1.5">
+                                {expenseBreakdown.rows.map(({ category, total, count }) => {
+                                    const pct = expenseBreakdown.total > 0 ? Math.round((total / expenseBreakdown.total) * 100) : 0;
+                                    return (
+                                        <div key={category} className="bg-white border border-indigo-100 rounded-lg px-2.5 py-1.5">
+                                            <div className="flex justify-between items-center text-xs">
+                                                <span className="font-bold text-gray-800">{categoryEmoji(category)} {category}</span>
+                                                <span className="font-bold text-indigo-700">₹{total.toLocaleString()} <span className="text-[9px] text-gray-400 font-normal">· {count}</span></span>
+                                            </div>
+                                            <div className="h-1 bg-indigo-100 rounded-full overflow-hidden mt-1">
+                                                <div className="h-full bg-indigo-500" style={{ width: `${pct}%` }} />
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </details>
+                    )}
 
                     {/* Groups */}
                     {(Object.keys(GROUP_META) as Group[]).map(g => {

@@ -112,6 +112,7 @@ export default function EmployeeDashboard() {
 
     // Global Tenant Search
     const [globalSearch, setGlobalSearch] = useState("");
+    const [jumpToInvoiceId, setJumpToInvoiceId] = useState("");
     const [isGlobalSearchFocused, setIsGlobalSearchFocused] = useState(false);
 
     // Checklists (owned here for snapshot listener; ChecklistTab manages form state)
@@ -273,6 +274,7 @@ export default function EmployeeDashboard() {
                     ...(assignSecurityDeposit ? { securityDeposit: Number(assignSecurityDeposit), securityDepositDate: new Date().toISOString() } : {})
                 });
                 setIsAssignModalOpen(false); setAssignUnit(null); setAssignEmail(""); setAssignName(""); setAssignPhone(""); setAssignPaymentDay(""); setAssignSecurityDeposit("");
+                alert(`✅ Tenant moved in to ${assignUnit.unitNumber}.\n\n📄 Reminder: generate this month's rent invoice for them (Admin → Invoices → Generate Invoice) so it appears in Collections.`);
             } catch (error) { console.error(error); alert("Failed to assign tenant."); }
         } else {
             if (!assignExistingUnit) return;
@@ -281,6 +283,7 @@ export default function EmployeeDashboard() {
             try {
                 await updateDoc(doc(db, "units", assignUnit.id), { status: "occupied", tenantEmail: source.tenantEmail, tenantName: source.tenantName || "", tenantPhone: source.tenantPhone || "", moveInDate: new Date().toISOString() });
                 setIsAssignModalOpen(false); setAssignUnit(null); setAssignExistingUnit("");
+                alert(`✅ Tenant transferred to ${assignUnit.unitNumber}.\n\n📄 Reminder: generate this month's rent invoice for their new unit.`);
             } catch (error) { console.error(error); alert("Failed to assign tenant."); }
         }
     };
@@ -339,8 +342,14 @@ export default function EmployeeDashboard() {
                 lastChecklistDeduction: "",
                 coTenants: []
             });
+            const unpaidForUnit = allInvoices.filter(inv => inv.unitId === unitId && (inv.status === "unpaid" || inv.status === "pending"));
+            const unpaidNote = unpaidForUnit.length > 0
+                ? `\n\n⚠️ ${unpaidForUnit.length} unpaid invoice(s) still open for this unit — settle or write them off before billing the new tenant.`
+                : `\n\n📄 Reminder: generate a final/prorated invoice for the move-out if needed, and a fresh invoice once the next tenant moves in.`;
             if (deposit > 0) {
-                alert(`✅ Tenant removed.\n\n💰 Please return ₹${refund.toLocaleString()} security deposit to the tenant.`);
+                alert(`✅ Tenant removed.\n\n💰 Please return ₹${refund.toLocaleString()} security deposit to the tenant.${unpaidNote}`);
+            } else {
+                alert(`✅ Tenant removed.${unpaidNote}`);
             }
         } catch (error) { console.error(error); alert("Failed to remove tenant."); }
     };
@@ -552,15 +561,31 @@ export default function EmployeeDashboard() {
                         const results = allUnits.filter(u => u.status === "occupied" && ((u.tenantName && u.tenantName.toLowerCase().includes(q)) || (u.tenantPhone && u.tenantPhone.includes(q)) || (u.tenantEmail && u.tenantEmail.toLowerCase().includes(q)) || (u.unitNumber && u.unitNumber.toLowerCase().includes(q))));
                         return results.length > 0 ? (
                             <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-xl border border-gray-200 shadow-lg z-40 max-h-64 overflow-y-auto">
-                                {results.map(u => (
-                                    <button key={u.id} onClick={() => { openTenantProfile(u); setGlobalSearch(""); }} className="w-full px-4 py-3 flex justify-between items-center hover:bg-orange-50 border-b border-gray-100 last:border-0 text-left">
-                                        <div>
-                                            <p className="font-bold text-gray-900 text-sm">{u.tenantName || u.tenantEmail || "—"}</p>
-                                            <p className="text-[10px] text-gray-500">{u.unitNumber} {u.tenantPhone ? `· ${u.tenantPhone}` : ""}</p>
+                                {results.map(u => {
+                                    // Oldest pending invoice for this unit — "Record Payment" jumps
+                                    // straight to Collections' settle modal for it (no scrolling).
+                                    const duePending = allInvoices
+                                        .filter(inv => inv.unitId === u.id && (inv.status === "unpaid" || inv.status === "pending") && !inv.masterInvoiceId)
+                                        .sort((a, b) => new Date(a.billingPeriod || "").getTime() - new Date(b.billingPeriod || "").getTime())[0];
+                                    const due = duePending ? Math.max(0, Number(duePending.totalAmount || 0) - Number(duePending.amountPaid || 0)) : 0;
+                                    return (
+                                        <div key={u.id} className="px-4 py-3 flex justify-between items-center hover:bg-orange-50 border-b border-gray-100 last:border-0">
+                                            <button onClick={() => { openTenantProfile(u); setGlobalSearch(""); }} className="text-left flex-1 min-w-0">
+                                                <p className="font-bold text-gray-900 text-sm">{u.tenantName || u.tenantEmail || "—"}</p>
+                                                <p className="text-[10px] text-gray-500">{u.unitNumber} {u.tenantPhone ? `· ${u.tenantPhone}` : ""}</p>
+                                                {duePending && <p className="text-[10px] font-bold text-red-600 mt-0.5">Due ₹{due.toLocaleString()} · {duePending.billingPeriod}</p>}
+                                            </button>
+                                            {duePending ? (
+                                                <button
+                                                    onClick={() => { setJumpToInvoiceId(duePending.id); setActiveTab("collections"); setGlobalSearch(""); }}
+                                                    className="shrink-0 ml-2 text-xs font-bold bg-green-600 text-white px-3 py-1.5 rounded-lg hover:bg-green-700"
+                                                >💳 Record Payment</button>
+                                            ) : (
+                                                <span className="shrink-0 ml-2 text-xs text-orange-600 font-medium">View →</span>
+                                            )}
                                         </div>
-                                        <span className="text-xs text-orange-600 font-medium">View →</span>
-                                    </button>
-                                ))}
+                                    );
+                                })}
                             </div>
                         ) : (
                             <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-xl border border-gray-200 shadow-lg z-40 p-4 text-center">
@@ -616,7 +641,7 @@ export default function EmployeeDashboard() {
 
                 {/* COLLECTIONS TAB */}
                 {activeTab === "collections" && (
-                    <CollectionsTab allInvoices={allInvoices} occupiedUnits={occupiedUnits} electricityRate={electricityRate} openTenantProfile={openTenantProfile} allLedgerEntries={allLedgerEntries} masterInvoices={masterInvoices} userEmail={user?.email || "employee"} />
+                    <CollectionsTab allInvoices={allInvoices} occupiedUnits={occupiedUnits} electricityRate={electricityRate} openTenantProfile={openTenantProfile} allLedgerEntries={allLedgerEntries} masterInvoices={masterInvoices} userEmail={user?.email || "employee"} jumpToInvoiceId={jumpToInvoiceId} onJumpConsumed={() => setJumpToInvoiceId("")} />
                 )}
 
                 {/* METER READING TAB */}
@@ -636,7 +661,7 @@ export default function EmployeeDashboard() {
 
                 {/* MONTHLY OVERVIEW TAB */}
                 {activeTab === "monthly" && (
-                    <MonthlyOverviewTab allUnits={allUnits} buildings={buildings} allInvoices={allInvoices} />
+                    <MonthlyOverviewTab allUnits={allUnits} buildings={buildings} allInvoices={allInvoices} allExpenses={allExpenses} />
                 )}
 
                 {/* UNITS TAB */}
@@ -796,6 +821,49 @@ export default function EmployeeDashboard() {
                                 </div>
                                 <button type="submit" disabled={isUploadingDoc} className="px-3 py-1.5 bg-blue-600 text-white rounded text-xs font-bold hover:bg-blue-700 disabled:bg-blue-400">{isUploadingDoc ? "..." : "Upload"}</button>
                             </form>
+                        </div>
+
+                        {/* Invoice & Payment History — read-only, newest first. Lets staff see
+                            what's been billed/collected for this tenant without leaving the
+                            profile to search the Collections tab. */}
+                        <div className="border-t border-gray-200 pt-4 mb-4">
+                            <details>
+                                <summary className="text-sm font-bold text-gray-800 mb-2 cursor-pointer">📜 Invoice & Payment History</summary>
+                                <div className="mt-2 max-h-56 overflow-y-auto space-y-2">
+                                    {(() => {
+                                        const invs = allInvoices
+                                            .filter(inv => inv.unitId === profileUnit.id)
+                                            .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+                                        if (invs.length === 0) return <p className="text-xs text-gray-400 italic">No invoices yet.</p>;
+                                        return invs.map(inv => {
+                                            const total = Number(inv.totalAmount || 0);
+                                            const paid = Number(inv.amountPaid || 0);
+                                            const payments = allLedgerEntries
+                                                .filter(l => l.invoiceId === inv.id)
+                                                .sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""));
+                                            return (
+                                                <div key={inv.id} className="bg-gray-50 border border-gray-200 rounded-lg p-2 text-xs">
+                                                    <div className="flex justify-between items-center">
+                                                        <span className="font-bold text-gray-800">{inv.billingPeriod}</span>
+                                                        <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ${inv.status === "paid" ? "bg-green-100 text-green-700" : inv.status === "written-off" ? "bg-gray-200 text-gray-600" : paid > 0 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700"}`}>{inv.status}</span>
+                                                    </div>
+                                                    <p className="text-[11px] text-gray-600 mt-0.5">₹{total.toLocaleString()} total · ₹{paid.toLocaleString()} paid{total - paid > 0 ? ` · ₹${(total - paid).toLocaleString()} due` : ""}</p>
+                                                    {payments.length > 0 && (
+                                                        <div className="mt-1 pl-2 border-l-2 border-indigo-200 space-y-0.5">
+                                                            {payments.map(p => (
+                                                                <div key={p.id} className="flex justify-between text-[10px] text-gray-500">
+                                                                    <span>{p.createdAt ? new Date(p.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : "—"} · {(p.paymentMode || "cash").toUpperCase()}{p.paymentReference ? ` · ${p.paymentReference}` : ""}</span>
+                                                                    <span className="font-bold text-gray-700">₹{Number(p.amountPaid || 0).toLocaleString()}</span>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            );
+                                        });
+                                    })()}
+                                </div>
+                            </details>
                         </div>
 
                         {/* Notes */}

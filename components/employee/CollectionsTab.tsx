@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { doc, updateDoc, deleteField } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { COL } from "@/lib/collections";
@@ -31,13 +31,22 @@ interface CollectionsTabProps {
     masterInvoices?: MasterInvoice[];
     /** Email of the collecting employee — recorded on ledger + master settlement writes. */
     userEmail?: string;
+    /**
+     * When set (e.g. from the Home-page global tenant search), the matching
+     * invoice's "Record Payment" modal opens immediately — skips scrolling
+     * or filtering the Pending Invoices list entirely. Parent should clear
+     * this back to "" once consumed (see `onJumpConsumed`).
+     */
+    jumpToInvoiceId?: string;
+    onJumpConsumed?: () => void;
 }
 
-export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, openTenantProfile, allLedgerEntries = [], masterInvoices = [], userEmail = "employee" }: CollectionsTabProps) {
+export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, openTenantProfile, allLedgerEntries = [], masterInvoices = [], userEmail = "employee", jumpToInvoiceId = "", onJumpConsumed }: CollectionsTabProps) {
     // Default: current month label like "September 2026" (matches Invoice.billingPeriod format)
     const currentMonthLabel = new Date().toLocaleString("default", { month: "long", year: "numeric" });
     const [collectionFilter, setCollectionFilter] = useState<string>(currentMonthLabel);
     const [isSettling, setIsSettling] = useState("");
+    const [pendingSearch, setPendingSearch] = useState("");
 
     const [isEditInvoiceOpen, setIsEditInvoiceOpen] = useState(false);
     const [editInvoice, setEditInvoice] = useState<Invoice | null>(null);
@@ -189,7 +198,12 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
         return paid > 0 && paid < total;
     };
     const partialInvoices = filteredInvoices.filter(isPartialInvoice);
-    const unpaidInvoices = filteredInvoices;
+    const pendingSearchQ = pendingSearch.toLowerCase().trim();
+    const unpaidInvoices = pendingSearchQ
+        ? filteredInvoices.filter(inv =>
+            (inv.unitNumber || "").toLowerCase().includes(pendingSearchQ) ||
+            (inv.tenantEmail || "").toLowerCase().includes(pendingSearchQ))
+        : filteredInvoices;
 
     // Written-off (uncollectible — tenant absconded etc.). Respects the active month filter.
     const writtenOffInvoices = allInvoices
@@ -220,6 +234,17 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
     const openSettleModal = (inv: Invoice) => {
         setSettleInvoice(inv);
     };
+
+    // Jump-to-invoice: Home page's global tenant search can deep-link straight
+    // into "Record Payment" for a specific invoice, bypassing the Pending
+    // Invoices list/scroll entirely.
+    useEffect(() => {
+        if (!jumpToInvoiceId) return;
+        const inv = allInvoices.find(i => i.id === jumpToInvoiceId);
+        if (inv) setSettleInvoice(inv);
+        onJumpConsumed?.();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [jumpToInvoiceId]);
 
     const handleConfirmSettle = async (payload: SettlePaymentSubmit) => {
         if (!settleInvoice) return;
@@ -490,9 +515,18 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                     })()}
                 </div>
                 <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                    <div className="bg-gray-50 px-5 py-3 border-b border-gray-200 flex justify-between items-center">
+                    <div className="bg-gray-50 px-5 py-3 border-b border-gray-200 flex justify-between items-center gap-2">
                         <h3 className="text-sm font-bold text-gray-800">Pending Invoices</h3>
                         <span className="text-xs font-bold bg-red-100 text-red-700 px-2 py-1 rounded-full">{unpaidInvoices.length} pending{partialInvoices.length > 0 ? ` · ${partialInvoices.length} partial` : ""}</span>
+                    </div>
+                    <div className="px-5 py-2 border-b border-gray-100">
+                        <input
+                            type="text"
+                            value={pendingSearch}
+                            onChange={(e) => setPendingSearch(e.target.value)}
+                            placeholder="🔍 Search unit or tenant…"
+                            className="w-full text-xs px-3 py-1.5 border border-gray-300 rounded-md focus:outline-none focus:border-indigo-400"
+                        />
                     </div>
                     <div className="divide-y divide-gray-100 max-h-96 overflow-y-auto">
                         {unpaidInvoices.length === 0 ? (
