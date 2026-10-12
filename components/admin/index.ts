@@ -4,6 +4,7 @@ export { AdminTenantsTab } from "./AdminTenantsTab";
 export { AdminInvoicesTab } from "./AdminInvoicesTab";
 export { AdminExpensesTab } from "./AdminExpensesTab";
 export { AdminLedgerTab } from "./AdminLedgerTab";
+export { AdminPaymentLookupTab } from "./AdminPaymentLookupTab";
 export { AdminUsersTab } from "./AdminUsersTab";
 export { AdminMaintenanceTab } from "./AdminMaintenanceTab";
 export { AdminApplicationsTab } from "./AdminApplicationsTab";

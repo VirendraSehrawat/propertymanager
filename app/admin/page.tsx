@@ -38,6 +38,7 @@ import {
     AdminInvoicesTab,
     AdminExpensesTab,
     AdminLedgerTab,
+    AdminPaymentLookupTab,
     AdminUsersTab,
     AdminMaintenanceTab,
     AdminApplicationsTab,
@@ -53,6 +54,7 @@ type AdminTab =
     | "invoices"
     | "expenses"
     | "ledger"
+    | "payments"
     | "daily"
     | "users"
     | "maintenance"
@@ -321,6 +323,7 @@ export default function AdminDashboard() {
                         <TabButton isActive={activeTab === "invoices"} onClick={() => setActiveTab("invoices")} label="💳 Invoices" count={pendingInvoices.length} />
                         <TabButton isActive={activeTab === "expenses"} onClick={() => setActiveTab("expenses")} label="💸 Expenses" />
                         <TabButton isActive={activeTab === "ledger"} onClick={() => setActiveTab("ledger")} label="📑 Ledger" />
+                        <TabButton isActive={activeTab === "payments"} onClick={() => setActiveTab("payments")} label="🔎 Find Payments" />
                         <TabButton isActive={activeTab === "daily"} onClick={() => setActiveTab("daily")} label="📅 Daily Ledger" />
                         <TabButton isActive={activeTab === "users"} onClick={() => setActiveTab("users")} label="👤 Users" count={allUsers.length} />
                         <TabButton isActive={activeTab === "maintenance"} onClick={() => setActiveTab("maintenance")} label="🛠️ Repairs" count={maintenanceTickets.filter(t => t.status !== "resolved").length} />
@@ -385,6 +388,10 @@ export default function AdminDashboard() {
 
                 {activeTab === "ledger" && (
                     <AdminLedgerTab ledgerEntries={allLedgerEntries} currentUserEmail={user?.email || "admin"} allInvoices={allInvoicesForDashboard} masterInvoices={masterInvoices} />
+                )}
+
+                {activeTab === "payments" && (
+                    <AdminPaymentLookupTab allUnits={allUnits} allInvoices={allInvoicesForDashboard} allLedgerEntries={allLedgerEntries} />
                 )}
 
                 {activeTab === "daily" && (
