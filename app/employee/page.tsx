@@ -697,6 +697,7 @@ export default function EmployeeDashboard() {
                         openTenantProfile={openTenantProfile}
                         buildings={buildings}
                         remindedUnitIds={remindedUnitIds}
+                        currentUserEmail={user?.email || ""}
                     />
                 )}
 
@@ -738,6 +739,8 @@ export default function EmployeeDashboard() {
                         onRecordPayment={(invoiceId) => { setJumpToInvoiceId(invoiceId); setActiveTab("collections"); }}
                         onOpenCollections={() => setActiveTab("collections")}
                         onEnterMeter={(unitId, billingMonth) => { setMeterJump({ unitId, billingMonth }); setActiveTab("meter"); }}
+                        allLedgerEntries={allLedgerEntries}
+                        currentUserEmail={user?.email || ""}
                     />
                 )}
 

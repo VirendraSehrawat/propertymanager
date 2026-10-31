@@ -14,7 +14,9 @@ import {
 import { buildCollectionPaymentPlan, buildMasterSettlePlan } from "@/lib/paymentPlan";
 import { commitPaymentPlan } from "@/lib/commitPaymentPlan";
 import { invoiceContact, matchesInvoiceSearch, unitsById } from "@/lib/invoiceSearch";
-import { dueInfo, dueLabel, sortByDue } from "@/lib/paymentDue";
+import { dueInfo, dueLabel, isSameTenant, sortByDue } from "@/lib/paymentDue";
+import { followUpStatus } from "@/lib/followUp";
+import { LogFollowUpModal } from "./modals/LogFollowUpModal";
 import { notifyPaymentRecorded } from "@/lib/notify";
 import { SettlePaymentModal, type SettlePaymentSubmit } from "./modals/SettlePaymentModal";
 import { SettleMasterInvoiceModal, type SettleMasterSubmit } from "./modals/SettleMasterInvoiceModal";
@@ -50,6 +52,8 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
     const [pendingSearch, setPendingSearch] = useState("");
     // Pending list order: by when rent is due (payment day) or by unit number.
     const [pendingSort, setPendingSort] = useState<"due" | "unit">("due");
+    // 📝 Log follow-up dialog (§3.5).
+    const [followUpFor, setFollowUpFor] = useState<{ unitId: string; remaining: number } | null>(null);
 
     const [isEditInvoiceOpen, setIsEditInvoiceOpen] = useState(false);
     const [editInvoice, setEditInvoice] = useState<Invoice | null>(null);
@@ -548,7 +552,9 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                         {unpaidInvoices.length === 0 ? (
                             <p className="p-6 text-sm text-gray-500 text-center">{pendingSearch.trim() ? `No pending invoices match "${pendingSearch.trim()}".` : "🎉 No pending invoices!"}</p>
                         ) : unpaidInvoices.map(inv => {
-                                const due = dueInfo(inv, unitMap.get(inv.unitId), today);
+                                const rowUnit = unitMap.get(inv.unitId);
+                                const due = dueInfo(inv, rowUnit, today);
+                                const followUp = rowUnit && isSameTenant(inv, rowUnit) ? followUpStatus(rowUnit, allLedgerEntries, today) : null;
                                 const overdue = isOverdue(inv.billingPeriod) || (due !== null && due.daysUntil < 0);
                                 const total = Number(inv.totalAmount || 0);
                                 const paidSoFar = Number(inv.amountPaid || 0);
@@ -567,6 +573,9 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                                                     </span>
                                                 )}
                                                 {isPartial && <span className="text-[9px] font-bold bg-amber-200 text-amber-800 px-1.5 py-0.5 rounded">PARTIAL</span>}
+                                                {followUp?.promise?.state === "broken" && <span className="text-[9px] font-bold bg-red-600 text-white px-1.5 py-0.5 rounded">BROKEN PROMISE</span>}
+                                                {followUp?.promise?.state === "dueToday" && <span className="text-[9px] font-bold bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded">PROMISED TODAY</span>}
+                                                {followUp?.promise?.state === "upcoming" && <span className="text-[9px] font-bold bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded">PROMISED</span>}
                                             </div>
                                             {(() => {
                                                 const { tenantName } = invoiceContact(inv, unitMap);
@@ -575,6 +584,7 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                                                     : <p className="text-xs text-gray-500">{inv.tenantEmail}</p>;
                                             })()}
                                             <p className={`text-xs font-medium mt-0.5 ${overdue ? "text-red-600" : "text-indigo-600"}`}>{inv.billingPeriod}</p>
+                                            {followUp?.label && <p className="text-[10px] text-gray-600 mt-0.5">📝 {followUp.label}</p>}
                                             {(inv.rentPeriod || inv.electricityPeriod) && (
                                                 <p className="text-[10px] text-gray-500 mt-0.5">
                                                     {inv.rentPeriod && <>🏠 <span className="font-medium">{inv.rentPeriod}</span></>}
@@ -586,6 +596,9 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                                                 <a href={inv.meterPhotoUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] text-purple-600 hover:underline mt-0.5 block">📷 Meter photo ({inv.currentReading ?? "—"})</a>
                                             )}
                                             <button onClick={() => { const unit = occupiedUnits.find(u => u.id === inv.unitId); if (unit) openTenantProfile(unit); }} className="text-[10px] text-indigo-600 hover:underline mt-1">View Profile {"\u2192"}</button>
+                                            {rowUnit && isSameTenant(inv, rowUnit) && (
+                                                <button onClick={() => setFollowUpFor({ unitId: rowUnit.id, remaining })} className="text-[10px] text-gray-600 hover:underline mt-1 ml-3">📝 Log follow-up</button>
+                                            )}
                                         </div>
                                         <div className="text-right flex flex-col items-end gap-2">
                                             <div>
@@ -865,6 +878,14 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                     onSubmit={(payload) => handleMasterSettle(settleMaster, payload)}
                 />
             )}
+
+            <LogFollowUpModal
+                unit={followUpFor ? unitMap.get(followUpFor.unitId) ?? null : null}
+                onClose={() => setFollowUpFor(null)}
+                currentUserEmail={userEmail}
+                remaining={followUpFor?.remaining}
+                payments={allLedgerEntries}
+            />
         </>
     );
 }

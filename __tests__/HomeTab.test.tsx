@@ -9,6 +9,10 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Invoice, Unit } from "@/types";
+// The 📝 Log follow-up dialog writes to Firestore; not exercised here.
+vi.mock("@/lib/firebase", () => ({ db: {} }));
+vi.mock("firebase/firestore", () => ({ doc: vi.fn(), updateDoc: vi.fn(), arrayUnion: vi.fn() }));
+
 import { HomeTab } from "@/components/employee/HomeTab";
 
 const monthLabel = (monthsAgo: number) => {

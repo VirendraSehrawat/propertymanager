@@ -1,11 +1,13 @@
 "use client";
 
+import { useState } from "react";
 import type { Invoice, Unit, MaintenanceTicket, Expense, LedgerEntry } from "@/types";
 import { MonthCollectionsCard } from "./MonthCollectionsCard";
 import { pendingSplit } from "@/lib/allocation";
 import { buildMeterRound } from "@/lib/meterRound";
 import { buildTodayList } from "@/lib/todayList";
 import { TodayCard } from "./TodayCard";
+import { LogFollowUpModal } from "./modals/LogFollowUpModal";
 
 export type HomeTabNavTarget =
     | "home"
@@ -44,6 +46,8 @@ interface HomeTabProps {
     buildings?: { id: string; name: string }[];
     /** Units whose tenant got today's automatic payment reminder. */
     remindedUnitIds?: ReadonlySet<string>;
+    /** Staff email, recorded on follow-ups. */
+    currentUserEmail?: string;
 }
 
 /**
@@ -74,7 +78,9 @@ export function HomeTab({
     openTenantProfile,
     buildings = [],
     remindedUnitIds,
+    currentUserEmail = "",
 }: HomeTabProps) {
+    const [followUp, setFollowUp] = useState<{ unitId: string; remaining: number } | null>(null);
     const pendingInvoices = allInvoices.filter(inv => inv.status === "unpaid" || inv.status === "pending");
     // Sum only the *outstanding* balance so partial payments (amountPaid) are
     // deducted. Previously this summed totalAmount and overstated the KPI.
@@ -112,7 +118,8 @@ export function HomeTab({
     const meterRound = buildMeterRound(occupiedUnits, allInvoices, `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`, buildingNames);
     const unitsPendingMeter = meterRound.stops.filter(s => !s.done && !s.drafted).map(s => s.unit);
 
-    const today = buildTodayList({ units: allUnits, invoices: allInvoices, activeTickets, buildingNames, now });
+    const today = buildTodayList({ units: allUnits, invoices: allInvoices, activeTickets, buildingNames, payments: allLedgerEntries, now });
+    const followUpUnit = followUp ? allUnits.find(u => u.id === followUp.unitId) ?? null : null;
 
     // Today's collections — every instalment received today, at the amount
     // actually handed over (partials included, closing balances not inflated).
@@ -157,7 +164,20 @@ export function HomeTab({
             </div>
 
             {/* TODAY — what to do now, by building */}
-            <TodayCard today={today} onNavigate={onNavigate} onRecordPayment={onRecordPayment} remindedUnitIds={remindedUnitIds} />
+            <TodayCard
+                today={today}
+                onNavigate={onNavigate}
+                onRecordPayment={onRecordPayment}
+                remindedUnitIds={remindedUnitIds}
+                onLogFollowUp={(unitId, remaining) => setFollowUp({ unitId, remaining })}
+            />
+            <LogFollowUpModal
+                unit={followUpUnit}
+                onClose={() => setFollowUp(null)}
+                currentUserEmail={currentUserEmail}
+                remaining={followUp?.remaining}
+                payments={allLedgerEntries}
+            />
 
             {/* Key Metrics */}
             <div className="grid grid-cols-2 gap-3">

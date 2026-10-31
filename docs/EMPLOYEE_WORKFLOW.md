@@ -145,6 +145,13 @@ or **today** get a Telegram message with the balance still owed, if they have li
 admin channel then gets one summary: who was reminded, and who isn't on Telegram and needs a call or
 WhatsApp. On Home → Today, reminded tenants show a **🔔 Reminded** badge, so chase the others first.
 
+**Follow-ups and promises.** After calling or visiting a tenant who hasn't paid, tap **📝 Log follow-up**
+(Home → Today, Collections, or Monthly) and pick what they said: *No answer*, *Promised to pay* on a
+date, *Will pay partly* (date + amount) or *Disputed* (with a note). The row then shows *"Contacted 2
+days ago · promised Mon 3 Nov"*. Tenants who promised a later date drop out of Today until that day;
+on the day they show **Promised today**, and if the date passes unpaid, **Broken promise**. Recording
+any payment for them closes the promise automatically.
+
 #### B. Recording a full payment (single-shot case)
 
 1. Tap 🟢 **✓ Settle** on the invoice.

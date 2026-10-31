@@ -4,6 +4,9 @@ import { useMemo, useState } from "react";
 import { collectedSplit, pendingSplit, stripBillingPeriodSuffix } from "@/lib/allocation";
 import { categoryEmoji } from "@/lib/expenses";
 import { paymentReminderText, telLink, whatsAppLink } from "@/lib/contact";
+import { followUpStatus, type FollowUp, type FollowUpPayment } from "@/lib/followUp";
+import { isSameTenant } from "@/lib/paymentDue";
+import { LogFollowUpModal } from "./modals/LogFollowUpModal";
 
 interface Unit {
     id: string;
@@ -16,6 +19,7 @@ interface Unit {
     baseRent?: number;
     /** Reading saved on the meter round without an invoice yet. */
     meterDraft?: { billingMonth: string };
+    followUps?: FollowUp[];
 }
 
 interface Building { id: string; name: string; }
@@ -47,6 +51,10 @@ interface Props {
     onOpenCollections?: () => void;
     /** Opens the Meter tab on this unit and billing month ("YYYY-MM"). */
     onEnterMeter?: (unitId: string, billingMonth: string) => void;
+    /** Ledger payment rows — show whether a promise to pay was kept (§3.5). */
+    allLedgerEntries?: FollowUpPayment[];
+    /** Staff email; enables 📝 Log follow-up when set. */
+    currentUserEmail?: string;
 }
 
 const currentMonthISO = () => new Date().toISOString().slice(0, 7);
@@ -66,7 +74,8 @@ const GROUP_META: Record<Group, { label: string; emoji: string; color: string; b
     noInvoice: { label: "No Invoice Yet", emoji: "📭", color: "text-gray-700", bg: "bg-gray-50", border: "border-gray-200" },
 };
 
-export function MonthlyOverviewTab({ allUnits, buildings, allInvoices, allExpenses = [], onRecordPayment, onOpenCollections, onEnterMeter }: Props) {
+export function MonthlyOverviewTab({ allUnits, buildings, allInvoices, allExpenses = [], onRecordPayment, onOpenCollections, onEnterMeter, allLedgerEntries = [], currentUserEmail }: Props) {
+    const [followUpFor, setFollowUpFor] = useState<{ unit: Unit; remaining: number } | null>(null);
     const [selectedMonth, setSelectedMonth] = useState<string>(currentMonthISO());
     const [buildingFilter, setBuildingFilter] = useState<string>("");
     const [expandedGroups, setExpandedGroups] = useState<Record<Group, boolean>>({
@@ -232,6 +241,9 @@ export function MonthlyOverviewTab({ allUnits, buildings, allInvoices, allExpens
                     <a href={wa} target="_blank" rel="noopener noreferrer" className={`${actionClass} border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100`}>💬 WhatsApp</a>
                 )}
                 {!tel && <span className="text-[10px] text-gray-400 self-center">No phone saved</span>}
+                {currentUserEmail && isSameTenant(invoice, unit) && (
+                    <button type="button" onClick={() => setFollowUpFor({ unit, remaining })} className={`${actionClass} border-gray-300 bg-white text-gray-700 hover:bg-gray-50`}>📝 Log follow-up</button>
+                )}
             </>
         );
     };
@@ -245,6 +257,10 @@ export function MonthlyOverviewTab({ allUnits, buildings, allInvoices, allExpens
                     <div className="min-w-0 flex-1">
                         <p className="text-sm font-bold text-gray-900">{unit.unitNumber} <span className="text-[10px] text-gray-500 font-normal">· {buildingName}</span></p>
                         <p className="text-[11px] text-gray-600">{unit.tenantName || "—"}{unit.tenantEmail ? ` · ${unit.tenantEmail}` : ""}</p>
+                        {group !== "paid" && invoice && isSameTenant(invoice, unit) && (() => {
+                            const label = followUpStatus(unit, allLedgerEntries, new Date()).label;
+                            return label ? <p className="text-[10px] text-gray-600">📝 {label}</p> : null;
+                        })()}
                         {invoice && (
                             <div className="mt-1 text-[10px] text-gray-500 flex gap-2 flex-wrap">
                                 <span>Rent ₹{Number(invoice.baseRent || 0).toLocaleString()}</span>
@@ -372,6 +388,13 @@ export function MonthlyOverviewTab({ allUnits, buildings, allInvoices, allExpens
                     <p className="text-[10px] text-gray-400 text-center">Showing {scopedUnits.length} occupied unit(s) for {monthLabel}</p>
                 </div>
             </div>
+            <LogFollowUpModal
+                unit={followUpFor?.unit ?? null}
+                onClose={() => setFollowUpFor(null)}
+                currentUserEmail={currentUserEmail || ""}
+                remaining={followUpFor?.remaining}
+                payments={allLedgerEntries}
+            />
         </div>
     );
 }

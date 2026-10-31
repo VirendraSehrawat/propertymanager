@@ -20,10 +20,10 @@ where in the code it applies. Effort is marked **S** (under a day), **M** (a few
 
 *Updated: 31 Oct 2026*
 
-**Done (14):** 1.1, 1.2, 1.3, 1.4, 1.6 · 2.1, 2.2, 2.3, 2.4, 2.5 · 3.1, 3.2, 3.3, 3.4. Each is marked ✅ in its section with what shipped.
+**Done (15):** 1.1, 1.2, 1.3, 1.4, 1.6 · 2.1, 2.2, 2.3, 2.4, 2.5 · 3.1–3.5. Each is marked ✅ in its section with what shipped.
 Sections 1 (Collecting money) and 2 (Meter readings and invoicing) are complete except **1.5 Receipts**.
 
-**Next up (open quick wins):** 3.5, 3.8, 6.3, 7.3.
+**Next up (open quick wins):** 3.8, 6.3, 7.3.
 
 ---
 
@@ -184,7 +184,7 @@ the move-in date, opening meter reading captured at the same time).
 > **Updated 31 Oct 2026** to match what is now built: tenant payments go through Collections only (1.3),
 > the Daily tab splits **💵 Cash in hand / 📱 UPI-Bank / ❔ Mode not recorded** (1.1), Home's Overdue list
 > shows remaining balances and opens Record Payment (1.4), and the Meter tab has rounds, drafts, checks
-> and move-in invoices (2.1–2.5). Since then 3.1–3.4 are built (marked ✅ below).
+> and move-in invoices (2.1–2.5). Since then 3.1–3.5 are built (marked ✅ below).
 
 The items are ordered around the employee's day. Item numbers are unchanged so the rollout table still
 matches.
@@ -220,7 +220,7 @@ list can now open Record Payment directly (1.4); the Monthly overview can't.
 > - Unit items are grouped by building (sorted by name), round-wide items on top.
 >
 > KPIs and Quick Actions stay visible; the other cards moved into a collapsed **📊 More** section. **Meters Pending** now uses `buildMeterRound`, so drafted and move-in units aren't counted (drafts are shown as *"+ N read, waiting to be invoiced"*).
-> **Not yet in the list** (their features don't exist): promises (3.5), routine chores (3.7), notice periods (3.8) and day close (3.3).
+> **Not yet in the list** (their features don't exist): routine chores (3.7), notice periods (3.8) and a day-close reminder (3.3). Promises were added with 3.5.
 
 **Problem.** Home shows many separate cards (KPIs, month card, previous balance, quick actions, overdue,
 meters pending, tasks, activity) and leaves it to the employee to work out what to do first. The
@@ -282,6 +282,12 @@ an automatic reminder the day before and on the day, showing the remaining balan
 only chases tenants who didn't respond.
 
 ### 3.5 Follow-up log and promise-to-pay — S
+> ✅ **Done (31 Oct 2026).** **📝 Log follow-up** on rent rows in Home → Today, Collections (pending) and Monthly (pending), via one dialog (`components/employee/modals/LogFollowUpModal.tsx`, rules in `lib/followUp.ts`). Outcomes: *No answer*, *Promised to pay* (date), *Will pay partly* (date + amount), *Disputed* (note required).
+> - Stored append-only on the unit as `followUps[]` (date, outcome, promised date / amount, note, staff, tenant email — a new occupant doesn't inherit them).
+> - Rows show *"Contacted 2 days ago · promised Mon 3 Nov"*; Collections adds a PROMISED / PROMISED TODAY / BROKEN PROMISE badge.
+> - Today list: promises due today and **broken promises** are listed first in their building with a badge; tenants with a **future promise are left out** (counted as *"N promised to pay later"*).
+> - A promise is **closed by any payment** for that unit and tenant recorded after it (derived from the ledger, so no extra write in Collections). A later *Disputed* cancels the promise.
+
 **Problem.** When a tenant says *"I'll pay on Friday"*, there is nowhere to record it. Unit notes are
 free text, so the next day the employee has to remember who was chased, when, and what they said.
 
@@ -467,7 +473,7 @@ double tap or retry can't record the same cash twice.
 
 | Phase | Items | Outcome |
 |---|---|---|
-| **Quick wins (1 week)** | ✅ 1.1, ✅ 1.2, ✅ 1.4, ✅ 1.6, ✅ 2.2, ✅ 2.4, ✅ 3.1, 3.5, 3.8, 6.3, 7.3 | Correct numbers, fewer data errors, faster daily use |
+| **Quick wins (1 week)** | ✅ 1.1, ✅ 1.2, ✅ 1.4, ✅ 1.6, ✅ 2.2, ✅ 2.4, ✅ 3.1, ✅ 3.5, 3.8, 6.3, 7.3 | Correct numbers, fewer data errors, faster daily use |
 | **Workflow (2–3 weeks)** | ✅ 1.3, 1.5, ✅ 2.1, ✅ 2.3, 4.1, 6.2 | One payment path, fast meter rounds, receipts |
 | **Structure (3–4 weeks)** | ✅ 3.2, ✅ 3.3, 3.6, 3.9, 6.1, 7.1 | Today list grouped by building, tracked day close with owner digest, simpler navigation, faster load |
 | **Later** | ✅ 2.5, ✅ 3.4, 3.7, 3.10, 4.3, 5.x, 7.2 | Routine calendar, ageing review, automation and offline support |

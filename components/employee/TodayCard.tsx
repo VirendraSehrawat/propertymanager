@@ -12,6 +12,8 @@ interface TodayCardProps {
     onRecordPayment?: (invoiceId: string) => void;
     /** Units whose tenant got today's automatic payment reminder (§3.4). */
     remindedUnitIds?: ReadonlySet<string>;
+    /** Opens 📞 Log follow-up for a unit (§3.5). */
+    onLogFollowUp?: (unitId: string, remaining: number) => void;
 }
 
 const actionBtn = "text-[11px] font-bold px-2.5 py-1 rounded-md border transition";
@@ -21,7 +23,7 @@ const actionBtn = "text-[11px] font-bold px-2.5 py-1 rounded-md border transitio
  * round-wide items first, then unit items grouped by building in walking
  * order. Pure presentation — the list itself comes from `buildTodayList`.
  */
-export function TodayCard({ today, onNavigate, onRecordPayment, remindedUnitIds }: TodayCardProps) {
+export function TodayCard({ today, onNavigate, onRecordPayment, remindedUnitIds, onLogFollowUp }: TodayCardProps) {
     const renderItem = (item: TodayItem) => {
         if (item.kind === "rent") {
             const reminder = paymentReminderText({
@@ -43,11 +45,17 @@ export function TodayCard({ today, onNavigate, onRecordPayment, remindedUnitIds 
                                     {item.daysLate === 0 ? "Due today" : `${item.daysLate}d late`}
                                 </span>
                                 {item.paid > 0 && <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">Partial</span>}
+                                {item.promiseState && (
+                                    <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ${item.promiseState === "broken" ? "bg-red-600 text-white" : "bg-emerald-100 text-emerald-800"}`}>
+                                        {item.promiseState === "broken" ? "Broken promise" : "Promised today"}
+                                    </span>
+                                )}
                                 {item.unitId && remindedUnitIds?.has(item.unitId) && (
                                     <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-sky-100 text-sky-800" title="Automatic Telegram reminder sent today">🔔 Reminded</span>
                                 )}
                             </div>
                             <p className="text-[11px] text-gray-600 truncate">{item.tenantName || "—"} · {item.billingPeriod}{item.invoiceCount > 1 ? ` +${item.invoiceCount - 1} more` : ""}</p>
+                            {item.followUpLabel && <p className="text-[10px] text-gray-500">📝 {item.followUpLabel}</p>}
                         </div>
                         <p className="font-bold text-red-700 text-sm shrink-0">₹{item.remaining.toLocaleString()}</p>
                     </div>
@@ -63,6 +71,9 @@ export function TodayCard({ today, onNavigate, onRecordPayment, remindedUnitIds 
                         )}
                         {tel && <a href={tel} className={`${actionBtn} bg-white border-gray-300 text-gray-700 hover:bg-gray-50`}>📞 Call</a>}
                         {wa && <a href={wa} target="_blank" rel="noopener noreferrer" className={`${actionBtn} bg-green-50 border-green-200 text-green-700 hover:bg-green-100`}>💬 WhatsApp</a>}
+                        {onLogFollowUp && item.unitId && (
+                            <button type="button" onClick={() => onLogFollowUp(item.unitId!, item.remaining)} className={`${actionBtn} bg-white border-gray-300 text-gray-700 hover:bg-gray-50`}>📝 Log follow-up</button>
+                        )}
                     </div>
                 </div>
             );
@@ -100,7 +111,7 @@ export function TodayCard({ today, onNavigate, onRecordPayment, remindedUnitIds 
                 <span className="text-xs font-bold bg-indigo-200 text-indigo-900 px-2 py-0.5 rounded-full">{today.count}</span>
             </div>
             {today.count === 0 ? (
-                <p className="p-5 text-sm text-gray-500 text-center">🎉 Nothing due today.</p>
+                <p className="p-5 text-sm text-gray-500 text-center">🎉 Nothing due today.{today.promisedLater > 0 ? ` (${today.promisedLater} promised to pay later.)` : ""}</p>
             ) : (
                 <div className="divide-y divide-gray-100">
                     {today.general.map(g => g.kind === "meterRound" ? (
@@ -120,6 +131,9 @@ export function TodayCard({ today, onNavigate, onRecordPayment, remindedUnitIds 
                             <span className="text-[11px] font-bold text-purple-700 shrink-0">🧾 Generate {g.count} invoice{g.count !== 1 ? "s" : ""} →</span>
                         </button>
                     ))}
+                    {today.promisedLater > 0 && (
+                        <p className="px-4 py-1.5 text-[10px] text-emerald-800 bg-emerald-50">🤝 {today.promisedLater} tenant{today.promisedLater !== 1 ? "s" : ""} promised to pay on a later date — not listed today.</p>
+                    )}
                     {today.groups.map(group => (
                         <div key={group.buildingName}>
                             <div className="bg-gray-50 px-4 py-1.5 flex justify-between items-center">

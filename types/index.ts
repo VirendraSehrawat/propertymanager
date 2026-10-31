@@ -39,6 +39,27 @@ export interface Unit {
     /** A meter reading taken on the round but not yet turned into an invoice
      *  ("Save reading only"). Cleared when the invoice is generated. */
     meterDraft?: MeterDraft;
+    /** Collection follow-ups (calls, promises to pay), append-only. See lib/followUp.ts. */
+    followUps?: FollowUp[];
+}
+
+export type FollowUpOutcome = "noAnswer" | "promised" | "partial" | "disputed";
+
+/** One logged attempt to collect from the unit's tenant (§3.5). */
+export interface FollowUp {
+    id: string;
+    /** ISO time it was logged. */
+    at: string;
+    /** Staff email. */
+    by: string;
+    /** The tenant it was about — a later occupant doesn't inherit it. */
+    tenantEmail?: string;
+    outcome: FollowUpOutcome;
+    /** YYYY-MM-DD the tenant promised to pay (promised / partial). */
+    promisedDate?: string;
+    /** Amount promised (partial). */
+    promisedAmount?: number;
+    note?: string;
 }
 
 export interface MeterDraft {

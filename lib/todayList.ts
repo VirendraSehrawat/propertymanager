@@ -9,6 +9,7 @@
 
 import { buildMeterRound, type RoundUnit } from "@/lib/meterRound";
 import { daysBetween, invoiceYm, rentDueDate, startOfDay, ymOf } from "@/lib/paymentDue";
+import { followUpStatus, type FollowUp, type FollowUpPayment, type PromiseState } from "@/lib/followUp";
 
 /** Tickets open longer than this many days show up in Today. */
 export const STALE_TICKET_DAYS = 3;
@@ -22,6 +23,7 @@ export interface TodayUnit extends RoundUnit {
     tenantPhone?: string;
     paymentDay?: number;
     leaseEnd?: string;
+    followUps?: FollowUp[];
 }
 
 export interface TodayInvoice {
@@ -65,6 +67,10 @@ export type TodayItem =
           invoiceCount: number;
           /** 0 = due today, > 0 = days past the due date. */
           daysLate: number;
+          /** "Contacted 2 days ago · promised Mon 3 Nov" — from the follow-up log (§3.5). */
+          followUpLabel?: string;
+          /** Open promise to pay: due today, or broken (date passed, still unpaid). */
+          promiseState?: Extract<PromiseState, "dueToday" | "broken">;
       }
     | { kind: "ticket"; key: string; ticketId: string; unitNumber: string; description: string; status: string; ageDays: number }
     | { kind: "leaseEnd"; key: string; unitId: string; unitNumber: string; tenantName?: string; leaseEnd: string; daysLeft: number };
@@ -83,6 +89,8 @@ export interface TodayList {
     groups: TodayGroup[];
     /** Total actionable items (general + unit items). */
     count: number;
+    /** Tenants with rent due who promised to pay on a later date — left out of the list. */
+    promisedLater: number;
 }
 
 export { invoiceYm, rentDueDate };
@@ -90,6 +98,8 @@ export { invoiceYm, rentDueDate };
 const byUnitNumber = (a: { unitNumber: string }, b: { unitNumber: string }) =>
     a.unitNumber.localeCompare(b.unitNumber, undefined, { numeric: true, sensitivity: "base" });
 const KIND_ORDER: Record<TodayItem["kind"], number> = { rent: 0, leaseEnd: 1, ticket: 2 };
+// Within a building, promises due today and broken promises come first.
+const promiseRank = (i: TodayItem) => (i.kind === "rent" && i.promiseState ? 0 : 1);
 
 export function buildTodayList(args: {
     /** Every unit (occupied and vacant) — needed to place old tenants' dues. */
@@ -97,9 +107,12 @@ export function buildTodayList(args: {
     invoices: TodayInvoice[];
     activeTickets: TodayTicket[];
     buildingNames?: Record<string, string>;
+    /** Ledger payment rows — a payment after a promise means it was kept. */
+    payments?: FollowUpPayment[];
     now: Date;
 }): TodayList {
-    const { units, invoices, activeTickets, buildingNames = {}, now } = args;
+    const { units, invoices, activeTickets, buildingNames = {}, payments = [], now } = args;
+    let promisedLater = 0;
     const unitById = new Map(units.map(u => [u.id, u]));
     const buildingOf = (unitId?: string) => {
         const b = unitId ? unitById.get(unitId)?.buildingId : undefined;
@@ -135,6 +148,10 @@ export function buildTodayList(args: {
         const oldest = list[0].inv;
         const unit = oldest.unitId ? unitById.get(oldest.unitId) : undefined;
         const sameTenant = unit && (!unit.tenantEmail || unit.tenantEmail.toLowerCase() === (oldest.tenantEmail || "").toLowerCase());
+        const followUp = sameTenant && unit ? followUpStatus(unit, payments, now) : undefined;
+        // Promised for a later day: don't chase them again today.
+        if (followUp?.promise?.state === "upcoming") { promisedLater++; continue; }
+        const promiseState = followUp?.promise?.state === "dueToday" || followUp?.promise?.state === "broken" ? followUp.promise.state : undefined;
         add(buildingOf(oldest.unitId), {
             kind: "rent",
             key: `rent:${key}`,
@@ -149,6 +166,8 @@ export function buildTodayList(args: {
             paid: list.reduce((s, d) => s + d.paid, 0),
             invoiceCount: list.length,
             daysLate: daysBetween(list[0].due, now),
+            ...(followUp?.label ? { followUpLabel: followUp.label } : {}),
+            ...(promiseState ? { promiseState } : {}),
         });
     }
 
@@ -195,8 +214,8 @@ export function buildTodayList(args: {
         .sort(([a], [b]) => (a === "Other" ? 1 : b === "Other" ? -1 : a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" })))
         .map(([buildingName, items]) => ({
             buildingName,
-            items: items.sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind] || byUnitNumber(a, b)),
+            items: items.sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind] || promiseRank(a) - promiseRank(b) || byUnitNumber(a, b)),
         }));
     const count = general.length + sortedGroups.reduce((s, g) => s + g.items.length, 0);
-    return { general, groups: sortedGroups, count };
+    return { general, groups: sortedGroups, count, promisedLater };
 }

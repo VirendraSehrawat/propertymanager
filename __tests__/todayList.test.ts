@@ -88,6 +88,39 @@ describe("buildTodayList — rent due", () => {
     });
 });
 
+describe("buildTodayList — promises to pay", () => {
+    const promised = (promisedDate: string, day = 12) => ({
+        id: "f", at: new Date(2026, 9, day, 9).toISOString(), by: "e", tenantEmail: "u1@x.com", outcome: "promised" as const, promisedDate,
+    });
+    const invoices = [inv("i1", "u1", "101", "September 2026", 5000), inv("i2", "u2", "102", "September 2026", 5000)];
+
+    it("leaves out tenants who promised a later date, and counts them", () => {
+        const list = build([unit("u1", "101", { followUps: [promised("2026-10-20")] }), unit("u2", "102")], invoices);
+        expect(items(list).map(i => i.unitNumber)).toEqual(["102"]);
+        expect(list.promisedLater).toBe(1);
+    });
+
+    it("lists promises due today and broken promises first, with the follow-up label", () => {
+        const today = build([unit("u1", "101"), unit("u2", "102", { followUps: [{ ...promised("2026-10-14"), tenantEmail: "u2@x.com" }] })], invoices);
+        expect(items(today)).toEqual([
+            expect.objectContaining({ unitNumber: "102", promiseState: "dueToday", followUpLabel: "Contacted 2 days ago · promised today" }),
+            expect.objectContaining({ unitNumber: "101" }),
+        ]);
+        const broken = build([unit("u1", "101", { followUps: [promised("2026-10-13", 10)] })], invoices.slice(0, 1));
+        expect(items(broken)[0]).toMatchObject({ promiseState: "broken" });
+    });
+
+    it("a payment after the promise closes it", () => {
+        const list = buildTodayList({
+            units: [unit("u1", "101", { followUps: [promised("2026-10-13", 10)] })],
+            invoices: [inv("i1", "u1", "101", "September 2026", 5000, { status: "pending", amountPaid: 1000 })],
+            activeTickets: [], buildingNames, now: NOW,
+            payments: [{ unitId: "u1", tenantEmail: "u1@x.com", amountPaid: 1000, createdAt: new Date(2026, 9, 13).toISOString() }],
+        });
+        expect(items(list)[0]).not.toHaveProperty("promiseState");
+    });
+});
+
 describe("buildTodayList — meter round, tickets, leases, grouping", () => {
     it("counts drafts and move-in invoices as read, and lists drafts to generate", () => {
         const units = [
