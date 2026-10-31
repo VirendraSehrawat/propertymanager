@@ -150,6 +150,7 @@ export default function EmployeeHelpPage() {
                         <h2 className="text-lg font-bold text-indigo-800">💵 5. Collecting Payments</h2>
                     </div>
                     <div className="p-6 space-y-3 text-sm text-gray-700">
+                        <p>Pending invoices are listed <strong>by due date</strong> — due today, then overdue, then due this week — from each unit&apos;s <strong>payment day</strong>. Tenants on Telegram get an automatic reminder the day before and on the day; Home → Today marks them <strong>🔔 Reminded</strong>, so call the others first.</p>
                         <p>From <strong>Collections</strong> tab, tap <span className="bg-green-100 text-green-800 px-2 py-0.5 rounded text-xs font-bold">✓ Settle</span> on a pending invoice. A modal opens with two big buttons at the top:</p>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                             <div className="bg-green-50 border border-green-200 rounded-lg p-3">

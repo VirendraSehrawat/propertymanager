@@ -149,6 +149,8 @@ export default function EmployeeDashboard() {
     // Daily Ledger States
     const [dailyLedgerEntries, setDailyLedgerEntries] = useState<DailyLedgerEntry[]>([]);
     const [dayCloses, setDayCloses] = useState<(DayClose & { id: string })[]>([]);
+    // Units whose tenant got today's automatic Telegram payment reminder.
+    const [remindedUnitIds, setRemindedUnitIds] = useState<ReadonlySet<string>>(new Set());
 
     // Inventory States
     const [allInventory, setAllInventory] = useState<InventoryItem[]>([]);
@@ -225,6 +227,11 @@ export default function EmployeeDashboard() {
             setDayCloses(mapSnapshot<DayClose>(snapshot).map(c => ({ ...c, date: c.date || c.id })));
         });
 
+        const unsubReminders = onSnapshot(query(collection(db, COL.paymentReminders), where("sentOn", "==", localDateKey(new Date()))), (snapshot) => {
+            const sent = mapSnapshot<{ unitId?: string; ok?: boolean }>(snapshot).filter(r => r.ok && r.unitId);
+            setRemindedUnitIds(new Set(sent.map(r => r.unitId as string)));
+        });
+
         // Rows created since local midnight. If the page stays open past
         // midnight the bound goes stale, but `collectedOn` still filters by day.
         const startOfToday = new Date();
@@ -233,7 +240,7 @@ export default function EmployeeDashboard() {
             setRecentMasterLedgerEntries(mapSnapshot<LedgerEntry>(snapshot));
         });
 
-        return () => { unsubTickets(); unsubUnits(); unsubInvoices(); unsubMasterInvoices(); unsubLedger(); unsubAllUnits(); unsubBuildings(); unsubChecklists(); unsubExpenses(); unsubInventory(); unsubAllocations(); unsubDailyLedger(); unsubDayCloses(); unsubMasterLedger(); };
+        return () => { unsubTickets(); unsubUnits(); unsubInvoices(); unsubMasterInvoices(); unsubLedger(); unsubAllUnits(); unsubBuildings(); unsubChecklists(); unsubExpenses(); unsubInventory(); unsubAllocations(); unsubDailyLedger(); unsubDayCloses(); unsubReminders(); unsubMasterLedger(); };
     }, [role]);
 
     const handleLogout = async () => {
@@ -689,6 +696,7 @@ export default function EmployeeDashboard() {
                         onRecordPayment={(invoiceId) => { setJumpToInvoiceId(invoiceId); setActiveTab("collections"); }}
                         openTenantProfile={openTenantProfile}
                         buildings={buildings}
+                        remindedUnitIds={remindedUnitIds}
                     />
                 )}
 

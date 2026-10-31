@@ -135,6 +135,15 @@ in **multiple instalments on different days** (e.g. ₹3,000 on the 5th by UPI, 
      against it. The amber colour is the visual cue: *"this is a follow-up
      payment, not a fresh one."*
 3. A **PARTIAL** badge on the card confirms the invoice has been part-paid.
+4. Pending invoices are sorted **📅 By due date** (switch to **🔢 By unit** next to the search box):
+   **due today → overdue (most late first) → due this week → later**. Each card has a due badge —
+   *DUE TODAY*, *5D LATE*, *DUE TOMORROW* or *DUE SAT 8 NOV* — worked out from the unit's
+   **payment day** (no payment day → due on the 1st of the following month).
+
+**Automatic reminders (Telegram).** Every morning at 09:00 IST, tenants whose rent is due **tomorrow**
+or **today** get a Telegram message with the balance still owed, if they have linked Telegram. The
+admin channel then gets one summary: who was reminded, and who isn't on Telegram and needs a call or
+WhatsApp. On Home → Today, reminded tenants show a **🔔 Reminded** badge, so chase the others first.
 
 #### B. Recording a full payment (single-shot case)
 

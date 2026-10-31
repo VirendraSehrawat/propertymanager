@@ -7,8 +7,8 @@
  * fixed `now`. See `docs/EMPLOYEE_WORKFLOW_IMPROVEMENTS.md` §3.2.
  */
 
-import { stripBillingPeriodSuffix } from "@/lib/allocation";
 import { buildMeterRound, type RoundUnit } from "@/lib/meterRound";
+import { daysBetween, invoiceYm, rentDueDate, startOfDay, ymOf } from "@/lib/paymentDue";
 
 /** Tickets open longer than this many days show up in Today. */
 export const STALE_TICKET_DAYS = 3;
@@ -51,6 +51,7 @@ export type TodayItem =
     | {
           kind: "rent";
           key: string;
+          unitId?: string;
           unitNumber: string;
           tenantName?: string;
           tenantPhone?: string;
@@ -84,30 +85,7 @@ export interface TodayList {
     count: number;
 }
 
-const DAY_MS = 86_400_000;
-const pad = (n: number) => String(n).padStart(2, "0");
-const ymOf = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
-const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
-const daysBetween = (from: Date, to: Date) => Math.round((startOfDay(to).getTime() - startOfDay(from).getTime()) / DAY_MS);
-
-/** "YYYY-MM" of an invoice's billing month, from `billingYm` or the "October 2026" label. */
-export function invoiceYm(inv: Pick<TodayInvoice, "billingYm" | "billingPeriod">): string {
-    if (inv.billingYm && /^\d{4}-\d{2}$/.test(inv.billingYm)) return inv.billingYm;
-    const d = new Date(stripBillingPeriodSuffix(inv.billingPeriod));
-    return Number.isNaN(d.getTime()) ? "" : ymOf(d);
-}
-
-/**
- * When rent for a billing month is due: the unit's payment day in that month
- * (clamped to short months), or — without a payment day — the 1st of the next
- * month, which matches the existing "past month = overdue" rule.
- */
-export function rentDueDate(billingYm: string, paymentDay?: number): Date {
-    const [y, m] = billingYm.split("-").map(Number);
-    if (!paymentDay) return new Date(y, m, 1);
-    const daysInMonth = new Date(y, m, 0).getDate();
-    return new Date(y, m - 1, Math.min(Math.max(1, paymentDay), daysInMonth));
-}
+export { invoiceYm, rentDueDate };
 
 const byUnitNumber = (a: { unitNumber: string }, b: { unitNumber: string }) =>
     a.unitNumber.localeCompare(b.unitNumber, undefined, { numeric: true, sensitivity: "base" });
@@ -160,6 +138,7 @@ export function buildTodayList(args: {
         add(buildingOf(oldest.unitId), {
             kind: "rent",
             key: `rent:${key}`,
+            unitId: oldest.unitId,
             unitNumber: oldest.unitNumber || unit?.unitNumber || "—",
             tenantName: sameTenant ? unit?.tenantName : undefined,
             tenantPhone: sameTenant ? unit?.tenantPhone : undefined,

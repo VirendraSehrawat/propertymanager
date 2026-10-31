@@ -14,6 +14,7 @@ import {
 import { buildCollectionPaymentPlan, buildMasterSettlePlan } from "@/lib/paymentPlan";
 import { commitPaymentPlan } from "@/lib/commitPaymentPlan";
 import { invoiceContact, matchesInvoiceSearch, unitsById } from "@/lib/invoiceSearch";
+import { dueInfo, dueLabel, sortByDue } from "@/lib/paymentDue";
 import { notifyPaymentRecorded } from "@/lib/notify";
 import { SettlePaymentModal, type SettlePaymentSubmit } from "./modals/SettlePaymentModal";
 import { SettleMasterInvoiceModal, type SettleMasterSubmit } from "./modals/SettleMasterInvoiceModal";
@@ -47,6 +48,8 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
     const [collectionFilter, setCollectionFilter] = useState<string>(currentMonthLabel);
     const [isSettling, setIsSettling] = useState("");
     const [pendingSearch, setPendingSearch] = useState("");
+    // Pending list order: by when rent is due (payment day) or by unit number.
+    const [pendingSort, setPendingSort] = useState<"due" | "unit">("due");
 
     const [isEditInvoiceOpen, setIsEditInvoiceOpen] = useState(false);
     const [editInvoice, setEditInvoice] = useState<Invoice | null>(null);
@@ -195,7 +198,10 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
         return paid > 0 && paid < total;
     };
     const partialInvoices = filteredInvoices.filter(isPartialInvoice);
-    const unpaidInvoices = filteredInvoices.filter(inv => matchesInvoiceSearch(inv, pendingSearch, unitMap));
+    const today = new Date();
+    const searchedInvoices = filteredInvoices.filter(inv => matchesInvoiceSearch(inv, pendingSearch, unitMap));
+    // Due today → overdue → due this week → later (pendingInvoices is already in unit order).
+    const unpaidInvoices = pendingSort === "due" ? sortByDue(searchedInvoices, unitMap, today) : searchedInvoices;
 
     // Written-off (uncollectible — tenant absconded etc.). Respects the active month filter.
     const writtenOffInvoices = allInvoices
@@ -520,20 +526,30 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                         <h3 className="text-sm font-bold text-gray-800">Pending Invoices</h3>
                         <span className="text-xs font-bold bg-red-100 text-red-700 px-2 py-1 rounded-full">{unpaidInvoices.length} pending{partialInvoices.length > 0 ? ` · ${partialInvoices.length} partial` : ""}</span>
                     </div>
-                    <div className="px-5 py-2 border-b border-gray-100">
+                    <div className="px-5 py-2 border-b border-gray-100 flex gap-2">
                         <input
                             type="text"
                             value={pendingSearch}
                             onChange={(e) => setPendingSearch(e.target.value)}
                             placeholder="🔍 Search unit, name, phone or email…"
-                            className="w-full text-xs px-3 py-1.5 border border-gray-300 rounded-md focus:outline-none focus:border-indigo-400"
+                            className="flex-1 min-w-0 text-xs px-3 py-1.5 border border-gray-300 rounded-md focus:outline-none focus:border-indigo-400"
                         />
+                        <select
+                            aria-label="Sort pending invoices"
+                            value={pendingSort}
+                            onChange={(e) => setPendingSort(e.target.value as "due" | "unit")}
+                            className="text-xs px-2 py-1.5 border border-gray-300 rounded-md"
+                        >
+                            <option value="due">📅 By due date</option>
+                            <option value="unit">🔢 By unit</option>
+                        </select>
                     </div>
                     <div className="divide-y divide-gray-100 max-h-96 overflow-y-auto">
                         {unpaidInvoices.length === 0 ? (
                             <p className="p-6 text-sm text-gray-500 text-center">{pendingSearch.trim() ? `No pending invoices match "${pendingSearch.trim()}".` : "🎉 No pending invoices!"}</p>
                         ) : unpaidInvoices.map(inv => {
-                                const overdue = isOverdue(inv.billingPeriod);
+                                const due = dueInfo(inv, unitMap.get(inv.unitId), today);
+                                const overdue = isOverdue(inv.billingPeriod) || (due !== null && due.daysUntil < 0);
                                 const total = Number(inv.totalAmount || 0);
                                 const paidSoFar = Number(inv.amountPaid || 0);
                                 const remaining = Math.max(0, total - paidSoFar);
@@ -545,7 +561,11 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                                         <div>
                                             <div className="flex items-center gap-2">
                                                 <p className="font-bold text-gray-900">{inv.unitNumber}</p>
-                                                {overdue && <span className="text-[9px] font-bold bg-red-200 text-red-800 px-1.5 py-0.5 rounded">OVERDUE</span>}
+                                                {due && (
+                                                    <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${due.daysUntil < 0 ? "bg-red-200 text-red-800" : due.daysUntil === 0 ? "bg-amber-200 text-amber-900" : "bg-gray-100 text-gray-600"}`}>
+                                                        {dueLabel(due).toUpperCase()}
+                                                    </span>
+                                                )}
                                                 {isPartial && <span className="text-[9px] font-bold bg-amber-200 text-amber-800 px-1.5 py-0.5 rounded">PARTIAL</span>}
                                             </div>
                                             {(() => {

@@ -20,7 +20,7 @@ import {
     initializeTestEnvironment,
     type RulesTestEnvironment,
 } from "@firebase/rules-unit-testing";
-import { doc, setDoc, updateDoc, deleteDoc } from "firebase/firestore";
+import { doc, getDoc, setDoc, updateDoc, deleteDoc } from "firebase/firestore";
 
 let testEnv: RulesTestEnvironment;
 
@@ -183,5 +183,14 @@ describe("dayCloses — end-of-day close", () => {
         await assertSucceeds(updateDoc(doc(admin(), "dayCloses", "2026-10-30"), { status: "reopened", reopenedBy: "a@x.com" }));
         await assertSucceeds(setDoc(doc(employee(), "dayCloses", "2026-10-30"), { ...close, actualCash: 1200 }));
         await assertFails(updateDoc(doc(employee(), "dayCloses", "2026-10-30"), { status: "reopened" }));
+    });
+});
+
+describe("paymentReminders — server-written", () => {
+    it("staff CAN read but nobody can write from the client", async () => {
+        await seed(["paymentReminders", "r1"], { unitId: "u1", sentOn: "2026-10-31", ok: true });
+        await assertSucceeds(getDoc(doc(employee(), "paymentReminders", "r1")));
+        await assertFails(setDoc(doc(employee(), "paymentReminders", "r2"), { unitId: "u1" }));
+        await assertFails(setDoc(doc(admin(), "paymentReminders", "r2"), { unitId: "u1" }));
     });
 });

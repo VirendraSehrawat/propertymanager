@@ -20,7 +20,7 @@ where in the code it applies. Effort is marked **S** (under a day), **M** (a few
 
 *Updated: 31 Oct 2026*
 
-**Done (13):** 1.1, 1.2, 1.3, 1.4, 1.6 · 2.1, 2.2, 2.3, 2.4, 2.5 · 3.1, 3.2, 3.3. Each is marked ✅ in its section with what shipped.
+**Done (14):** 1.1, 1.2, 1.3, 1.4, 1.6 · 2.1, 2.2, 2.3, 2.4, 2.5 · 3.1, 3.2, 3.3, 3.4. Each is marked ✅ in its section with what shipped.
 Sections 1 (Collecting money) and 2 (Meter readings and invoicing) are complete except **1.5 Receipts**.
 
 **Next up (open quick wins):** 3.5, 3.8, 6.3, 7.3.
@@ -184,7 +184,7 @@ the move-in date, opening meter reading captured at the same time).
 > **Updated 31 Oct 2026** to match what is now built: tenant payments go through Collections only (1.3),
 > the Daily tab splits **💵 Cash in hand / 📱 UPI-Bank / ❔ Mode not recorded** (1.1), Home's Overdue list
 > shows remaining balances and opens Record Payment (1.4), and the Meter tab has rounds, drafts, checks
-> and move-in invoices (2.1–2.5). Since then 3.1, 3.2 and 3.3 are built (marked ✅ below).
+> and move-in invoices (2.1–2.5). Since then 3.1–3.4 are built (marked ✅ below).
 
 The items are ordered around the employee's day. Item numbers are unchanged so the rollout table still
 matches.
@@ -267,6 +267,11 @@ saves the reconciliation.
    tab; changes need a reopen by the admin.
 
 ### 3.4 Payment-day reminders — S/M
+> ✅ **Done (31 Oct 2026)**, Telegram only. Due dates now live in `lib/paymentDue.ts` (shared with the Today list).
+> - **Collections** sorts pending invoices **due today → overdue → due this week → later** (toggle back to unit order), with a due badge on each card (*DUE TODAY*, *5D LATE*, *DUE TOMORROW*, *DUE SAT 8 NOV*).
+> - **Automatic reminders:** a daily job (`/api/notifications/payment-reminders`, 09:00 IST via `vercel.json` cron, protected by `CRON_SECRET`) sends linked tenants a Telegram message the day before and on the payment day with the balance still owed, and sends the admin channel one summary of who was reminded and who isn't on Telegram. Each send is recorded once in `paymentReminders` (never sent twice); Home → Today shows **🔔 Reminded** for those tenants.
+> - **Not done:** automatic WhatsApp (no WhatsApp API is set up — the manual 💬 WhatsApp buttons from 3.1/3.2 remain), and a scheduler on Firebase App Hosting (needs a Cloud Scheduler job; see `TELEGRAM_INTEGRATION.md` §8a).
+
 **Problem.** `unit.paymentDay` is stored and used for rent periods (and now for the move-in pro-rating),
 but nothing uses it to prompt follow-ups. Home's Overdue list is sorted oldest first, which isn't the
 same as "who should pay today".
@@ -465,6 +470,6 @@ double tap or retry can't record the same cash twice.
 | **Quick wins (1 week)** | ✅ 1.1, ✅ 1.2, ✅ 1.4, ✅ 1.6, ✅ 2.2, ✅ 2.4, ✅ 3.1, 3.5, 3.8, 6.3, 7.3 | Correct numbers, fewer data errors, faster daily use |
 | **Workflow (2–3 weeks)** | ✅ 1.3, 1.5, ✅ 2.1, ✅ 2.3, 4.1, 6.2 | One payment path, fast meter rounds, receipts |
 | **Structure (3–4 weeks)** | ✅ 3.2, ✅ 3.3, 3.6, 3.9, 6.1, 7.1 | Today list grouped by building, tracked day close with owner digest, simpler navigation, faster load |
-| **Later** | ✅ 2.5, 3.4, 3.7, 3.10, 4.3, 5.x, 7.2 | Routine calendar, ageing review, automation and offline support |
+| **Later** | ✅ 2.5, ✅ 3.4, 3.7, 3.10, 4.3, 5.x, 7.2 | Routine calendar, ageing review, automation and offline support |
 
-✅ = done. 2.5 was brought forward and shipped with the other meter/invoicing items.
+✅ = done. 2.5 and 3.4 were brought forward.

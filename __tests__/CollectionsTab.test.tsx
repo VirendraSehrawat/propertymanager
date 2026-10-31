@@ -241,3 +241,30 @@ describe("CollectionsTab — carry-forward preview", () => {
         ).toBeInTheDocument();
     });
 });
+
+describe("CollectionsTab — payment-day order", () => {
+    it("lists rent due today before overdue rent, with due badges, and can switch to unit order", async () => {
+        const user = userEvent.setup();
+        const dueToday: Invoice = { ...invoiceCurrent, id: "inv-today", unitId: "u2", unitNumber: "102", tenantEmail: "bob@x.com" };
+        const overdue: Invoice = { ...invoicePrev, id: "inv-late", unitId: "u1", unitNumber: "101", tenantEmail: "alice@x.com" };
+        render(
+            <CollectionsTab
+                allInvoices={[overdue, dueToday]}
+                occupiedUnits={[unitA, { ...unitB, paymentDay: new Date().getDate() }]}
+                electricityRate={10}
+                openTenantProfile={() => {}}
+                userEmail="employee@x.com"
+            />,
+        );
+        await user.selectOptions(screen.getByRole("option", { name: /All Pending/ }).closest("select") as HTMLSelectElement, "all");
+        const list = screen.getByText("Pending Invoices").closest("div.rounded-xl") as HTMLElement;
+        const order = () => within(list).getAllByText(/^10[12]$/).map(el => el.textContent);
+
+        expect(order()).toEqual(["102", "101"]);
+        expect(within(list).getByText("DUE TODAY")).toBeInTheDocument();
+        expect(within(list).getByText(/^\d+D LATE$/)).toBeInTheDocument();
+
+        await user.selectOptions(within(list).getByLabelText("Sort pending invoices"), "unit");
+        expect(order()).toEqual(["101", "102"]);
+    });
+});

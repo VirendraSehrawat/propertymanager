@@ -10,6 +10,8 @@ interface TodayCardProps {
     onNavigate: (tab: HomeTabNavTarget) => void;
     /** Opens Collections' Record Payment modal for one invoice. */
     onRecordPayment?: (invoiceId: string) => void;
+    /** Units whose tenant got today's automatic payment reminder (§3.4). */
+    remindedUnitIds?: ReadonlySet<string>;
 }
 
 const actionBtn = "text-[11px] font-bold px-2.5 py-1 rounded-md border transition";
@@ -19,7 +21,7 @@ const actionBtn = "text-[11px] font-bold px-2.5 py-1 rounded-md border transitio
  * round-wide items first, then unit items grouped by building in walking
  * order. Pure presentation — the list itself comes from `buildTodayList`.
  */
-export function TodayCard({ today, onNavigate, onRecordPayment }: TodayCardProps) {
+export function TodayCard({ today, onNavigate, onRecordPayment, remindedUnitIds }: TodayCardProps) {
     const renderItem = (item: TodayItem) => {
         if (item.kind === "rent") {
             const reminder = paymentReminderText({
@@ -41,6 +43,9 @@ export function TodayCard({ today, onNavigate, onRecordPayment }: TodayCardProps
                                     {item.daysLate === 0 ? "Due today" : `${item.daysLate}d late`}
                                 </span>
                                 {item.paid > 0 && <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">Partial</span>}
+                                {item.unitId && remindedUnitIds?.has(item.unitId) && (
+                                    <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-sky-100 text-sky-800" title="Automatic Telegram reminder sent today">🔔 Reminded</span>
+                                )}
                             </div>
                             <p className="text-[11px] text-gray-600 truncate">{item.tenantName || "—"} · {item.billingPeriod}{item.invoiceCount > 1 ? ` +${item.invoiceCount - 1} more` : ""}</p>
                         </div>

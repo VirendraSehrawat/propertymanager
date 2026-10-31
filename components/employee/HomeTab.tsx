@@ -42,6 +42,8 @@ interface HomeTabProps {
     openTenantProfile: (unit: Unit) => void;
     /** Building names for grouping the Today list and the meter round order. */
     buildings?: { id: string; name: string }[];
+    /** Units whose tenant got today's automatic payment reminder. */
+    remindedUnitIds?: ReadonlySet<string>;
 }
 
 /**
@@ -71,6 +73,7 @@ export function HomeTab({
     onRecordPayment,
     openTenantProfile,
     buildings = [],
+    remindedUnitIds,
 }: HomeTabProps) {
     const pendingInvoices = allInvoices.filter(inv => inv.status === "unpaid" || inv.status === "pending");
     // Sum only the *outstanding* balance so partial payments (amountPaid) are
@@ -154,7 +157,7 @@ export function HomeTab({
             </div>
 
             {/* TODAY — what to do now, by building */}
-            <TodayCard today={today} onNavigate={onNavigate} onRecordPayment={onRecordPayment} />
+            <TodayCard today={today} onNavigate={onNavigate} onRecordPayment={onRecordPayment} remindedUnitIds={remindedUnitIds} />
 
             {/* Key Metrics */}
             <div className="grid grid-cols-2 gap-3">

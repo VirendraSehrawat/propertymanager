@@ -19,7 +19,9 @@ Status: **Design proposal** — not yet implemented.
 > - Wired: `components/employee/MeterTab.tsx` → invoice-created ; `components/employee/CollectionsTab.tsx` (settle) → payment-recorded
 > - Uses `parse_mode: "HTML"` (simpler escape rules than MarkdownV2)
 >
-> **Not yet shipped** (deferred): P4 overdue sweep cron, P5 admin delivery-health tile, tenant channel preference for WhatsApp fan-out.
+> - `app/api/notifications/payment-reminders/route.ts` — daily payment-day reminders (tenant: due tomorrow / due today; admin: one summary). See §8a.
+>
+> **Not yet shipped** (deferred): P4 overdue sweep cron (escalation after the due date), P5 admin delivery-health tile, tenant channel preference for WhatsApp fan-out.
 
 
 Telegram is proposed as a **lighter-weight, free alternative** to the
@@ -338,6 +340,25 @@ Deduplication: the sweep skips any invoice that already has an outbound
 `tgMessages` doc within the last 7 days for the same `kind + invoiceId`.
 
 ---
+
+## 8a. Payment-Day Reminders (shipped)
+
+`GET /api/notifications/payment-reminders` — once a day at 09:00 IST (`vercel.json`: `30 3 * * *` UTC).
+
+- **Auth:** `Authorization: Bearer $CRON_SECRET`. Vercel Cron sends it automatically when `CRON_SECRET`
+  is set. On Firebase App Hosting, create a Cloud Scheduler job (`30 3 * * *`, UTC) that calls the URL
+  with that header. Without `CRON_SECRET` the endpoint refuses every call.
+- **Who:** every unit + tenant whose rent is due **tomorrow** (`dueTomorrow`) or **today** (`dueToday`),
+  using the unit's `paymentDay` (`lib/paymentDue.ts`). The message quotes everything still owed on the
+  unit. Corporate (master-invoiced) units and an old tenant's dues on a re-let unit are skipped.
+- **Channels:** Telegram to tenants with `telegramOptIn`; one silent `paymentReminderSummary` to the
+  admin channel listing who was reminded and who must be called / WhatsApped.
+- **De-duplication:** each reminder is created as `paymentReminders/{unitId}_{email}_{kind}_{dueDate}`
+  before sending; a second run the same day skips it. A failed send is recorded (`ok: false`, `error`)
+  and not retried.
+- **Staff view:** the employee Home → Today list shows **🔔 Reminded** for tenants sent one today.
+  `paymentReminders` is staff-readable, server-written only (Admin SDK).
+- **Test:** `?dryRun=1` returns the list (with `telegramLinked`) without sending or recording.
 
 ## 9. Webhook Handling
 

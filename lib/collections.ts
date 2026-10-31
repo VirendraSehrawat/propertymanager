@@ -27,6 +27,8 @@ export const COL = {
     dailyLedger: "dailyLedger",
     /** End-of-day cash closes, one per local date (`YYYY-MM-DD`). */
     dayCloses: "dayCloses",
+    /** Payment-day reminders sent by the daily job (server-written). */
+    paymentReminders: "paymentReminders",
     allocations: "allocations",
     inventory: "inventory",
     checklists: "checklists",

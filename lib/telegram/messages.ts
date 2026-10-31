@@ -113,3 +113,56 @@ export async function sendPaymentPartial(chatId: string, ctx: PaymentContext): P
         relatedLedgerId: ctx.ledgerId,
     });
 }
+
+export interface PaymentReminderContext {
+    kind: "dueTomorrow" | "dueToday";
+    tenantName?: string;
+    unitNumber?: string;
+    /** Display date, e.g. "Sat 1 Nov". */
+    dueDate: string;
+    /** Total still owed on the unit. */
+    remaining: number;
+    dashboardUrl?: string;
+    relatedInvoiceId?: string;
+}
+
+/** Tenant reminder the day before / on the payment day (§3.4 of EMPLOYEE_WORKFLOW_IMPROVEMENTS.md). */
+export async function sendPaymentReminder(chatId: string, ctx: PaymentReminderContext): Promise<SendMessageResult> {
+    const when = ctx.kind === "dueToday" ? "<b>today</b>" : `<b>tomorrow</b> (${esc(ctx.dueDate)})`;
+    const body =
+        `🔔 <b>Namaste ${esc(ctx.tenantName || "")}</b>\n\n` +
+        `Rent for unit <b>${esc(ctx.unitNumber || "")}</b> is due ${when}.\n` +
+        `Amount due: <b>₹${ctx.remaining.toLocaleString("en-IN")}</b>\n\n` +
+        `Already paid? Please ignore this message.\n\n` +
+        `<i>You are receiving this because you linked unit ${esc(ctx.unitNumber || "")}. Send /stop to unsubscribe.</i>`;
+    return sendTelegramMessage({
+        chatId,
+        text: body,
+        kind: "paymentReminder",
+        inlineKeyboard: ctx.dashboardUrl ? [[{ text: "🌐 View & pay", url: ctx.dashboardUrl }]] : undefined,
+        relatedInvoiceId: ctx.relatedInvoiceId,
+    });
+}
+
+export interface ReminderSummaryLine {
+    unitNumber: string;
+    tenantName?: string;
+    remaining: number;
+    kind: "dueTomorrow" | "dueToday";
+    sent: boolean;
+}
+
+/** Daily summary to the admin channel: who was reminded and who must be chased by phone. */
+export async function sendReminderSummary(chatId: string, date: string, lines: ReminderSummaryLine[]): Promise<SendMessageResult> {
+    const fmt = (l: ReminderSummaryLine) =>
+        `• ${esc(l.unitNumber)}${l.tenantName ? ` (${esc(l.tenantName)})` : ""} — ₹${l.remaining.toLocaleString("en-IN")} due ${l.kind === "dueToday" ? "today" : "tomorrow"}`;
+    // Keep well under Telegram's 4,096-character limit.
+    const list = (ls: ReminderSummaryLine[]) => ls.slice(0, 30).map(fmt).join("\n") + (ls.length > 30 ? `\n…and ${ls.length - 30} more` : "");
+    const sent = lines.filter(l => l.sent);
+    const notSent = lines.filter(l => !l.sent);
+    const body =
+        `🔔 <b>Payment reminders — ${esc(date)}</b>\n\n` +
+        (sent.length ? `Sent on Telegram (${sent.length}):\n${list(sent)}\n\n` : "") +
+        (notSent.length ? `<b>Not on Telegram — call or WhatsApp (${notSent.length}):</b>\n${list(notSent)}` : "Everyone due was reminded.");
+    return sendTelegramMessage({ chatId, text: body, kind: "paymentReminderSummary", silent: true });
+}

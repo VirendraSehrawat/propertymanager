@@ -364,6 +364,13 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    match /paymentReminders/{reminderId} {
+      // Written only by the daily reminder job (Admin SDK). Staff can see who
+      // was reminded so they only chase the rest.
+      allow read: if isStaff();
+      allow write: if false;
+    }
+
     match /dayCloses/{date} {
       // End-of-day cash close, one per local date. Staff create it; once
       // closed only an admin can change it (reopen / mark reviewed). Staff
