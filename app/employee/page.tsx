@@ -649,6 +649,7 @@ export default function EmployeeDashboard() {
                         setHomeMonth={setHomeMonth}
                         onNavigate={setActiveTab}
                         onOpenTodayCollections={() => setIsTodayCollectionsOpen(true)}
+                        onRecordPayment={(invoiceId) => { setJumpToInvoiceId(invoiceId); setActiveTab("collections"); }}
                         openTenantProfile={openTenantProfile}
                     />
                 )}

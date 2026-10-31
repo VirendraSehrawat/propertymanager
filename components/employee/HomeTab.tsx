@@ -34,6 +34,8 @@ interface HomeTabProps {
     setHomeMonth: (m: string) => void;
     onNavigate: (tab: HomeTabNavTarget) => void;
     onOpenTodayCollections: () => void;
+    /** Opens Collections' Record Payment modal for one invoice. */
+    onRecordPayment?: (invoiceId: string) => void;
     openTenantProfile: (unit: Unit) => void;
 }
 
@@ -60,6 +62,7 @@ export function HomeTab({
     setHomeMonth,
     onNavigate,
     onOpenTodayCollections,
+    onRecordPayment,
     openTenantProfile,
 }: HomeTabProps) {
     const pendingInvoices = allInvoices.filter(inv => inv.status === "unpaid" || inv.status === "pending");
@@ -72,11 +75,25 @@ export function HomeTab({
 
     // Overdue: billing period is a past month
     const now = new Date();
-    const overdueInvoices = pendingInvoices.filter(inv => {
-        if (!inv.billingPeriod) return false;
-        const periodDate = new Date(inv.billingPeriod);
-        return periodDate.getFullYear() < now.getFullYear() || (periodDate.getFullYear() === now.getFullYear() && periodDate.getMonth() < now.getMonth());
-    });
+    // Each row shows what is still owed (total − paid), the same figure the
+    // Collections card shows — not the original invoice total. Oldest first.
+    const overdueInvoices = pendingInvoices
+        .filter(inv => {
+            if (!inv.billingPeriod) return false;
+            const periodDate = new Date(inv.billingPeriod);
+            return periodDate.getFullYear() < now.getFullYear() || (periodDate.getFullYear() === now.getFullYear() && periodDate.getMonth() < now.getMonth());
+        })
+        .map(inv => {
+            const total = Number(inv.totalAmount || 0);
+            const paid = Number(inv.amountPaid || 0);
+            return { inv, total, paid, remaining: Math.max(0, total - paid), isPartial: paid > 0 && paid < total };
+        })
+        .filter(x => x.remaining > 0)
+        .sort((a, b) =>
+            new Date(a.inv.billingPeriod || "").getTime() - new Date(b.inv.billingPeriod || "").getTime() ||
+            String(a.inv.unitNumber || "").localeCompare(String(b.inv.unitNumber || ""), undefined, { numeric: true }),
+        );
+    const totalOverdue = overdueInvoices.reduce((s, x) => s + x.remaining, 0);
 
     // Units without invoices for current month
     const currentMonthName = now.toLocaleString("default", { month: "long", year: "numeric" });
@@ -233,18 +250,35 @@ export function HomeTab({
             {overdueInvoices.length > 0 && (
                 <div className="bg-red-50 border border-red-200 rounded-xl overflow-hidden">
                     <div className="bg-red-100 px-4 py-2.5 border-b border-red-200 flex justify-between items-center">
-                        <h3 className="text-sm font-bold text-red-800">⚠️ Overdue Invoices</h3>
-                        <span className="text-xs font-bold bg-red-200 text-red-800 px-2 py-0.5 rounded-full">{overdueInvoices.length}</span>
+                        <div>
+                            <h3 className="text-sm font-bold text-red-800">⚠️ Overdue Invoices</h3>
+                            <p className="text-[10px] text-red-600 mt-0.5">{overdueInvoices.length} invoice{overdueInvoices.length !== 1 ? "s" : ""} · tap one to record a payment</p>
+                        </div>
+                        <span className="text-base font-bold text-red-800">₹{totalOverdue.toLocaleString()}</span>
                     </div>
                     <div className="divide-y divide-red-100 max-h-48 overflow-y-auto">
-                        {overdueInvoices.map(inv => (
-                            <div key={inv.id} className="px-4 py-2.5 flex justify-between items-center">
-                                <div>
-                                    <p className="font-bold text-gray-900 text-sm">{inv.unitNumber}</p>
+                        {overdueInvoices.map(({ inv, total, paid, remaining, isPartial }) => (
+                            <button
+                                key={inv.id}
+                                type="button"
+                                // Grouped (corporate) invoices are settled from their master card, not one by one.
+                                onClick={() => (inv.masterInvoiceId || !onRecordPayment ? onNavigate("collections") : onRecordPayment(inv.id))}
+                                className="w-full text-left px-4 py-2.5 flex justify-between items-center gap-3 hover:bg-red-100 transition"
+                            >
+                                <div className="min-w-0">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                        <span className="font-bold text-gray-900 text-sm">{inv.unitNumber}</span>
+                                        {isPartial && <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">Partial</span>}
+                                        {inv.masterInvoiceId && <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700">Corporate</span>}
+                                    </div>
                                     <p className="text-[10px] text-gray-500">{inv.billingPeriod}</p>
+                                    {isPartial && <p className="text-[10px] text-amber-700">Paid ₹{paid.toLocaleString()} of ₹{total.toLocaleString()}</p>}
                                 </div>
-                                <p className="font-bold text-red-700 text-sm">₹{Number(inv.totalAmount || 0).toLocaleString()}</p>
-                            </div>
+                                <div className="text-right shrink-0">
+                                    <p className="font-bold text-red-700 text-sm">₹{remaining.toLocaleString()}</p>
+                                    <p className="text-[10px] text-gray-400">due</p>
+                                </div>
+                            </button>
                         ))}
                     </div>
                     <button onClick={() => onNavigate("collections")} className="w-full text-center text-xs font-bold text-red-700 py-2 bg-red-100 hover:bg-red-200 transition border-t border-red-200">

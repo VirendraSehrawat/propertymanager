@@ -80,6 +80,8 @@ Monthly and the Daily tab's ➕ Inflow button. It should show what will be settl
 form for **non-tenant** inflows only (e.g. scrap sale, owner top-up).
 
 ### 1.4 Show the remaining balance in the Overdue list — S
+> ✅ **Done (31 Oct 2026).** Rows show the balance still owed, a PARTIAL badge and *Paid ₹X of ₹Y*; fully covered invoices drop off; the header shows the total overdue. Tapping a row opens Record Payment for that invoice (corporate children go to Collections).
+
 **Problem.** The Home "⚠️ Overdue Invoices" card shows `totalAmount`, not what is still owed, so a
 partly paid invoice looks larger than it is. The rows also can't be tapped.
 
