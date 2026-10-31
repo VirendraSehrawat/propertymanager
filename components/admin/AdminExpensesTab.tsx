@@ -1,70 +1,66 @@
 "use client";
 
 import { useState } from "react";
-import { collection, addDoc, doc, updateDoc, deleteDoc } from "firebase/firestore";
+import { collection, doc, writeBatch } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { EXPENSE_CATEGORIES, categoryEmoji } from "@/lib/expenses";
+import { buildExpenseWrite, closedDayError, orphanedExpenseMirrors, softDeletePatch, todayLocal, type MirrorRow } from "@/lib/expenseWrite";
+import type { DayClose } from "@/lib/dayClose";
 import type { Expense } from "@/types";
 
 interface AdminExpensesTabProps {
+    /** Every expense doc, including soft-deleted ones (shown only with "Show deleted"). */
     expenses: Expense[];
+    /** Daily-ledger rows — used to find outflows whose expense no longer exists. */
+    dailyLedgerEntries?: MirrorRow[];
+    /** End-of-day closes — expenses can't be added to or deleted from a closed day. */
+    dayCloses?: DayClose[];
     currentUserEmail: string;
 }
 
-export function AdminExpensesTab({ expenses, currentUserEmail }: AdminExpensesTabProps) {
+export function AdminExpensesTab({ expenses: allExpenses, dailyLedgerEntries = [], dayCloses = [], currentUserEmail }: AdminExpensesTabProps) {
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
     const [expenseAmount, setExpenseAmount] = useState("");
     const [expenseCategory, setExpenseCategory] = useState("Maintenance");
     const [expenseDesc, setExpenseDesc] = useState("");
     const [expenseDate, setExpenseDate] = useState("");
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [showDeleted, setShowDeleted] = useState(false);
+    const [isFixingOrphans, setIsFixingOrphans] = useState(false);
 
+    const by = currentUserEmail || "admin";
+    // Totals never include soft-deleted expenses; the list shows them only on request.
+    const expenses = allExpenses.filter(e => !e.deleted);
+    const deletedCount = allExpenses.length - expenses.length;
+    const listed = showDeleted ? allExpenses : expenses;
+    const orphans = orphanedExpenseMirrors(dailyLedgerEntries, allExpenses);
+
+    // Expense + Daily-ledger mirror in ONE batch with pre-minted, cross-linked ids.
     const handleAddExpense = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!expenseAmount || !expenseDesc) return;
+        const dateStr = expenseDate || todayLocal();
+        const closed = closedDayError(dateStr, dayCloses);
+        if (closed) { alert(closed); return; }
         setIsSubmitting(true);
         try {
-            const amt = Number(expenseAmount);
-            const dateStr = expenseDate || new Date().toISOString().split('T')[0];
-            const nowIso = new Date().toISOString();
-
-            // 1) Write expense doc
-            const expenseRef = await addDoc(collection(db, "expenses"), {
-                amount: amt,
+            const expenseRef = doc(collection(db, "expenses"));
+            const ledgerRef = doc(collection(db, "dailyLedger"));
+            const { expense, ledger } = buildExpenseWrite({
+                expenseId: expenseRef.id,
+                ledgerId: ledgerRef.id,
+                amount: Number(expenseAmount),
                 category: expenseCategory,
                 description: expenseDesc,
                 date: dateStr,
-                buildingId: "",
-                buildingName: "General",
-                createdBy: currentUserEmail || "admin",
-                createdAt: nowIso,
+                createdBy: by,
+                now: new Date().toISOString(),
+                source: "admin-expense",
             });
-
-            // 2) Mirror to dailyLedger
-            try {
-                const ledgerRef = await addDoc(collection(db, "dailyLedger"), {
-                    direction: "outflow",
-                    category: (expenseCategory || "other").toLowerCase(),
-                    date: dateStr,
-                    buildingId: "",
-                    buildingName: "General",
-                    unitId: "",
-                    unitNumber: "",
-                    tenantName: "",
-                    amount: amt,
-                    description: expenseDesc,
-                    expenseId: expenseRef.id,
-                    source: "admin-expense",
-                    createdBy: currentUserEmail || "admin",
-                    createdAt: nowIso,
-                });
-                await updateDoc(doc(db, "expenses", expenseRef.id), {
-                    dailyLedgerId: ledgerRef.id,
-                    source: "admin-expense"
-                });
-            } catch (mirrorErr) {
-                console.warn("Daily-ledger mirror write failed", mirrorErr);
-            }
+            const batch = writeBatch(db);
+            batch.set(expenseRef, expense);
+            batch.set(ledgerRef, ledger);
+            await batch.commit();
 
             setIsAddModalOpen(false);
             setExpenseAmount("");
@@ -79,9 +75,39 @@ export function AdminExpensesTab({ expenses, currentUserEmail }: AdminExpensesTa
         }
     };
 
-    const handleDeleteExpense = async (id: string) => {
-        if (window.confirm("Delete this expense record?")) {
-            await deleteDoc(doc(db, "expenses", id));
+    // Soft delete with a reason, cascading to the Daily-ledger mirror (same as the employee tab).
+    const handleDeleteExpense = async (exp: Expense) => {
+        const closed = closedDayError(exp.date, dayCloses);
+        if (closed) { alert(closed); return; }
+        const reason = window.prompt(`Delete expense "${exp.description}" (₹${Number(exp.amount).toLocaleString()})?\n\nPlease provide a reason (required):`, "");
+        if (reason === null) return;
+        if (!reason.trim()) { alert("A reason is required to delete an expense."); return; }
+        try {
+            const patch = softDeletePatch(by, reason, new Date().toISOString());
+            const batch = writeBatch(db);
+            batch.update(doc(db, "expenses", exp.id), patch);
+            if (exp.dailyLedgerId) batch.update(doc(db, "dailyLedger", exp.dailyLedgerId), patch);
+            await batch.commit();
+        } catch (error) {
+            console.error("Failed to delete expense:", error);
+            alert("Failed to delete expense.");
+        }
+    };
+
+    // One-off repair: Daily-ledger outflows left behind by hard-deleted expenses.
+    const handleFixOrphans = async () => {
+        if (!window.confirm(`Remove ${orphans.length} Daily-ledger outflow${orphans.length !== 1 ? "s" : ""} whose expense was deleted? They are soft-deleted with a reason, not erased.`)) return;
+        setIsFixingOrphans(true);
+        try {
+            const patch = softDeletePatch(by, "Expense was deleted — orphaned Daily-ledger mirror", new Date().toISOString());
+            const batch = writeBatch(db);
+            orphans.forEach(r => batch.update(doc(db, "dailyLedger", r.id), patch));
+            await batch.commit();
+        } catch (error) {
+            console.error("Failed to clean up orphaned rows:", error);
+            alert("Failed to clean up the Daily ledger.");
+        } finally {
+            setIsFixingOrphans(false);
         }
     };
 
@@ -93,6 +119,12 @@ export function AdminExpensesTab({ expenses, currentUserEmail }: AdminExpensesTa
                 <div>
                     <h2 className="text-lg font-bold text-gray-900">💸 Property Expenses</h2>
                     <p className="text-xs text-gray-500 mt-0.5">Total spent: ₹{totalExpenseSum.toLocaleString()} across {expenses.length} records</p>
+                    {deletedCount > 0 && (
+                        <label className="mt-1 flex items-center gap-1.5 text-[11px] text-gray-500 cursor-pointer">
+                            <input type="checkbox" checked={showDeleted} onChange={(e) => setShowDeleted(e.target.checked)} />
+                            Show {deletedCount} deleted (not counted)
+                        </label>
+                    )}
                 </div>
                 <button
                     onClick={() => setIsAddModalOpen(true)}
@@ -101,6 +133,18 @@ export function AdminExpensesTab({ expenses, currentUserEmail }: AdminExpensesTa
                     + Record Expense
                 </button>
             </div>
+
+            {orphans.length > 0 && (
+                <div className="bg-amber-50 border border-amber-300 rounded-xl p-3 flex justify-between items-center gap-3">
+                    <div className="text-xs text-amber-900 min-w-0">
+                        <p className="font-bold">⚠️ {orphans.length} Daily-ledger outflow{orphans.length !== 1 ? "s" : ""} (₹{orphans.reduce((s, r) => s + Number(r.amount || 0), 0).toLocaleString()}) belong to deleted expenses</p>
+                        <p className="text-[11px] text-amber-800 truncate">They still reduce the Daily totals and day closes: {orphans.slice(0, 3).map(r => `${r.date} ${r.description || ""} ₹${Number(r.amount || 0).toLocaleString()}`).join(" · ")}{orphans.length > 3 ? " …" : ""}</p>
+                    </div>
+                    <button onClick={handleFixOrphans} disabled={isFixingOrphans} className="shrink-0 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold px-3 py-2 rounded-lg disabled:opacity-50">
+                        {isFixingOrphans ? "Fixing…" : "Remove from Daily ledger"}
+                    </button>
+                </div>
+            )}
 
             {/* Category Breakdown Cards */}
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
@@ -132,30 +176,40 @@ export function AdminExpensesTab({ expenses, currentUserEmail }: AdminExpensesTa
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100">
-                            {expenses.length === 0 ? (
+                            {listed.length === 0 ? (
                                 <tr>
                                     <td colSpan={5} className="px-4 py-8 text-center text-gray-400">
                                         No expense records logged yet.
                                     </td>
                                 </tr>
                             ) : (
-                                expenses.map(exp => (
-                                    <tr key={exp.id} className="hover:bg-gray-50">
+                                listed.map(exp => (
+                                    <tr key={exp.id} className={exp.deleted ? "bg-gray-50 text-gray-400" : "hover:bg-gray-50"}>
                                         <td className="px-4 py-3 font-medium text-gray-900">{exp.date}</td>
                                         <td className="px-4 py-3">
                                             <span className="inline-flex items-center gap-1 bg-gray-100 px-2 py-0.5 rounded text-[11px] font-bold text-gray-700">
                                                 {categoryEmoji(exp.category)} {exp.category}
                                             </span>
                                         </td>
-                                        <td className="px-4 py-3">{exp.description}</td>
-                                        <td className="px-4 py-3 text-right font-bold text-rose-600">₹{Number(exp.amount || 0).toLocaleString()}</td>
+                                        <td className="px-4 py-3">
+                                            <span className={exp.deleted ? "line-through" : ""}>{exp.description}</span>
+                                            {exp.deleted && (
+                                                <span className="block text-[10px] text-gray-500">
+                                                    Deleted by {exp.deletedBy}{exp.deletedAt ? ` · ${new Date(exp.deletedAt).toLocaleDateString("en-IN")}` : ""}{exp.deleteReason ? ` — ${exp.deleteReason}` : ""}
+                                                </span>
+                                            )}
+                                        </td>
+                                        <td className={`px-4 py-3 text-right font-bold ${exp.deleted ? "line-through" : "text-rose-600"}`}>₹{Number(exp.amount || 0).toLocaleString()}</td>
                                         <td className="px-4 py-3 text-center">
-                                            <button
-                                                onClick={() => handleDeleteExpense(exp.id)}
-                                                className="text-red-400 hover:text-red-600 font-bold"
-                                            >
-                                                ✕
-                                            </button>
+                                            {!exp.deleted && (
+                                                <button
+                                                    onClick={() => handleDeleteExpense(exp)}
+                                                    title="Delete with reason"
+                                                    className="text-red-400 hover:text-red-600 font-bold"
+                                                >
+                                                    ✕
+                                                </button>
+                                            )}
                                         </td>
                                     </tr>
                                 ))

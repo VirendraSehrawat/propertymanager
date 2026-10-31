@@ -276,6 +276,8 @@ export interface Expense {
     deleted?: boolean;
     deletedAt?: string;
     deletedBy?: string;
+    /** Required when soft-deleting (staff must give a reason). */
+    deleteReason?: string;
     /** When an admin logs an expense, it's mirrored to dailyLedger and this
      * field cross-links the two documents so soft-delete can cascade. */
     dailyLedgerId?: string;

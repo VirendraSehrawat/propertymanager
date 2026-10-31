@@ -81,6 +81,8 @@ export default function AdminDashboard() {
     const [unpaidInvoices, setUnpaidInvoices] = useState<Invoice[]>([]);
     const [maintenanceTickets, setMaintenanceTickets] = useState<MaintenanceTicket[]>([]);
     const [contacts, setContacts] = useState<Contact[]>([]);
+    // Every expense doc (incl. soft-deleted, for the audit view) and the live ones used for totals.
+    const [allExpenseDocs, setAllExpenseDocs] = useState<Expense[]>([]);
     const [expenses, setExpenses] = useState<Expense[]>([]);
     const [announcements, setAnnouncements] = useState<Announcement[]>([]);
     const [allLedgerEntries, setAllLedgerEntries] = useState<LedgerEntry[]>([]);
@@ -230,7 +232,9 @@ export default function AdminDashboard() {
         const unsubExpenses = onSnapshot(collection(db, "expenses"), (snapshot) => {
             const expData = mapSnapshot<Expense>(snapshot);
             expData.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-            setExpenses(expData);
+            setAllExpenseDocs(expData);
+            // Soft-deleted expenses must not count in any total (Overview, export, Expenses tab).
+            setExpenses(expData.filter(e => !e.deleted));
         });
 
         const unsubSettings = onSnapshot(doc(db, "settings", "payment"), (docSnap) => {
@@ -391,7 +395,12 @@ export default function AdminDashboard() {
                 )}
 
                 {activeTab === "expenses" && (
-                    <AdminExpensesTab expenses={expenses} currentUserEmail={user?.email || "admin"} />
+                    <AdminExpensesTab
+                        expenses={allExpenseDocs}
+                        dailyLedgerEntries={dailyLedgerEntries}
+                        dayCloses={dayCloses}
+                        currentUserEmail={user?.email || "admin"}
+                    />
                 )}
 
                 {activeTab === "ledger" && (

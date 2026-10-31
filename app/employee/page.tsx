@@ -801,7 +801,7 @@ export default function EmployeeDashboard() {
                 )}
 
                 {activeTab === "expenses" && (
-                    <ExpensesTab allExpenses={allExpenses} allAllocations={allAllocations} buildings={buildings} userEmail={user?.email || ""} />
+                    <ExpensesTab allExpenses={allExpenses} allAllocations={allAllocations} buildings={buildings} userEmail={user?.email || ""} dayCloses={dayCloses} />
                 )}
 
                 {/* INVENTORY TAB */}

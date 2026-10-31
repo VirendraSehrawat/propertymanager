@@ -1,11 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { doc, updateDoc, addDoc, collection, deleteDoc, deleteField } from "firebase/firestore";
+import { doc, updateDoc, addDoc, collection, deleteDoc, deleteField, writeBatch } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { Modal } from "@/components/ui";
 import { useUploadWithProgress, UploadProgressBar } from "@/lib/useUpload";
 import { calculateFundSummary, filterExpenses, buildSettlementUpdate, EXPENSE_CATEGORIES, categoryEmoji } from "@/lib/expenses";
+import { buildExpenseWrite, closedDayError, softDeletePatch, todayLocal } from "@/lib/expenseWrite";
+import type { DayClose } from "@/lib/dayClose";
 import type { Allocation, Building, Expense } from "@/types";
 
 interface ExpensesTabProps {
@@ -13,6 +15,8 @@ interface ExpensesTabProps {
     allAllocations: Allocation[];
     buildings: Building[];
     userEmail: string;
+    /** End-of-day closes — expenses can't be added to or deleted from a closed day. */
+    dayCloses?: DayClose[];
 }
 
 /**
@@ -24,7 +28,7 @@ interface ExpensesTabProps {
  * outflow (with cross-linked `expenseId`/`dailyLedgerId` for cascading
  * soft-deletes) so the Daily Ledger view stays consistent.
  */
-export function ExpensesTab({ allExpenses, allAllocations, buildings, userEmail }: ExpensesTabProps) {
+export function ExpensesTab({ allExpenses, allAllocations, buildings, userEmail, dayCloses = [] }: ExpensesTabProps) {
     const { uploadFile, uploadProgress, isUploading } = useUploadWithProgress();
 
     const getBuildingName = (buildingId: string) => buildings.find((b) => b.id === buildingId)?.name || "Unknown";
@@ -51,24 +55,24 @@ export function ExpensesTab({ allExpenses, allAllocations, buildings, userEmail 
     // --- View filters ---
     const [expenseFilter, setExpenseFilter] = useState<"all" | "unsettled" | "settled">("all");
     const [expenseViewMode, setExpenseViewMode] = useState<"all" | "daily" | "monthly">("all");
-    const [expenseSelectedDate, setExpenseSelectedDate] = useState<string>(new Date().toISOString().slice(0, 10));
-    const [expenseSelectedMonth, setExpenseSelectedMonth] = useState<string>(new Date().toISOString().slice(0, 7));
+    const [expenseSelectedDate, setExpenseSelectedDate] = useState<string>(todayLocal);
+    const [expenseSelectedMonth, setExpenseSelectedMonth] = useState<string>(() => todayLocal().slice(0, 7));
 
     const openAddExpense = () => {
         setIsExpenseModalOpen(true);
-        setExpenseDate(new Date().toISOString().split("T")[0]);
+        setExpenseDate(todayLocal());
     };
 
     const openAddAllocation = () => {
         setIsAllocationModalOpen(true);
-        setAllocDate(new Date().toISOString().split("T")[0]);
+        setAllocDate(todayLocal());
     };
 
     const openEditAllocation = (a: Allocation) => {
         setEditingAllocationId(a.id);
         setAllocAmount(String(a.amount ?? ""));
         setAllocNote(a.note || "");
-        setAllocDate(a.date || (a.createdAt ? a.createdAt.slice(0, 10) : new Date().toISOString().split("T")[0]));
+        setAllocDate(a.date || (a.createdAt ? a.createdAt.slice(0, 10) : todayLocal()));
         setAllocBuilding(a.buildingId || "");
         setIsAllocationModalOpen(true);
     };
@@ -82,51 +86,41 @@ export function ExpensesTab({ allExpenses, allAllocations, buildings, userEmail 
         setAllocBuilding("");
     };
 
-    // Writes to `expenses` and mirrors to `dailyLedger`; both docs are
-    // cross-linked (`expenses.dailyLedgerId` <-> `dailyLedger.expenseId`)
-    // so soft-delete cascades across both.
+    // Writes to `expenses` and mirrors to `dailyLedger` in ONE batch with
+    // pre-minted ids, cross-linked (`expenses.dailyLedgerId` <-> `dailyLedger.expenseId`)
+    // so soft-delete cascades across both and a dropped connection never
+    // leaves half an expense behind.
     const handleAddExpense = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!expenseAmount || !expenseDesc) return;
+        const dateStr = expenseDate || todayLocal();
+        const closed = closedDayError(dateStr, dayCloses);
+        if (closed) { alert(closed); return; }
         setIsSubmittingExpense(true);
         try {
             let receiptUrl = "";
             if (expenseReceipt) {
                 receiptUrl = await uploadFile(`expense_receipts/${new Date().getTime()}_${expenseReceipt.name}`, expenseReceipt);
             }
-            const nowIso = new Date().toISOString();
-            const dateStr = expenseDate || nowIso.split("T")[0];
-            const buildingName = expenseBuilding ? getBuildingName(expenseBuilding) : "General";
-            const amountNum = Number(expenseAmount);
-
-            const expenseRef = await addDoc(collection(db, "expenses"), {
-                amount: amountNum,
+            const expenseRef = doc(collection(db, "expenses"));
+            const ledgerRef = doc(collection(db, "dailyLedger"));
+            const { expense, ledger } = buildExpenseWrite({
+                expenseId: expenseRef.id,
+                ledgerId: ledgerRef.id,
+                amount: Number(expenseAmount),
                 category: expenseCategory,
                 description: expenseDesc,
                 date: dateStr,
-                buildingId: expenseBuilding || "",
-                buildingName,
-                ...(receiptUrl ? { receiptUrl } : {}),
+                buildingId: expenseBuilding,
+                buildingName: expenseBuilding ? getBuildingName(expenseBuilding) : "General",
+                receiptUrl,
                 createdBy: userEmail,
-                createdAt: nowIso,
+                now: new Date().toISOString(),
             });
-
-            const ledgerRef = await addDoc(collection(db, "dailyLedger"), {
-                date: dateStr,
-                direction: "outflow",
-                category: (expenseCategory || "other").toLowerCase(),
-                buildingId: expenseBuilding || "",
-                buildingName,
-                unitId: "",
-                unitNumber: "",
-                amount: amountNum,
-                description: expenseDesc,
-                expenseId: expenseRef.id,
-                createdBy: userEmail,
-                createdAt: nowIso,
-            });
-
-            await updateDoc(doc(db, "expenses", expenseRef.id), { dailyLedgerId: ledgerRef.id });
+            const batch = writeBatch(db);
+            batch.set(expenseRef, expense);
+            batch.set(ledgerRef, ledger);
+            await batch.commit();
 
             setIsExpenseModalOpen(false);
             setExpenseAmount("");
@@ -146,21 +140,19 @@ export function ExpensesTab({ allExpenses, allAllocations, buildings, userEmail 
 
     const handleSoftDeleteExpense = async (exp: Expense) => {
         if (exp.deleted) return;
+        const closed = closedDayError(exp.date, dayCloses);
+        if (closed) { alert(closed); return; }
         const reason = window.prompt(`Delete expense "${exp.description}" (₹${Number(exp.amount).toLocaleString()})?\n\nPlease provide a reason (required):`, "");
         if (reason === null) return;
         const trimmed = reason.trim();
         if (!trimmed) { alert("A reason is required to delete an expense."); return; }
         try {
-            const patch = {
-                deleted: true,
-                deleteReason: trimmed,
-                deletedBy: userEmail,
-                deletedAt: new Date().toISOString(),
-            } as const;
-            await updateDoc(doc(db, "expenses", exp.id), patch);
-            if (exp.dailyLedgerId) {
-                await updateDoc(doc(db, "dailyLedger", exp.dailyLedgerId), patch);
-            }
+            // Expense and its Daily-ledger mirror are deleted together.
+            const patch = softDeletePatch(userEmail, trimmed, new Date().toISOString());
+            const batch = writeBatch(db);
+            batch.update(doc(db, "expenses", exp.id), patch);
+            if (exp.dailyLedgerId) batch.update(doc(db, "dailyLedger", exp.dailyLedgerId), patch);
+            await batch.commit();
         } catch (error) { console.error(error); alert("Failed to delete expense."); }
     };
 
@@ -172,7 +164,7 @@ export function ExpensesTab({ allExpenses, allAllocations, buildings, userEmail 
             const payload = {
                 amount: Number(allocAmount),
                 note: allocNote || "",
-                date: allocDate || new Date().toISOString().split("T")[0],
+                date: allocDate || todayLocal(),
                 buildingId: allocBuilding || "",
                 buildingName: allocBuilding ? getBuildingName(allocBuilding) : "General",
             };
@@ -293,7 +285,7 @@ export function ExpensesTab({ allExpenses, allAllocations, buildings, userEmail 
                                 ? expenseSelectedMonth
                                 : expenseViewMode === "daily"
                                 ? expenseSelectedDate.slice(0, 7)
-                                : new Date().toISOString().slice(0, 7);
+                                : todayLocal().slice(0, 7);
                         const scopeExpenses = allExpenses.filter((e) =>
                             (e.date || e.createdAt || "").startsWith(scopeIso),
                         );
@@ -364,7 +356,7 @@ export function ExpensesTab({ allExpenses, allAllocations, buildings, userEmail 
                             <input
                                 type="month"
                                 value={expenseSelectedMonth}
-                                max={new Date().toISOString().slice(0, 7)}
+                                max={todayLocal().slice(0, 7)}
                                 onChange={(e) => setExpenseSelectedMonth(e.target.value)}
                                 className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm"
                             />
@@ -373,11 +365,11 @@ export function ExpensesTab({ allExpenses, allAllocations, buildings, userEmail 
                                 onClick={() => {
                                     const [y, m] = expenseSelectedMonth.split("-").map(Number);
                                     const d = new Date(y, m, 1);
-                                    const nowYm = new Date().toISOString().slice(0, 7);
+                                    const nowYm = todayLocal().slice(0, 7);
                                     const nextYm = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
                                     if (nextYm <= nowYm) setExpenseSelectedMonth(nextYm);
                                 }}
-                                disabled={expenseSelectedMonth >= new Date().toISOString().slice(0, 7)}
+                                disabled={expenseSelectedMonth >= todayLocal().slice(0, 7)}
                                 className="w-9 h-9 rounded-md bg-gray-100 border border-gray-300 text-gray-700 font-bold hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed"
                                 title="Next month"
                             >›</button>

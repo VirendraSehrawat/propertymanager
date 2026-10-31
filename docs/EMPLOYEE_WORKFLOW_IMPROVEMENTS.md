@@ -20,10 +20,10 @@ where in the code it applies. Effort is marked **S** (under a day), **M** (a few
 
 *Updated: 31 Oct 2026*
 
-**Done (15):** 1.1, 1.2, 1.3, 1.4, 1.6 · 2.1, 2.2, 2.3, 2.4, 2.5 · 3.1–3.5. Each is marked ✅ in its section with what shipped.
+**Done (17):** 1.1, 1.2, 1.3, 1.4, 1.6 · 2.1, 2.2, 2.3, 2.4, 2.5 · 3.1–3.5 · 4.4, 4.5. Each is marked ✅ in its section with what shipped.
 Sections 1 (Collecting money) and 2 (Meter readings and invoicing) are complete except **1.5 Receipts**.
 
-**Next up (open quick wins):** 3.8, 6.3, 7.3.
+**Next up (open quick wins):** 3.8, 4.2, 4.9, 4.13, 6.3, 7.3.
 
 ---
 
@@ -353,22 +353,179 @@ can decide on the next step (notice, deposit adjustment, write-off).
 
 ## 4. Expenses
 
-### 4.1 One place to add an expense — S
-**Problem.** Expenses can be added from **📓 Daily → ➖ Outflow** (mirrored into `expenses`) or from
-**💰 Expenses → + Add Expense** (which shows *"also visible in Daily Ledger"*). The two forms have
-different fields: labour/material sub-fields are only on the Daily form, and categories differ
-(`labour/material/utilities/repair` vs. `Maintenance/…`).
+> **Updated 31 Oct 2026** after a review of `components/employee/ExpensesTab.tsx`,
+> `components/employee/DailyLedgerTab.tsx` (➖ Outflow), `components/admin/AdminExpensesTab.tsx`,
+> `lib/expenses.ts` and the admin Overview. Items 4.1–4.3 keep their numbers; 4.4–4.15 are new.
+> 4.4 and 4.5 are built (marked ✅ below); the table shows the state after them.
 
-**Suggestion.** Use one shared expense form component in both places, with one category list, so
-reports group correctly.
+There are **three** ways to record money spent today, and they don't agree with each other:
+
+| | 📓 Daily → ➖ Outflow | 💰 Expenses → + Add | Admin → 💸 Expenses |
+|---|---|---|---|
+| Categories | `labour, material, utilities, repair, other` (lower case) | 19 from `EXPENSE_CATEGORIES` | 19 from `EXPENSE_CATEGORIES` |
+| Unit, worker, hours, qty, vendor | ✅ | ❌ | ❌ |
+| Receipt opens the camera | ✅ (`capture="environment"`) | ❌ | ❌ |
+| Writes | one atomic batch | one atomic batch (4.5) | one atomic batch (4.5) |
+| Default date | local (IST) | local (IST) (4.5) | local (IST) (4.5) |
+| Closed days (3.3) refused | ✅ | ✅ (4.5) | ✅ (4.5) |
+| Delete | soft (reason) + cascade | soft (reason) + cascade, one batch | soft (reason) + cascade (4.4) |
+
+Items, roughly in order of value:
+
+| Group | Items |
+|---|---|
+| **Fix first** (wrong numbers today) | 4.4, 4.5 |
+| **Entering an expense** | 4.1, 4.2, 4.3, 4.9, 4.14 |
+| **Where the money came from** | 4.6, 4.7, 4.8 |
+| **Planning and reporting** | 4.10, 4.11, 4.12, 4.13, 4.15 |
+
+### 4.1 One place to add an expense — S/M
+**Problem.** The three forms above have different fields and categories. The Daily form writes
+`category: "labour"` (lower case, not in `EXPENSE_CATEGORIES`) into `expenses`, and the Expenses tab
+writes its category lower-cased into `dailyLedger` (`"common area"`, `"staff salary"`). So the
+*By Category* breakdowns in Expenses and Monthly split the same spend across two names, and the 📝
+fallback emoji appears for Daily outflows.
+
+**Suggestion.**
+- One `ExpenseForm` component used by Daily, Expenses and Admin, with one category list
+  (`EXPENSE_CATEGORIES` plus *Labour* and *Material*), and the labour / material / vendor / unit fields
+  shown by category.
+- Store the same category string in both collections (the label, not a lower-cased copy).
+- A one-off migration (`scripts/`) maps old values (`labour` → Labour, `repair` → Maintenance, …).
 
 ### 4.2 Receipt photo straight from the camera — S
-**Suggestion.** Use `capture="environment"` on the receipt input so the phone opens the camera
-directly, and compress images before upload to speed it up on mobile data.
+**Problem.** The Expenses and Admin forms use a plain file picker (`accept="image/*,.pdf"`), so on a phone
+the employee has to take the photo first and then find it. Photos are uploaded at full size over mobile data.
 
-### 4.3 Link expenses to tickets — S
-**Suggestion.** When resolving a maintenance ticket, allow **"Add cost"**, which creates the expense
-with `ticketId`, `unitId` and building pre-filled. This gives a per-unit repair cost history.
+**Suggestion.** Add `capture="environment"` (the Daily form already has it), compress images in the
+browser to about 1600 px / JPEG 0.7 before upload, and show a thumbnail before saving. Optionally make a
+receipt **required above an amount** set by the admin (e.g. ₹2,000), with *"No receipt — reason"* as
+the escape hatch.
+
+### 4.3 Link expenses to tickets and units — S
+**Problem.** The Expenses form has no unit field, and nothing links a repair's cost to its ticket, so
+there is no per-unit repair history and no way to see what a ticket cost.
+
+**Suggestion.** When resolving a maintenance ticket, offer **Add cost**, which opens the expense form with
+`ticketId`, `unitId`, building and category pre-filled. Show the cost on the ticket and a **🔧 Repairs**
+list (total per unit, per year) in the tenant profile. Costs a tenant should pay (damage) get a
+**Charge to tenant** toggle that adds the amount to the next invoice.
+
+### 4.4 Deleted expenses still count on the admin side — S (bug)
+> ✅ **Done (31 Oct 2026).** The admin page keeps every expense doc for audit but passes only live ones to
+> the Overview, the monthly export and the Expenses totals. Admin ✕ is now a soft delete with a reason that
+> cascades to the `dailyLedger` mirror in one batch; **Show N deleted** lists deleted expenses (struck
+> through, with who, when and why). A banner lists Daily-ledger outflows whose expense was hard-deleted
+> earlier (or soft-deleted without the cascade) with **Remove from Daily ledger**, which soft-deletes them
+> with a reason. Helpers in `lib/expenseWrite.ts`.
+
+**Problem.** The admin page loads `expenses` without filtering `deleted`, so **soft-deleted expenses are
+still included** in *Total spent*, the per-category totals and the Overview's revenue-minus-expenses
+figure. The admin's 🗑 is a **hard delete** that leaves the mirrored `dailyLedger` outflow behind, so
+the Daily tab and day close still deduct money that no longer exists as an expense.
+
+**Suggestion.** Filter `deleted` in the admin listener (as the employee page does), switch the admin
+delete to the same soft delete with reason and cascade, and add a **Show deleted** toggle for audit.
+A one-off check lists `dailyLedger` outflows whose `expenseId` no longer exists.
+
+### 4.5 Atomic writes and local dates on the Expenses form — S (bug)
+> ✅ **Done (31 Oct 2026).** Employee and admin forms build both documents with `buildExpenseWrite`
+> (pre-minted, cross-linked ids) and commit them in one `writeBatch`; soft deletes of an expense and its
+> mirror are one batch too. Default and filter dates use the local date. Adding or deleting an expense on
+> a closed day is refused with *"… is closed in the Daily ledger"*.
+
+**Problem.** The Expenses tab writes the expense, then the ledger row, then the back-link as three
+separate calls; a dropped connection in between leaves an expense with no Daily row (or a Daily row with
+no back-link, so deleting the expense doesn't cascade). Default dates use `toISOString()` (UTC), so an
+expense logged between midnight and 05:30 IST lands on the previous day — and can land on a day that is
+already closed (3.3).
+
+**Suggestion.** Use one `writeBatch` with pre-minted ids (as the Daily form does), `localDateKey()` for
+dates, and refuse dates that are already closed, like the Daily form.
+
+### 4.6 Record who paid and from where — S/M
+**Problem.** An expense doesn't say whether it was paid from **cash in hand**, by the employee's own
+**UPI**, from the **owner's fund**, or directly by the **owner**. The day close (3.3) therefore treats
+every outflow as cash, which is wrong for a UPI payment to a vendor, and reimbursing the employee's own
+money is not tracked.
+
+**Suggestion.** Add `paidFrom: cash | upi | fund | owner` (default cash) and `paidBy` (staff email).
+Only `cash` reduces expected cash in the day close; `upi` is listed next to UPI inflows for statement
+matching; `owner` is recorded for books but not in the employee's cash. Show *"₹X owed to <employee>"*
+for money paid personally until it is reimbursed.
+
+### 4.7 Make the fund and "settled" clear — M
+**Problem.** *Settled* means *"deducted from the allocated fund"*, but the button is next to every
+expense and nothing says who approved it. The fund summary ignores the building on allocations, so a
+building's fund can look healthy while it is overspent. Deleting an allocation is a hard delete behind
+`window.confirm`, and edits keep no previous value.
+
+**Suggestion.** Rename *Settle* to **Approve** (or *Reimburse* for money paid personally — 4.6), show the
+fund **per building** as well as in total, soft-delete allocations with a reason, and keep an edit
+history (`history[]`, as day closes do). Show the fund balance on Home for the admin.
+
+### 4.8 Approval for large expenses — S/M
+**Problem.** Any staff member can log and settle an expense of any size; the admin only finds out by
+looking at the list.
+
+**Suggestion.** An admin-set threshold (`settings/expenses.approvalLimit`). Above it the expense is saved
+as **Awaiting approval**, the admin gets a Telegram message (reusing `lib/telegram`) with Approve / Reject
+buttons or a link, and only approved expenses count against the fund. Firestore rules stop staff from
+approving their own large expenses.
+
+### 4.9 Edit an expense instead of delete + re-add — S
+**Problem.** There is no edit. A wrong amount or category means deleting (with a reason) and typing it
+all again, which also loses the receipt link.
+
+**Suggestion.** ✏️ Edit on unsettled expenses (amount, category, building, description, date, receipt),
+updating the `dailyLedger` mirror in the same batch and keeping `editedBy`, `editedAt` and the previous
+values. Approved/settled expenses and closed days need an admin to change.
+
+### 4.10 Recurring expenses — M
+**Problem.** Salaries, internet, building electricity, water, security and property tax are paid every
+month or year and typed in by hand each time — easy to forget or enter twice.
+
+**Suggestion.** **Recurring expense** templates (amount, category, building, payee, day of month or
+yearly date). On the due day they appear in Home → Today (with the routine calendar, 3.7) as
+*"Internet ₹999 due — ✓ Paid"*; one tap logs the expense from the template. A missed month shows as
+overdue.
+
+### 4.11 Vendors and workers — S/M
+**Problem.** Vendor and worker names are free text (Daily form only), so the same plumber appears as
+*Ramesh*, *ramesh plumber* and *Ramesh Kumar*, and there is no phone number to call him back.
+
+**Suggestion.** A small **vendors** list (name, trade, phone, UPI id) with autocomplete in the expense
+form, and a vendor page with total paid, last job and receipts. For daily labour, show total hours and
+amount per worker per month for wage settlement.
+
+### 4.12 Budgets and spend per building — M
+**Problem.** There is no target to compare against. The Monthly overview shows expenses by category but
+not against collections, so it isn't obvious whether a building made money this month.
+
+**Suggestion.** Monthly budget per building (and optionally per category), with *"₹18,400 of ₹25,000
+used"* and a warning above 80 % / 100 %. In Monthly, show **Collected − Spent = Net** per building, and
+the top spending categories against last month.
+
+### 4.13 Find expenses quickly — S
+**Problem.** The All view renders every expense ever logged in one scrolling box, with no search. Finding
+*"the tank cleaning in August"* means scrolling.
+
+**Suggestion.** Search by description, vendor, amount or category; filters for building and category;
+and paging (*Show more*), as in Settled Collections. Load only the last few months by default (7.1).
+
+### 4.14 Warn about duplicates — S
+**Problem.** The same expense is sometimes entered twice — once from Daily and once from Expenses, or by
+two staff members.
+
+**Suggestion.** Before saving, look for an expense with the same amount and building within ±1 day (and a
+similar description) and ask *"Looks like ₹1,200 Plumbing on 30 Oct by Ravi — save anyway?"*.
+
+### 4.15 Export for the accountant — S
+**Problem.** The admin Overview exports financials for a month, but there is no expense export with
+receipts that an accountant can use.
+
+**Suggestion.** **⬇️ Export** in Expenses (and Admin) for a date range: CSV with date, building, unit,
+category, vendor, amount, paid from, approved by and receipt link, plus a per-category summary sheet.
 
 ---
 
@@ -473,9 +630,9 @@ double tap or retry can't record the same cash twice.
 
 | Phase | Items | Outcome |
 |---|---|---|
-| **Quick wins (1 week)** | ✅ 1.1, ✅ 1.2, ✅ 1.4, ✅ 1.6, ✅ 2.2, ✅ 2.4, ✅ 3.1, ✅ 3.5, 3.8, 6.3, 7.3 | Correct numbers, fewer data errors, faster daily use |
-| **Workflow (2–3 weeks)** | ✅ 1.3, 1.5, ✅ 2.1, ✅ 2.3, 4.1, 6.2 | One payment path, fast meter rounds, receipts |
-| **Structure (3–4 weeks)** | ✅ 3.2, ✅ 3.3, 3.6, 3.9, 6.1, 7.1 | Today list grouped by building, tracked day close with owner digest, simpler navigation, faster load |
-| **Later** | ✅ 2.5, ✅ 3.4, 3.7, 3.10, 4.3, 5.x, 7.2 | Routine calendar, ageing review, automation and offline support |
+| **Quick wins (1 week)** | ✅ 1.1, ✅ 1.2, ✅ 1.4, ✅ 1.6, ✅ 2.2, ✅ 2.4, ✅ 3.1, ✅ 3.5, 3.8, ✅ 4.4, ✅ 4.5, 4.2, 4.9, 4.13, 6.3, 7.3 | Correct numbers, fewer data errors, faster daily use |
+| **Workflow (2–3 weeks)** | ✅ 1.3, 1.5, ✅ 2.1, ✅ 2.3, 4.1, 4.6, 4.14, 6.2 | One payment path, fast meter rounds, receipts |
+| **Structure (3–4 weeks)** | ✅ 3.2, ✅ 3.3, 3.6, 3.9, 6.1, 7.1, 4.3, 4.7, 4.12 | Today list grouped by building, tracked day close with owner digest, simpler navigation, faster load |
+| **Later** | ✅ 2.5, ✅ 3.4, 3.7, 3.10, 5.x, 7.2, 4.8, 4.10, 4.11, 4.15 | Routine calendar, ageing review, automation and offline support |
 
 ✅ = done. 2.5 and 3.4 were brought forward.
