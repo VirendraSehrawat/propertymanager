@@ -211,3 +211,33 @@ export function splitInflowByMode(
     }
     return split;
 }
+
+/**
+ * Ledger row types that represent money received from a tenant. Corporate
+ * `master-payment` rows live in `ledgerEntries`; the rest live in `ledger`.
+ * Zero-amount audit rows (`grouping`, `ungrouping`) are deliberately excluded.
+ */
+export const COLLECTION_ROW_TYPES = ["payment", "partial-payment", "credit", "master-payment"] as const;
+
+/** YYYY-MM-DD in the device's local timezone (IST for staff), not UTC. */
+export function localDateKey(d: Date): string {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/**
+ * Money actually received on a given local day, from ledger rows. Each
+ * instalment counts once at the amount handed over, so partial payments are
+ * included and a small balance that closes a large invoice isn't overstated.
+ * Returned rows are newest first.
+ */
+export function collectedOn<T extends { type?: string; amountPaid?: number; createdAt?: string; deleted?: boolean }>(
+    rows: T[],
+    dayKey: string,
+): { rows: T[]; total: number } {
+    const types: readonly string[] = COLLECTION_ROW_TYPES;
+    const matched = rows
+        .filter(r => !r.deleted && types.includes(r.type || "") && Number(r.amountPaid || 0) > 0)
+        .filter(r => r.createdAt && localDateKey(new Date(r.createdAt)) === dayKey)
+        .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+    return { rows: matched, total: matched.reduce((s, r) => s + Number(r.amountPaid || 0), 0) };
+}

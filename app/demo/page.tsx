@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { HomeTab } from "@/components/employee/HomeTab";
+import { collectedOn, localDateKey } from "@/lib/payments";
 import {
     demoExpenses,
     demoHomeMonth,
@@ -151,6 +152,7 @@ export default function DemoPage() {
                                     resolvedTickets={resolvedTickets}
                                     allExpenses={demoExpenses}
                                     allLedgerEntries={demoLedger}
+                                    todayCollected={collectedOn(demoLedger, localDateKey(new Date()))}
                                     homeMonth={homeMonth}
                                     setHomeMonth={setHomeMonth}
                                     onNavigate={(tab) => alert(`Demo: would navigate to "${tab}" tab.`)}

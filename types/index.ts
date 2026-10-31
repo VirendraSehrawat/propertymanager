@@ -174,6 +174,10 @@ export interface LedgerEntry {
     correctionNote?: string;
     correctedBy?: string;
     originalAmountPaid?: number;
+    paymentNote?: string | null;
+    /** Set on corporate `master-payment` rows (stored in `ledgerEntries`). */
+    masterInvoiceId?: string;
+    deleted?: boolean;
     createdAt: string;
 }
 

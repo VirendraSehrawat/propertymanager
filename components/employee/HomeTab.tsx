@@ -28,6 +28,8 @@ interface HomeTabProps {
     resolvedTickets: MaintenanceTicket[];
     allExpenses: Expense[];
     allLedgerEntries: LedgerEntry[];
+    /** Money received today, from ledger rows (see `collectedOn` in lib/payments). */
+    todayCollected: { rows: LedgerEntry[]; total: number };
     homeMonth: string;
     setHomeMonth: (m: string) => void;
     onNavigate: (tab: HomeTabNavTarget) => void;
@@ -53,6 +55,7 @@ export function HomeTab({
     resolvedTickets,
     allExpenses,
     allLedgerEntries,
+    todayCollected,
     homeMonth,
     setHomeMonth,
     onNavigate,
@@ -80,10 +83,10 @@ export function HomeTab({
     const unitsWithInvoice = new Set(allInvoices.filter(inv => inv.billingPeriod === currentMonthName).map(inv => inv.unitId));
     const unitsPendingMeter = occupiedUnits.filter(u => !unitsWithInvoice.has(u.id));
 
-    // Today's collections
-    const today = now.toISOString().split("T")[0];
-    const todayCollections = allInvoices.filter(inv => inv.status === "paid" && inv.paidAt && inv.paidAt.startsWith(today));
-    const todayCollectedAmount = todayCollections.reduce((sum, inv) => sum + Number(inv.totalAmount || 0), 0);
+    // Today's collections — every instalment received today, at the amount
+    // actually handed over (partials included, closing balances not inflated).
+    const todayCollections = todayCollected.rows;
+    const todayCollectedAmount = todayCollected.total;
 
     // Previous month balance (relative to selected homeMonth)
     const [yr, mo] = homeMonth.split("-").map(Number);

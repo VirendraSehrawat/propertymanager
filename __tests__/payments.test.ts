@@ -10,6 +10,8 @@ import {
     computeAutoSettle,
     pickInvoiceToAutoSettle,
     splitInflowByMode,
+    collectedOn,
+    localDateKey,
     type InvoiceLike,
 } from "@/lib/payments";
 
@@ -207,5 +209,44 @@ describe("splitInflowByMode", () => {
             { direction: "inflow", amount: 100, paymentMode: "cash" },
         ]);
         expect(split).toEqual({ cash: 100, digital: 0, unspecified: 0 });
+    });
+});
+
+// -----------------------------------------------------------
+// collectedOn — Home "Collected Today" from ledger rows
+// -----------------------------------------------------------
+describe("collectedOn", () => {
+    // Build timestamps from local wall-clock times so the test holds in any TZ.
+    const at = (h: number, m = 0, day = 15) => new Date(2026, 9, day, h, m).toISOString();
+    const DAY = localDateKey(new Date(2026, 9, 15));
+
+    it("counts each instalment at the amount received, including partials, credits and corporate rows", () => {
+        const { rows, total } = collectedOn([
+            { id: "a", type: "partial-payment", amountPaid: 3000, createdAt: at(9) },
+            { id: "b", type: "payment", amountPaid: 500, createdAt: at(11) }, // closes a ₹10,000 invoice
+            { id: "c", type: "credit", amountPaid: 200, createdAt: at(11) },
+            { id: "d", type: "master-payment", amountPaid: 7000, createdAt: at(14) },
+        ], DAY);
+        expect(total).toBe(10700);
+        expect(rows.map(r => r.id)).toEqual(["d", "b", "c", "a"]); // newest first
+    });
+
+    it("uses the local calendar day, so early-morning payments are not pushed to yesterday", () => {
+        const { total } = collectedOn([
+            { type: "payment", amountPaid: 1000, createdAt: at(0, 30) },
+            { type: "payment", amountPaid: 4000, createdAt: at(23, 50, 14) }, // previous day
+        ], DAY);
+        expect(total).toBe(1000);
+    });
+
+    it("ignores deleted rows, zero-amount audit rows and unknown types", () => {
+        const { rows, total } = collectedOn([
+            { type: "payment", amountPaid: 1000, createdAt: at(10), deleted: true },
+            { type: "grouping", amountPaid: 0, createdAt: at(10) },
+            { type: "charge", amountPaid: 900, createdAt: at(10) },
+            { type: "payment", amountPaid: 0, createdAt: at(10) },
+        ], DAY);
+        expect(rows).toHaveLength(0);
+        expect(total).toBe(0);
     });
 });

@@ -10,6 +10,7 @@ import { collection, onSnapshot, doc, updateDoc, arrayUnion, query, where, write
 import { useUploadWithProgress, UploadProgressBar } from "@/lib/useUpload";
 import { mapSnapshot } from "@/lib/firestore";
 import { buildTransferPlan } from "@/lib/transfer";
+import { collectedOn, localDateKey } from "@/lib/payments";
 import type {
     Allocation,
     Building,
@@ -61,6 +62,9 @@ export default function EmployeeDashboard() {
 
     // Ledger state
     const [allLedgerEntries, setAllLedgerEntries] = useState<LedgerEntry[]>([]);
+    // Corporate master-invoice payment rows live in `ledgerEntries`; only
+    // today's are needed (for "Collected Today"), so the listener is scoped.
+    const [recentMasterLedgerEntries, setRecentMasterLedgerEntries] = useState<LedgerEntry[]>([]);
 
     // Master invoices (corporate billing wrappers)
     const [masterInvoices, setMasterInvoices] = useState<MasterInvoice[]>([]);
@@ -205,7 +209,15 @@ export default function EmployeeDashboard() {
             setDailyLedgerEntries(mapSnapshot<DailyLedgerEntry>(snapshot).filter(e => !e.deleted).sort((a, b) => (b.date || "").localeCompare(a.date || "")));
         });
 
-        return () => { unsubTickets(); unsubUnits(); unsubInvoices(); unsubMasterInvoices(); unsubLedger(); unsubAllUnits(); unsubBuildings(); unsubChecklists(); unsubExpenses(); unsubInventory(); unsubAllocations(); unsubDailyLedger(); };
+        // Rows created since local midnight. If the page stays open past
+        // midnight the bound goes stale, but `collectedOn` still filters by day.
+        const startOfToday = new Date();
+        startOfToday.setHours(0, 0, 0, 0);
+        const unsubMasterLedger = onSnapshot(query(collection(db, "ledgerEntries"), where("createdAt", ">=", startOfToday.toISOString())), (snapshot) => {
+            setRecentMasterLedgerEntries(mapSnapshot<LedgerEntry>(snapshot));
+        });
+
+        return () => { unsubTickets(); unsubUnits(); unsubInvoices(); unsubMasterInvoices(); unsubLedger(); unsubAllUnits(); unsubBuildings(); unsubChecklists(); unsubExpenses(); unsubInventory(); unsubAllocations(); unsubDailyLedger(); unsubMasterLedger(); };
     }, [role]);
 
     const handleLogout = async () => {
@@ -256,6 +268,7 @@ export default function EmployeeDashboard() {
 
     // --- Unit Management Handlers ---
     const vacantUnits = allUnits.filter(u => u.status === "vacant");
+    const todayCollected = collectedOn([...allLedgerEntries, ...recentMasterLedgerEntries], localDateKey(new Date()));
     const occupiedForAssign = allUnits.filter(u => u.status === "occupied");
 
     const handleAssignTenant = async (e: React.FormEvent) => {
@@ -631,6 +644,7 @@ export default function EmployeeDashboard() {
                         resolvedTickets={resolvedTickets}
                         allExpenses={allExpenses}
                         allLedgerEntries={allLedgerEntries}
+                        todayCollected={todayCollected}
                         homeMonth={homeMonth}
                         setHomeMonth={setHomeMonth}
                         onNavigate={setActiveTab}
@@ -892,12 +906,13 @@ export default function EmployeeDashboard() {
 
             {/* TODAY'S COLLECTIONS MODAL */}
             {isTodayCollectionsOpen && (() => {
-                const today = new Date().toISOString().split("T")[0];
-                const todays = allInvoices
-                    .filter(inv => inv.status === "paid" && inv.paidAt && inv.paidAt.startsWith(today))
-                    .slice()
-                    .sort((a, b) => String(b.paidAt || "").localeCompare(String(a.paidAt || "")));
-                const total = todays.reduce((s, inv) => s + Number(inv.totalAmount || 0), 0);
+                const { rows: todays, total } = todayCollected;
+                const TYPE_BADGE: Record<string, { label: string; cls: string }> = {
+                    "payment": { label: "PAID", cls: "bg-green-100 text-green-700" },
+                    "partial-payment": { label: "PARTIAL", cls: "bg-amber-100 text-amber-800" },
+                    "credit": { label: "ADVANCE", cls: "bg-purple-100 text-purple-700" },
+                    "master-payment": { label: "CORPORATE", cls: "bg-indigo-100 text-indigo-700" },
+                };
                 const decodeMode = (txn: string) => {
                     if (!txn) return { mode: "—", ref: "" };
                     if (txn === "CASH_COLLECTED") return { mode: "CASH", ref: "" };
@@ -918,27 +933,34 @@ export default function EmployeeDashboard() {
                             <div className="max-h-[70vh] overflow-y-auto divide-y divide-gray-100">
                                 {todays.length === 0 ? (
                                     <p className="text-sm text-gray-500 text-center py-10">No collections today yet.</p>
-                                ) : todays.map(inv => {
-                                    const { mode, ref } = decodeMode(inv.transactionId || "");
+                                ) : todays.map(row => {
+                                    // Newer rows carry paymentMode; older ones only encode it in transactionId.
+                                    const decoded = decodeMode(row.transactionId || "");
+                                    const mode = row.paymentMode ? row.paymentMode.toUpperCase() : decoded.mode;
+                                    const ref = row.paymentReference || decoded.ref;
+                                    const badge = TYPE_BADGE[row.type] || TYPE_BADGE.payment;
                                     return (
-                                        <div key={inv.id} className="px-5 py-3 hover:bg-gray-50">
+                                        <div key={row.id} className="px-5 py-3 hover:bg-gray-50">
                                             <div className="flex justify-between items-start gap-3">
                                                 <div className="min-w-0">
                                                     <div className="flex items-center gap-2 flex-wrap">
-                                                        <span className="font-bold text-gray-900 text-sm">{inv.unitNumber}</span>
-                                                        <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-green-100 text-green-700">PAID</span>
+                                                        <span className="font-bold text-gray-900 text-sm">{row.unitNumber || "—"}</span>
+                                                        <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${badge.cls}`}>{badge.label}</span>
                                                         <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">{mode}</span>
                                                     </div>
-                                                    <p className="text-xs text-gray-600 mt-0.5 truncate">{inv.tenantEmail || "—"}</p>
-                                                    <p className="text-[10px] text-gray-500 mt-0.5">{inv.billingPeriod}</p>
-                                                    <p className="text-[10px] text-gray-500 mt-0.5">📅 {inv.paidAt ? new Date(inv.paidAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : "—"}</p>
+                                                    <p className="text-xs text-gray-600 mt-0.5 truncate">{row.tenantEmail || "—"}</p>
+                                                    <p className="text-[10px] text-gray-500 mt-0.5">{row.billingPeriod}</p>
+                                                    <p className="text-[10px] text-gray-500 mt-0.5">📅 {new Date(row.createdAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</p>
                                                     {ref && <p className="text-[10px] text-gray-500 mt-0.5">🔖 {ref}</p>}
-                                                    {inv.paymentNote && <p className="text-[10px] text-gray-500 mt-0.5">📝 {inv.paymentNote}</p>}
+                                                    {row.paymentNote && <p className="text-[10px] text-gray-500 mt-0.5">📝 {row.paymentNote}</p>}
                                                 </div>
                                                 <div className="text-right shrink-0">
-                                                    <p className="font-bold text-green-700 text-base">₹{Number(inv.totalAmount || 0).toLocaleString()}</p>
-                                                    {(inv.baseRent > 0 || (inv.electricityCharge || 0) > 0) && (
-                                                        <p className="text-[10px] text-gray-500 mt-0.5">Rent ₹{Number(inv.baseRent || 0).toLocaleString()} · Elec ₹{Number(inv.electricityCharge || 0).toLocaleString()}</p>
+                                                    <p className="font-bold text-green-700 text-base">₹{Number(row.amountPaid || 0).toLocaleString()}</p>
+                                                    {row.type === "partial-payment" && row.balance < 0 && (
+                                                        <p className="text-[10px] text-amber-700 mt-0.5">₹{Math.abs(row.balance).toLocaleString()} still due</p>
+                                                    )}
+                                                    {row.type !== "partial-payment" && Number(row.invoiceAmount || 0) > 0 && (
+                                                        <p className="text-[10px] text-gray-500 mt-0.5">of ₹{Number(row.invoiceAmount).toLocaleString()} invoice</p>
                                                     )}
                                                 </div>
                                             </div>
