@@ -11,6 +11,8 @@ import { useUploadWithProgress, UploadProgressBar } from "@/lib/useUpload";
 import { mapSnapshot } from "@/lib/firestore";
 import { buildTransferPlan } from "@/lib/transfer";
 import { collectedOn, localDateKey } from "@/lib/payments";
+import { buildMoveInInvoice, moveInRent } from "@/lib/meterInvoice";
+import { notifyInvoiceCreated } from "@/lib/notify";
 import type {
     Allocation,
     Building,
@@ -81,6 +83,11 @@ export default function EmployeeDashboard() {
     const [assignExistingUnit, setAssignExistingUnit] = useState("");
     const [assignPaymentDay, setAssignPaymentDay] = useState("");
     const [assignSecurityDeposit, setAssignSecurityDeposit] = useState("");
+    // First invoice on move-in: pro-rated rent from the move-in date + opening meter reading.
+    const [assignMoveInDate, setAssignMoveInDate] = useState(() => localDateKey(new Date()));
+    const [assignOpeningReading, setAssignOpeningReading] = useState("");
+    const [assignFirstInvoice, setAssignFirstInvoice] = useState(true);
+    const [isAssigning, setIsAssigning] = useState(false);
     const [isEditUnitModalOpen, setIsEditUnitModalOpen] = useState(false);
     const [editUnit, setEditUnit] = useState<Unit | null>(null);
     const [editUnitNumber, setEditUnitNumber] = useState("");
@@ -271,34 +278,55 @@ export default function EmployeeDashboard() {
     const todayCollected = collectedOn([...allLedgerEntries, ...recentMasterLedgerEntries], localDateKey(new Date()));
     const occupiedForAssign = allUnits.filter(u => u.status === "occupied");
 
+    /** Payment day the first invoice is pro-rated to: the form's, or the transferring tenant's. */
+    const assignSourceUnit = assignMode === "existing" ? occupiedForAssign.find(u => u.id === assignExistingUnit) : undefined;
+    const assignEffectivePaymentDay = assignMode === "new" ? Number(assignPaymentDay) || undefined : Number(assignSourceUnit?.paymentDay) || undefined;
+    const assignRentPreview = assignUnit && assignMoveInDate
+        ? moveInRent(Number(assignUnit.baseRent || 0), assignMoveInDate, assignEffectivePaymentDay)
+        : null;
+
     const handleAssignTenant = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!assignUnit) return;
-        if (assignMode === "new") {
-            if (!assignName && !assignEmail && !assignPhone) { alert("Please enter at least a name, email, or phone."); return; }
-            try {
-                await updateDoc(doc(db, "units", assignUnit.id), {
+        if (assignMode === "new" && !assignName && !assignEmail && !assignPhone) { alert("Please enter at least a name, email, or phone."); return; }
+        const source = assignMode === "existing" ? assignSourceUnit : undefined;
+        if (assignMode === "existing" && !source) return;
+
+        const tenantEmail = assignMode === "new" ? (assignEmail ? assignEmail.toLowerCase() : "") : (source?.tenantEmail || "");
+        const isToday = assignMoveInDate === localDateKey(new Date());
+        const [my, mm, md] = assignMoveInDate.split("-").map(Number);
+        const moveInDate = isToday ? new Date().toISOString() : new Date(my, mm - 1, md).toISOString();
+        const openingReading = assignOpeningReading !== "" ? Number(assignOpeningReading) : Number(assignUnit.lastMeterReading || 0);
+
+        setIsAssigning(true);
+        try {
+            const batch = writeBatch(db);
+            batch.update(doc(db, "units", assignUnit.id), assignMode === "new"
+                ? {
                     status: "occupied",
-                    tenantEmail: assignEmail ? assignEmail.toLowerCase() : "",
+                    tenantEmail,
                     tenantName: assignName,
                     tenantPhone: assignPhone,
-                    moveInDate: new Date().toISOString(),
+                    moveInDate,
+                    lastMeterReading: openingReading,
                     ...(assignPaymentDay ? { paymentDay: Number(assignPaymentDay) } : {}),
                     ...(assignSecurityDeposit ? { securityDeposit: Number(assignSecurityDeposit), securityDepositDate: new Date().toISOString() } : {})
-                });
-                setIsAssignModalOpen(false); setAssignUnit(null); setAssignEmail(""); setAssignName(""); setAssignPhone(""); setAssignPaymentDay(""); setAssignSecurityDeposit("");
-                alert(`✅ Tenant moved in to ${assignUnit.unitNumber}.\n\n📄 Reminder: generate this month's rent invoice for them (Admin → Invoices → Generate Invoice) so it appears in Collections.`);
-            } catch (error) { console.error(error); alert("Failed to assign tenant."); }
-        } else {
-            if (!assignExistingUnit) return;
-            const source = occupiedForAssign.find(u => u.id === assignExistingUnit);
-            if (!source) return;
-            try {
-                await updateDoc(doc(db, "units", assignUnit.id), { status: "occupied", tenantEmail: source.tenantEmail, tenantName: source.tenantName || "", tenantPhone: source.tenantPhone || "", moveInDate: new Date().toISOString() });
-                setIsAssignModalOpen(false); setAssignUnit(null); setAssignExistingUnit("");
-                alert(`✅ Tenant transferred to ${assignUnit.unitNumber}.\n\n📄 Reminder: generate this month's rent invoice for their new unit.`);
-            } catch (error) { console.error(error); alert("Failed to assign tenant."); }
-        }
+                }
+                : { status: "occupied", tenantEmail, tenantName: source?.tenantName || "", tenantPhone: source?.tenantPhone || "", moveInDate, lastMeterReading: openingReading });
+
+            const firstInvoice = assignFirstInvoice
+                ? buildMoveInInvoice({ unit: assignUnit, tenantEmail, moveInDate: assignMoveInDate, paymentDay: assignEffectivePaymentDay, openingReading })
+                : null;
+            if (firstInvoice) batch.set(doc(db, "invoices", firstInvoice.invoiceId), firstInvoice.fields);
+            await batch.commit();
+            if (firstInvoice) notifyInvoiceCreated(firstInvoice.invoiceId);
+
+            setIsAssignModalOpen(false); setAssignUnit(null); setAssignEmail(""); setAssignName(""); setAssignPhone(""); setAssignPaymentDay(""); setAssignSecurityDeposit(""); setAssignExistingUnit("");
+            const verb = assignMode === "new" ? "moved in to" : "transferred to";
+            alert(firstInvoice
+                ? `✅ Tenant ${verb} ${assignUnit.unitNumber}.\n\n📄 First invoice ₹${firstInvoice.rent.rent.toLocaleString()} created for ${firstInvoice.rent.rentPeriod}${firstInvoice.rent.fullMonth ? "" : ` (${firstInvoice.rent.days} days)`}. It's in Collections.`
+                : `✅ Tenant ${verb} ${assignUnit.unitNumber}.\n\n📄 No invoice created. The next Meter round will bill rent and electricity from reading ${openingReading}.`);
+        } catch (error) { console.error(error); alert("Failed to assign tenant."); } finally { setIsAssigning(false); }
     };
 
     const handleEditUnit = async (e: React.FormEvent) => {
@@ -701,6 +729,9 @@ export default function EmployeeDashboard() {
                             setAssignName("");
                             setAssignPhone("");
                             setAssignExistingUnit("");
+                            setAssignMoveInDate(localDateKey(new Date()));
+                            setAssignOpeningReading(String(unit.lastMeterReading ?? 0));
+                            setAssignFirstInvoice(true);
                             setIsAssignModalOpen(true);
                         }}
                         onRemoveTenant={handleRemoveTenant}
@@ -1012,9 +1043,35 @@ export default function EmployeeDashboard() {
                                     ))}
                                 </select>
                             )}
+                            <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                    <label htmlFor="assignMoveInDate" className="block text-[10px] font-bold text-gray-500 uppercase mb-0.5">Move-in Date</label>
+                                    <input id="assignMoveInDate" type="date" required value={assignMoveInDate} onChange={(e) => setAssignMoveInDate(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
+                                </div>
+                                <div>
+                                    <label htmlFor="assignOpeningReading" className="block text-[10px] font-bold text-gray-500 uppercase mb-0.5">Opening Meter Reading</label>
+                                    <input id="assignOpeningReading" type="number" inputMode="numeric" min="0" value={assignOpeningReading} onChange={(e) => setAssignOpeningReading(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
+                                </div>
+                            </div>
+                            <div className="bg-blue-50 border border-blue-200 rounded-md p-3 text-xs text-blue-900 space-y-1">
+                                <label className="flex items-center gap-2 font-bold cursor-pointer">
+                                    <input type="checkbox" checked={assignFirstInvoice} onChange={(e) => setAssignFirstInvoice(e.target.checked)} className="w-4 h-4 accent-blue-600" />
+                                    📄 Generate first invoice now
+                                </label>
+                                {assignFirstInvoice && assignRentPreview && (
+                                    <p>
+                                        Rent <strong>₹{assignRentPreview.rent.toLocaleString()}</strong> for {assignRentPreview.rentPeriod}
+                                        {assignRentPreview.fullMonth ? " (full month)" : ` (${assignRentPreview.days} days, pro-rated)`}.
+                                        {" "}No electricity — billing starts from the opening reading.
+                                    </p>
+                                )}
+                                {assignFirstInvoice && !assignEffectivePaymentDay && (
+                                    <p className="text-blue-700">No payment day set, so rent runs to the 1st of next month.</p>
+                                )}
+                            </div>
                             <div className="flex gap-2">
                                 <button type="button" onClick={() => setIsAssignModalOpen(false)} className="flex-1 py-2 border border-gray-300 rounded-md text-sm text-gray-600">Cancel</button>
-                                <button type="submit" className="flex-1 py-2 bg-green-600 text-white rounded-md text-sm font-medium hover:bg-green-700">Assign Tenant</button>
+                                <button type="submit" disabled={isAssigning} className="flex-1 py-2 bg-green-600 text-white rounded-md text-sm font-medium hover:bg-green-700 disabled:bg-green-300">{isAssigning ? "Saving..." : assignFirstInvoice ? "Assign & Invoice" : "Assign Tenant"}</button>
                             </div>
                         </form>
                     </div>

@@ -36,6 +36,23 @@ export interface Unit {
      *  generated for this unit will be rolled up into that tenant's monthly
      *  `MasterInvoice`. See `docs/CORPORATE_TENANT_BILLING.md`. */
     tenantId?: string;
+    /** A meter reading taken on the round but not yet turned into an invoice
+     *  ("Save reading only"). Cleared when the invoice is generated. */
+    meterDraft?: MeterDraft;
+}
+
+export interface MeterDraft {
+    /** "YYYY-MM" the reading was taken for. */
+    billingMonth: string;
+    previousReading: number;
+    currentReading?: number;
+    meterChanged?: boolean;
+    /** Units entered by hand (meter changed, or a manual override). */
+    manualUnits?: number;
+    manualUnitsReason?: string;
+    newMeterReading?: number;
+    meterPhotoUrl?: string;
+    savedAt: string;
 }
 
 export interface CoTenant {
@@ -93,6 +110,8 @@ export interface Invoice {
     carryForwardDetails?: { billingPeriod: string; amount: number }[];
     meterChanged?: boolean;
     manualUnitsReason?: string;
+    /** Photo of the meter taken when the reading was recorded. */
+    meterPhotoUrl?: string;
     isCustom?: boolean;
     transactionId?: string;
     amountPaid?: number;

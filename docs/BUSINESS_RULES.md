@@ -81,6 +81,13 @@ If the calculated consumption is wrong (shared meter, faulty display, etc.),
 type the correct number into **Manual Units Consumed** and write a
 **reason** — the reason is stored on the invoice for audit.
 
+### 3c-bis. Reading checks
+- A **current reading below the previous reading** can't be saved unless
+  *Meter was changed* is ticked or manual units are entered with a reason.
+- Consumption above **2× the unit's average of its last 3 regular months**
+  must be confirmed (*"I've re-checked the meter"*).
+- An optional **📷 meter photo** is stored on the invoice as evidence.
+
 ### 3d. Per-tenant electricity rate
 Set from **Tenant Profile → ⚡ Electricity Rate**. Leave empty to use the
 default. Historical invoices keep the rate they were generated with.
@@ -90,7 +97,16 @@ default. Historical invoices keep the rate they were generated with.
 ## 🧾 4. Generating an Invoice
 
 - **One invoice per unit per billing month.** If one already exists, the
-  app warns you before overriding.
+  app warns you before overriding. Money already paid is **kept**: the
+  status becomes PAID or PARTIAL against the new total, never back to
+  unpaid. Overriding is refused when more was paid than the new total, or
+  the invoice is grouped (corporate) or written off — correct it with
+  **✏️ Edit** in Collections instead.
+- Readings can be saved as **drafts** during the round and turned into
+  invoices together later (**Generate N invoices**).
+- **Move-in:** the first invoice is created from the Assign Tenant form —
+  pro-rated rent from the move-in date to the first payment day in the
+  next month, no electricity (the opening reading is recorded).
 - Invoice ID format: `inv_<unitId>_<MM>_<YYYY>` (e.g. `inv_abc_09_2026`).
 - Rent invoiced = the unit's **Base Rent** (unless you edit the invoice
   after creation from the Collections tab).

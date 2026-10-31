@@ -217,7 +217,33 @@ The Meter tab works as a **meter round**: walk the building and enter readings o
    creates the invoice in `invoices`, shows a short confirmation, and moves to the next pending unit with
    the reading field ready. **Skip →** moves on without saving (tenant not home); skipped units come
    back round at the end.
+   - **📝 Save reading only** stores the reading on the unit as a draft and moves on, so the walk-around
+     isn't slowed down. Drafted units show 📝 in the list. When the round is done, tap
+     **Generate N invoices** to turn every draft into an invoice in one go (units that already have an
+     invoice for the month are skipped, never overridden).
+   - **Checks:** a reading **below the previous one** can't be saved: tick **Meter was changed** or enter
+     manual units with a reason. Consumption above **2× the unit's average of its last 3 months** must be
+     confirmed with *"I've re-checked the meter"*. The live line *"= N units × ₹rate = ₹…"* shows the
+     charge as you type.
+   - **📷 Meter photo** (optional) opens the phone camera. The photo is stored on the invoice as
+     `meterPhotoUrl` and shown to the tenant and in Collections.
+   - **Existing invoice for the month:** any amount already paid is kept and the status is recomputed
+     (PAID or PARTIAL) against the new total. If more was paid than the new total, or the invoice is
+     grouped under a corporate invoice or written off, the Meter tab refuses and sends you to
+     **✏️ Edit** in Collections.
 5. That invoice will now show up in **Collections**, **🏘 Monthly**, and is settled from **Collections** once the tenant pays.
+
+### New tenant moving in
+
+**Units → Assign Tenant** records the **move-in date** and the **opening meter reading**, and by default
+creates the **first invoice** straight away:
+
+- Rent runs from the move-in date to the tenant's first payment day in the next month (the 1st if no
+  payment day is set), charged per day at the move-in month's daily rate. Moving in on the payment day
+  charges a full month.
+- No electricity: the opening reading becomes `lastMeterReading`, and next month's Meter round bills
+  consumption from it.
+- The invoice is stamped *"<Month> (Move-in)"*, so that month's Meter round already counts the unit as done.
 
 ### Monthly property overview
 

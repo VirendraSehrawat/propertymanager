@@ -105,7 +105,10 @@ export default function EmployeeHelpPage() {
                                 <li>Units consumed = current − previous.</li>
                                 <li>Electricity = units × rate (per-tenant rate wins).</li>
                                 <li>Tap <strong>Save &amp; next →</strong> to move straight to the next pending unit, or <strong>Skip →</strong> if the tenant isn&apos;t home.</li>
+                                <li>In a hurry? <strong>📝 Save reading only</strong> keeps the reading as a draft. Tap <strong>Generate N invoices</strong> at the end of the round.</li>
+                                <li>Optional <strong>📷 Meter photo</strong> is saved on the invoice; the tenant can see it.</li>
                             </ol>
+                            <p className="mt-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">⛔ A reading lower than last month&apos;s can&apos;t be saved — tick <strong>Meter was changed</strong> or enter manual units. ⚠️ A reading over 2× the usual usage asks you to re-check the meter first.</p>
                         </div>
                         <div>
                             <h3 className="font-bold text-gray-800 mb-1">3b. Meter changed / replaced</h3>
@@ -129,7 +132,8 @@ export default function EmployeeHelpPage() {
                     </div>
                     <div className="p-6 space-y-3 text-sm text-gray-700">
                         <ul className="list-disc pl-5 space-y-1">
-                            <li><strong>One invoice per unit per billing month</strong>. If one exists, the app warns before overriding.</li>
+                            <li><strong>One invoice per unit per billing month</strong>. If one exists, the app warns before overriding. Payments already made are kept (the invoice becomes PAID or PARTIAL, never unpaid again).</li>
+                            <li><strong>New tenant?</strong> Assign Tenant creates the first invoice: pro-rated rent from the move-in date, plus the opening meter reading.</li>
                             <li>Invoice ID format: <code className="text-xs bg-gray-100 px-1 rounded">inv_&lt;unitId&gt;_MM_YYYY</code></li>
                             <li>Rent invoiced = unit&apos;s <strong>Base Rent</strong> (edit from Collections tab if needed).</li>
                             <li>After generating, <strong>lastMeterReading</strong> auto-updates so next month works.</li>

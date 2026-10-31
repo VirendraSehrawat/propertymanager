@@ -108,7 +108,7 @@ or they can be looked up via `unitId`).
 ## 2. Meter readings and invoicing
 
 ### 2.1 "Meter round" mode — M
-> ✅ **Done (31 Oct 2026)**, except draft readings (not built). The Meter tab opens on the first pending unit, ordered by building then unit number, shows *"N of M done · Building"*, and **Save & next** / **Skip** move through the pending units with a toast instead of an alert.
+> ✅ **Done (31 Oct 2026)**, including draft readings: **📝 Save reading only** stores the reading on the unit (`units/{id}.meterDraft`) and **Generate N invoices** turns all drafts into invoices later (existing invoices are skipped, never overridden). The Meter tab opens on the first pending unit, ordered by building then unit number, shows *"N of M done · Building"*, and **Save & next** / **Skip** move through the pending units with a toast instead of an alert.
 
 **Problem.** Monthly meter entry is one dropdown → one form → a blocking `alert()` → pick the next unit
 from the dropdown again. The dropdown lists **all** occupied units, including ones already billed this
@@ -122,6 +122,8 @@ month, so the employee has to remember where they are.
   walk-around isn't slowed down by invoice maths.
 
 ### 2.2 Reading sanity checks — S
+> ✅ **Done (31 Oct 2026).** A reading below the previous one blocks saving (with a pointer to *Meter changed* / manual units); consumption above 2× the average of the last 3 regular months needs an *"I've re-checked the meter"* tick; a live *"= N units × ₹rate = ₹…"* line shows under the reading. Logic in `lib/meterInvoice.ts`.
+
 **Problem.** If the current reading is lower than the previous one (typo, meter rollover, replaced
 meter not flagged), `Math.max(0, reading - previousReading)` silently bills **0 units**. Unusually high
 readings aren't flagged either.
@@ -132,6 +134,8 @@ readings aren't flagged either.
 - Show live **units × rate = ₹** before submit so the employee can spot mistakes.
 
 ### 2.3 Meter photo as evidence — S
+> ✅ **Done (31 Oct 2026).** Optional camera capture on the Meter tab, uploaded through the existing Cloudinary route and saved as `invoice.meterPhotoUrl` (also on drafts). Shown on the tenant's invoice and on Collections rows.
+
 **Problem.** Disputed electricity bills come down to the employee's word.
 
 **Suggestion.** Add an optional camera capture (`<input type="file" accept="image/*" capture="environment">`)
@@ -139,6 +143,8 @@ stored on the invoice as `meterPhotoUrl`, using the existing Cloudinary upload h
 tenant's invoice view.
 
 ### 2.4 Don't silently reopen paid invoices — S
+> ✅ **Done (31 Oct 2026).** Overrides keep `amountPaid`, `transactionId` and `paidAt`, and recompute the status (PAID or PARTIAL/`pending`) against the new total. Overriding is refused when more was paid than the new total, or the invoice is corporate-grouped or written off; the employee is sent to ✏️ Edit in Collections.
+
 **Problem.** When an invoice for the unit and month already exists, the Meter tab asks "Do you want to
 OVERRIDE this invoice?" and then writes `status: "unpaid"` with `merge: true`. For an invoice that is
 already **paid** or partly paid, that reopens it while leaving `amountPaid` as it was, which can
@@ -149,6 +155,8 @@ employee to **Edit invoice** in Collections, or recompute `status` from `amountP
 `totalAmount` instead of forcing `unpaid`.
 
 ### 2.5 Prompt for invoice generation on move-in / transfer — S
+> ✅ **Done (31 Oct 2026).** Assign Tenant (new or existing tenant) now takes a move-in date and opening meter reading, and **Generate first invoice now** (on by default) creates a rent-only invoice pro-rated from the move-in date to the first payment day of the next month, stamped *"<Month> (Move-in)"* so that month's Meter round treats the unit as done. The Transfer modal is unchanged (it already offers a pro-rated invoice for the old room).
+
 **Problem.** After assigning or transferring a tenant, the employee gets an alert saying *"Reminder:
 generate this month's rent invoice (Admin → Invoices → Generate Invoice)"*. That screen is in the
 **admin** area, so the employee can't act on the reminder.

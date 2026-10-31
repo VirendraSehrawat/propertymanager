@@ -564,6 +564,9 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                                                     {inv.electricityPeriod && <>⚡ <span className="font-medium">{inv.electricityPeriod}</span></>}
                                                 </p>
                                             )}
+                                            {inv.meterPhotoUrl && (
+                                                <a href={inv.meterPhotoUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] text-purple-600 hover:underline mt-0.5 block">📷 Meter photo ({inv.currentReading ?? "—"})</a>
+                                            )}
                                             <button onClick={() => { const unit = occupiedUnits.find(u => u.id === inv.unitId); if (unit) openTenantProfile(unit); }} className="text-[10px] text-indigo-600 hover:underline mt-1">View Profile {"\u2192"}</button>
                                         </div>
                                         <div className="text-right flex flex-col items-end gap-2">

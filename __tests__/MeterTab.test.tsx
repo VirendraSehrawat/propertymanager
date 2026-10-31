@@ -41,8 +41,8 @@ const unit = (id: string, unitNumber: string, buildingId: string, last: number):
 const units = [unit("u3", "201", "b2", 300), unit("u2", "102", "b1", 200), unit("u1", "101", "b1", 100)];
 const buildings = [{ id: "b1", name: "Block A" }, { id: "b2", name: "Block B" }];
 
-function renderTab(invoices: Invoice[] = []) {
-    return render(<MeterTab occupiedUnits={units} allInvoices={invoices} electricityRate={10} buildings={buildings} />);
+function renderTab(invoices: Invoice[] = [], unitList: Unit[] = units) {
+    return render(<MeterTab occupiedUnits={unitList} allInvoices={invoices} electricityRate={10} buildings={buildings} />);
 }
 
 const unitSelect = () => screen.getByLabelText("Unit") as HTMLSelectElement;
@@ -92,5 +92,80 @@ describe("MeterTab — meter round", () => {
         await user.click(screen.getByRole("button", { name: /Skip/ }));
         expect(unitSelect().value).toBe("u2");
         expect(batchSet).not.toHaveBeenCalled();
+    });
+});
+
+describe("MeterTab — reading checks, drafts and photo", () => {
+    it("blocks a reading below the previous one and points to Meter changed", async () => {
+        const user = userEvent.setup();
+        renderTab();
+        await user.type(screen.getByPlaceholderText("e.g. 1250"), "90"); // 101's last reading is 100
+        expect(screen.getByRole("alert")).toHaveTextContent("lower than the previous reading 100");
+        expect(screen.getByRole("button", { name: /Save & next/ })).toBeDisabled();
+        expect(screen.getByRole("button", { name: /Save reading only/ })).toBeDisabled();
+    });
+
+    it("shows units × rate live and asks for a re-check on an unusual spike", async () => {
+        const user = userEvent.setup();
+        const history = ["July", "August", "September"].map((m, i) => ({
+            id: `h${i}`, unitId: "u1", billingPeriod: `${m} 2000`, electricityConsumed: 20,
+        }) as Invoice);
+        renderTab(history);
+        await user.type(screen.getByPlaceholderText("e.g. 1250"), "150"); // 50 units vs avg 20
+        expect(screen.getByText(/= 50 units × ₹10 =/)).toBeInTheDocument();
+        expect(screen.getByRole("alert")).toHaveTextContent("50 units is more than 2× this unit's usual 20 units");
+
+        await user.click(screen.getByRole("button", { name: /Save & next/ }));
+        expect(batchSet).not.toHaveBeenCalled();
+
+        await user.click(screen.getByLabelText(/re-checked the meter/));
+        await user.click(screen.getByRole("button", { name: /Save & next/ }));
+        expect(batchSet).toHaveBeenCalledTimes(1);
+    });
+
+    it("Save reading only stores a draft on the unit and moves on without an invoice", async () => {
+        const user = userEvent.setup();
+        renderTab();
+        await user.type(screen.getByPlaceholderText("e.g. 1250"), "150");
+        await user.click(screen.getByRole("button", { name: /Save reading only/ }));
+
+        expect(batchSet).not.toHaveBeenCalled();
+        const [ref, data] = batchUpdate.mock.calls[0];
+        expect(ref).toMatchObject({ col: "units", id: "u1" });
+        expect(data.meterDraft).toMatchObject({ billingMonth: thisMonth, previousReading: 100, currentReading: 150 });
+        expect(await screen.findByRole("status")).toHaveTextContent("101: reading 150 saved as draft · Next: 102");
+        expect(unitSelect().value).toBe("u2");
+        expect(screen.getByRole("button", { name: "Generate 1 invoice" })).toBeInTheDocument();
+    });
+
+    it("generates invoices for every draft in one go and clears the drafts", async () => {
+        const user = userEvent.setup();
+        vi.spyOn(window, "confirm").mockReturnValue(true);
+        const drafted = units.map((u) => u.id === "u3" ? u : {
+            ...u, meterDraft: { billingMonth: thisMonth, previousReading: u.lastMeterReading ?? 0, currentReading: (u.lastMeterReading ?? 0) + 30, savedAt: "x" },
+        });
+        renderTab([], drafted);
+        expect(unitSelect().value).toBe("u3"); // drafted units are not pending
+
+        await user.click(screen.getByRole("button", { name: "Generate 2 invoices" }));
+
+        expect(batchSet.mock.calls.map(([ref]) => (ref as { id: string }).id).sort()).toEqual(
+            [meterInvoiceId("u1", thisMonth), meterInvoiceId("u2", thisMonth)].sort(),
+        );
+        expect(batchSet.mock.calls[0][1]).toMatchObject({ electricityConsumed: 30, totalAmount: 5300 });
+        expect(batchUpdate.mock.calls.every(([, data]) => data.meterDraft === "__delete__")).toBe(true);
+        expect(await screen.findByRole("status")).toHaveTextContent("2 invoices generated");
+        expect(screen.getByText(/2 of 3 done/)).toBeInTheDocument();
+    });
+
+    it("refuses to replace an invoice when more was paid than the new total", async () => {
+        const user = userEvent.setup();
+        const paid = { id: meterInvoiceId("u1", thisMonth), unitId: "u1", status: "paid", amountPaid: 9000, totalAmount: 9000 } as Invoice;
+        renderTab([paid]);
+        await user.click(screen.getByRole("button", { name: "All units" }));
+        await user.selectOptions(unitSelect(), "u1");
+        await user.type(screen.getByPlaceholderText("e.g. 1250"), "150");
+        expect(screen.getByRole("alert")).toHaveTextContent("can't be replaced here");
+        expect(screen.getByRole("button", { name: "Generate Invoice" })).toBeDisabled();
     });
 });
