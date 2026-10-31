@@ -6,7 +6,7 @@ import { db } from "@/lib/firebase";
 import { COL } from "@/lib/collections";
 import { Modal } from "@/components/ui";
 import { useUploadWithProgress, UploadProgressBar } from "@/lib/useUpload";
-import { allocateLumpSum } from "@/lib/payments";
+import { allocateLumpSum, splitInflowByMode, PAYMENT_MODES, type PaymentMode } from "@/lib/payments";
 import { buildInflowPlan, type InflowInvoice } from "@/lib/paymentPlan";
 import { commitPaymentPlan } from "@/lib/commitPaymentPlan";
 
@@ -31,6 +31,8 @@ interface DailyLedgerEntry {
     createdAt: string;
     deleted?: boolean;
     expenseId?: string;
+    paymentMode?: string;
+    paymentReference?: string | null;
 }
 
 interface Building { id: string; name: string; }
@@ -70,6 +72,8 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
     const [quantity, setQuantity] = useState("");
     const [vendor, setVendor] = useState("");
     const [receiptFile, setReceiptFile] = useState<File | null>(null);
+    const [paymentMode, setPaymentMode] = useState<PaymentMode>("cash");
+    const [paymentReference, setPaymentReference] = useState("");
     const [isSaving, setIsSaving] = useState(false);
     const { uploadFile, uploadProgress, isUploading, resetProgress } = useUploadWithProgress();
 
@@ -78,6 +82,7 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
         setAmount(""); setDescription(""); setEntryDate(todayISO());
         setWorkerName(""); setHoursWorked(""); setQuantity(""); setVendor("");
         setReceiptFile(null); resetProgress();
+        setPaymentMode("cash"); setPaymentReference("");
     };
 
     const openModal = (dir: "inflow" | "outflow") => {
@@ -139,6 +144,10 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
             if (direction === "outflow" && category === "material") {
                 payload.quantity = quantity ? Number(quantity) : 0;
                 payload.vendor = vendor || "";
+            }
+            if (direction === "inflow") {
+                payload.paymentMode = paymentMode;
+                payload.paymentReference = paymentMode !== "cash" ? paymentReference.trim() || null : null;
             }
             const ledgerRef = doc(collection(db, COL.dailyLedger));
 
@@ -234,6 +243,8 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
                     pool,
                     unitId,
                     category,
+                    mode: paymentMode,
+                    reference: paymentReference,
                     now: nowIso,
                     tenantEmail: unit?.tenantEmail || "",
                     unitNumber: unit?.unitNumber || "",
@@ -306,7 +317,7 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
     const totals = useMemo(() => {
         const inflow = scopedEntries.filter(e => e.direction === "inflow").reduce((s, e) => s + Number(e.amount || 0), 0);
         const outflow = scopedEntries.filter(e => e.direction === "outflow").reduce((s, e) => s + Number(e.amount || 0), 0);
-        return { inflow, outflow, net: inflow - outflow };
+        return { inflow, outflow, net: inflow - outflow, byMode: splitInflowByMode(scopedEntries) };
     }, [scopedEntries]);
 
     // Monthly grouping by day
@@ -369,6 +380,17 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
                         </div>
                     </div>
 
+                    {/* Inflow by payment mode — cash is what should be in hand */}
+                    {totals.inflow > 0 && (
+                        <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+                            <span className="text-gray-700">💵 Cash in hand <span className="font-bold text-green-700">₹{totals.byMode.cash.toLocaleString()}</span></span>
+                            <span className="text-gray-700">📱 UPI / Bank <span className="font-bold text-indigo-700">₹{totals.byMode.digital.toLocaleString()}</span></span>
+                            {totals.byMode.unspecified > 0 && (
+                                <span className="text-gray-500">❔ Mode not recorded <span className="font-bold">₹{totals.byMode.unspecified.toLocaleString()}</span></span>
+                            )}
+                        </div>
+                    )}
+
                     {/* Entry List */}
                     {scopedEntries.length === 0 ? (
                         <p className="text-sm text-gray-500 text-center py-8">No entries for this {viewMode === "daily" ? "day" : "month"}.</p>
@@ -429,6 +451,33 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
                             ))}
                         </select>
                     </div>
+
+                    {direction === "inflow" && (
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Payment Mode</label>
+                            <div className="grid grid-cols-5 gap-1">
+                                {PAYMENT_MODES.map((m) => (
+                                    <button
+                                        key={m}
+                                        type="button"
+                                        onClick={() => setPaymentMode(m)}
+                                        className={`px-2 py-2 rounded-md text-xs font-bold border transition ${paymentMode === m ? "bg-green-600 text-white border-green-700" : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50"}`}
+                                    >
+                                        {m.toUpperCase()}
+                                    </button>
+                                ))}
+                            </div>
+                            {paymentMode !== "cash" && (
+                                <input
+                                    type="text"
+                                    value={paymentReference}
+                                    onChange={(e) => setPaymentReference(e.target.value)}
+                                    placeholder={paymentMode === "upi" ? "UPI Txn ID (optional)" : paymentMode === "bank" ? "Bank Ref No. (optional)" : paymentMode === "cheque" ? "Cheque No. (optional)" : "Reference (optional)"}
+                                    className="mt-2 w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                                />
+                            )}
+                        </div>
+                    )}
 
                     <div>
                         <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Building</label>
@@ -593,6 +642,11 @@ function EntryRow({ entry, onDelete, compact }: { entry: DailyLedgerEntry; onDel
                     <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${isInflow ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>
                         {isInflow ? "IN" : "OUT"} · {entry.category}
                     </span>
+                    {isInflow && entry.paymentMode && (
+                        <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-gray-100 text-gray-600" title={entry.paymentReference || undefined}>
+                            {entry.paymentMode}{entry.paymentReference ? ` · ${entry.paymentReference}` : ""}
+                        </span>
+                    )}
                     {entry.unitNumber && <span className="text-[10px] font-medium text-gray-500">{entry.buildingName} / {entry.unitNumber}</span>}
                     {!entry.unitNumber && entry.buildingName && <span className="text-[10px] font-medium text-gray-500">{entry.buildingName}</span>}
                 </div>

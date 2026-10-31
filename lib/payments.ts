@@ -181,3 +181,33 @@ export function allocateLumpSum(
     const totalApplied = lines.reduce((sum, l) => sum + l.applied, 0);
     return { lines, totalApplied, leftover: remainingCash };
 }
+
+/** Payment modes offered in the UI, in display order. */
+export const PAYMENT_MODES = ["cash", "upi", "bank", "cheque", "other"] as const satisfies readonly PaymentMode[];
+
+export interface InflowModeSplit {
+    /** Physical cash — what should be in hand at end of day. */
+    cash: number;
+    /** UPI / bank / cheque / other — money that went straight to an account. */
+    digital: number;
+    /** Older rows saved before payment mode was captured. */
+    unspecified: number;
+}
+
+/**
+ * Split inflow totals by payment mode so cash in hand can be reconciled
+ * separately from digital receipts. Outflow and deleted rows are ignored.
+ */
+export function splitInflowByMode(
+    rows: { direction?: string; amount?: number; paymentMode?: string | null; deleted?: boolean }[],
+): InflowModeSplit {
+    const split: InflowModeSplit = { cash: 0, digital: 0, unspecified: 0 };
+    for (const r of rows) {
+        if (r.direction !== "inflow" || r.deleted) continue;
+        const amt = Number(r.amount || 0);
+        if (!r.paymentMode) split.unspecified += amt;
+        else if (r.paymentMode === "cash") split.cash += amt;
+        else split.digital += amt;
+    }
+    return split;
+}

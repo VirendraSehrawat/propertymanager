@@ -9,6 +9,7 @@ import {
     buildTransactionId,
     computeAutoSettle,
     pickInvoiceToAutoSettle,
+    splitInflowByMode,
     type InvoiceLike,
 } from "@/lib/payments";
 
@@ -181,5 +182,30 @@ describe("pickInvoiceToAutoSettle", () => {
             { id: "real-due", unitId: "unit-D", status: "unpaid", totalAmount: 1000, amountPaid: 0,    createdAt: "2026-02-01" },
         ];
         expect(pickInvoiceToAutoSettle(edgeCase, "unit-D", "rent")?.id).toBe("real-due");
+    });
+});
+
+// -----------------------------------------------------------
+// splitInflowByMode — Daily Ledger cash-in-hand vs digital totals
+// -----------------------------------------------------------
+describe("splitInflowByMode", () => {
+    it("separates cash, digital and unrecorded inflows", () => {
+        const split = splitInflowByMode([
+            { direction: "inflow", amount: 3000, paymentMode: "cash" },
+            { direction: "inflow", amount: 1500, paymentMode: "upi" },
+            { direction: "inflow", amount: 500, paymentMode: "bank" },
+            { direction: "inflow", amount: 200, paymentMode: "cheque" },
+            { direction: "inflow", amount: 700 },
+        ]);
+        expect(split).toEqual({ cash: 3000, digital: 2200, unspecified: 700 });
+    });
+
+    it("ignores outflows and deleted rows", () => {
+        const split = splitInflowByMode([
+            { direction: "outflow", amount: 900, paymentMode: "cash" },
+            { direction: "inflow", amount: 400, paymentMode: "cash", deleted: true },
+            { direction: "inflow", amount: 100, paymentMode: "cash" },
+        ]);
+        expect(split).toEqual({ cash: 100, digital: 0, unspecified: 0 });
     });
 });

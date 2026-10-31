@@ -316,3 +316,5 @@ Firebase Services:
 | App Hosting | Build minutes vary; see [pricing](https://firebase.google.com/pricing) |
 
 For production use beyond free limits, upgrade to the **Blaze (pay-as-you-go)** plan.
+
+copilot --resume=2c3a644d-049a-4147-bf6f-ef4bea7c602e

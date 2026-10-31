@@ -208,6 +208,44 @@ describe("buildInflowPlan", () => {
         expect(plan.ledgerRows[0].amountPaid).toBe(5000);
         expectInvariantHolds(plan);
     });
+
+    it("records payment mode and reference on ledger rows and the settled invoice", () => {
+        const pool = [mkInv("a", "2026-08-01", 5000), mkInv("b", "2026-09-01", 5000)];
+        const plan = buildInflowPlan({
+            amount: 12000, pool, unitId: "u1", category: "rent",
+            mode: "upi", reference: " TXN-77 ",
+            tenantEmail: "t@example.com", unitNumber: "101", now: NOW,
+        });
+        expect(plan.ledgerRows).toHaveLength(3); // 2 payments + credit
+        for (const row of plan.ledgerRows) {
+            expect(row.paymentMode).toBe("upi");
+            expect(row.paymentReference).toBe("TXN-77");
+            // Backfill skips rows by this marker, so it must not change.
+            expect(row.transactionId).toBe("DAILY_LEDGER_AUTOSETTLE");
+        }
+        expect(plan.invoicePatches[0].patch.paymentMode).toBe("upi");
+        expectInvariantHolds(plan);
+    });
+
+    it("drops the reference for cash and leaves partial invoices untouched", () => {
+        const plan = buildInflowPlan({
+            amount: 2000, pool: [mkInv("a", "2026-08-01", 5000)], unitId: "u1", category: "rent",
+            mode: "cash", reference: "ignored",
+            tenantEmail: "t@example.com", unitNumber: "101", now: NOW,
+        });
+        expect(plan.ledgerRows[0].paymentMode).toBe("cash");
+        expect(plan.ledgerRows[0].paymentReference).toBeNull();
+        expect(plan.invoicePatches[0].patch).toEqual({ amountPaid: 2000 });
+    });
+
+    it("omits mode fields when no mode is given (legacy callers)", () => {
+        const plan = buildInflowPlan({
+            amount: 5000, pool: [mkInv("a", "2026-08-01", 5000)], unitId: "u1", category: "rent",
+            tenantEmail: "t@example.com", unitNumber: "101", now: NOW,
+        });
+        expect(plan.ledgerRows[0]).not.toHaveProperty("paymentMode");
+        expect(plan.invoicePatches[0].patch).not.toHaveProperty("paymentMode");
+    });
 });
 
 // ---------------------------------------------------------------------------

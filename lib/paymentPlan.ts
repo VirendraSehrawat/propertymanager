@@ -251,6 +251,10 @@ export interface InflowPlanInput {
     unitId?: string;
     category: string;
     transactionId?: string;
+    /** How the money was received. Recorded on every ledger row and on fully-settled invoices. */
+    mode?: PaymentMode;
+    /** UPI txn id / bank ref / cheque no. Ignored for cash. */
+    reference?: string | null;
     settledBy?: string;
     now?: string;
     /** Resolved tenant/unit identity for ledger rows & any auto-created invoice. */
@@ -274,6 +278,11 @@ export function buildInflowPlan(input: InflowPlanInput): PaymentPlan {
     const txnId = input.transactionId || "DAILY_LEDGER_AUTOSETTLE";
     const settledBy = input.settledBy || "employee-daily-ledger";
     const category = input.category;
+    // `transactionId` stays DAILY_LEDGER_AUTOSETTLE (the backfill relies on it
+    // to skip these rows); the mode and reference travel in their own fields.
+    const mode = input.mode || null;
+    const reference = mode && mode !== "cash" ? (input.reference || "").trim() || null : null;
+    const modeFields = mode ? { paymentMode: mode, paymentReference: reference } : {};
 
     const invoiceCreates: InvoiceCreateDraft[] = [];
     let pool = input.pool;
@@ -302,7 +311,7 @@ export function buildInflowPlan(input: InflowPlanInput): PaymentPlan {
     for (const line of result.lines) {
         const inv = pool.find((i) => i.id === line.invoiceId);
         const patch: Record<string, unknown> = line.fullySettled
-            ? { status: "paid", paidAt: now, amountPaid: line.newAmountPaid, transactionId: txnId }
+            ? { status: "paid", paidAt: now, amountPaid: line.newAmountPaid, transactionId: txnId, ...modeFields }
             : { amountPaid: line.newAmountPaid };
         invoicePatches.push({ invoiceId: line.invoiceId, patch });
 
@@ -320,6 +329,7 @@ export function buildInflowPlan(input: InflowPlanInput): PaymentPlan {
             settledBy,
             createdAt: now,
             category,
+            ...modeFields,
             collection: "ledger",
         });
     }
@@ -340,6 +350,7 @@ export function buildInflowPlan(input: InflowPlanInput): PaymentPlan {
             settledBy,
             createdAt: now,
             category,
+            ...modeFields,
             collection: "ledger",
         });
     }
