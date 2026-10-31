@@ -16,20 +16,31 @@ where in the code it applies. Effort is marked **S** (under a day), **M** (a few
 
 ---
 
+## Progress
+
+*Updated: 31 Oct 2026*
+
+**Done (11):** 1.1, 1.2, 1.3, 1.4, 1.6 · 2.1, 2.2, 2.3, 2.4, 2.5 · 3.1. Each is marked ✅ in its section with what shipped.
+Sections 1 (Collecting money) and 2 (Meter readings and invoicing) are complete except **1.5 Receipts**.
+
+**Next up (open quick wins):** 3.5, 3.8, 6.3, 7.3.
+
+---
+
 ## Summary — top 10 by impact
 
-| # | Suggestion | Why it matters | Effort |
-|---|-----------|----------------|--------|
-| 1 | Record **payment mode** (Cash/UPI/Bank) on Daily Ledger inflows | End-of-day cash reconciliation can't work without it | S |
-| 2 | Make **"Collected Today"** use ledger rows instead of fully-paid invoices | The Home KPI misses partial payments and overstates top-ups | S |
-| 3 | **One payment path:** steer tenant payments through a single "Record Payment" flow | Two doors (Daily inflow vs. Collections) confuse staff and split the audit trail | M |
-| 4 | **Meter round mode:** walk unit-by-unit with "Save & next" | Today it's one dropdown + a blocking alert per unit, for every unit, every month | M |
-| 5 | **Meter reading sanity checks** + meter photo | A reading below the previous one silently bills 0 units | S |
-| 6 | Protect **paid invoices from being overwritten** by the Meter tab | Override resets `status` to `unpaid` on an already-paid invoice | S |
-| 7 | **Shareable receipt** (WhatsApp/print) after every payment | Tenants ask for receipts; the roadmap already promises one | M |
-| 8 | Add **actions to the Monthly overview rows** (Call, Record payment, Enter meter) | It's a read-only list today, used to plan the collection route | S |
-| 9 | Replace `alert()` / `confirm()` / `prompt()` with **toasts and in-app dialogs** | Blocking pop-ups slow every save, and some are easy to dismiss by accident | M |
-| 10 | **Cut the tab bar** from 13 tabs to ~5 primary destinations | Hard to find things on a phone; related work is spread across tabs | M |
+| # | Suggestion | Why it matters | Effort | Status |
+|---|-----------|----------------|--------|--------|
+| 1 | Record **payment mode** (Cash/UPI/Bank) on Daily Ledger inflows | End-of-day cash reconciliation can't work without it | S | ✅ Done (1.1) |
+| 2 | Make **"Collected Today"** use ledger rows instead of fully-paid invoices | The Home KPI misses partial payments and overstates top-ups | S | ✅ Done (1.2) |
+| 3 | **One payment path:** steer tenant payments through a single "Record Payment" flow | Two doors (Daily inflow vs. Collections) confuse staff and split the audit trail | M | ✅ Done (1.3) |
+| 4 | **Meter round mode:** walk unit-by-unit with "Save & next" | Today it's one dropdown + a blocking alert per unit, for every unit, every month | M | ✅ Done (2.1) |
+| 5 | **Meter reading sanity checks** + meter photo | A reading below the previous one silently bills 0 units | S | ✅ Done (2.2, 2.3) |
+| 6 | Protect **paid invoices from being overwritten** by the Meter tab | Override resets `status` to `unpaid` on an already-paid invoice | S | ✅ Done (2.4) |
+| 7 | **Shareable receipt** (WhatsApp/print) after every payment | Tenants ask for receipts; the roadmap already promises one | M | Open (1.5) |
+| 8 | Add **actions to the Monthly overview rows** (Call, Record payment, Enter meter) | It's a read-only list today, used to plan the collection route | S | ✅ Done (3.1) |
+| 9 | Replace `alert()` / `confirm()` / `prompt()` with **toasts and in-app dialogs** | Blocking pop-ups slow every save, and some are easy to dismiss by accident | M | Open (6.2) |
+| 10 | **Cut the tab bar** from 13 tabs to ~5 primary destinations | Hard to find things on a phone; related work is spread across tabs | M | Open (6.1) |
 
 ---
 
@@ -97,6 +108,8 @@ PARTIAL badge, and make each row open the settle modal for that invoice.
 - **Send on Telegram** if the tenant is linked (the notification plumbing already exists in `lib/notify.ts`).
 
 ### 1.6 Search by more than email in Collections — S
+> ✅ **Done (31 Oct 2026).** Both Collections searches (Pending Invoices and Settled Collections) now match the tenant's **name** and **phone** as well as unit and email. Name and phone are looked up from the unit via `invoice.unitId` (no denormalising), and only while the unit still belongs to the invoice's tenant, so a new occupant's details never match an old tenant's invoices. Phone matching ignores spaces, dashes and a leading +91 / 0. Pending rows now show the tenant's name next to the email. Logic in `lib/invoiceSearch.ts`.
+
 **Problem.** The Collections pending search matches only `unitNumber` and `tenantEmail`. Employees
 know tenants by **name and phone**, which the global search already supports.
 
@@ -429,7 +442,9 @@ double tap or retry can't record the same cash twice.
 
 | Phase | Items | Outcome |
 |---|---|---|
-| **Quick wins (1 week)** | 1.1, 1.2, 1.4, 1.6, 2.2, 2.4, 3.1, 3.5, 3.8, 6.3, 7.3 | Correct numbers, fewer data errors, faster daily use |
-| **Workflow (2–3 weeks)** | 1.3, 1.5, 2.1, 2.3, 4.1, 6.2 | One payment path, fast meter rounds, receipts |
+| **Quick wins (1 week)** | ✅ 1.1, ✅ 1.2, ✅ 1.4, ✅ 1.6, ✅ 2.2, ✅ 2.4, ✅ 3.1, 3.5, 3.8, 6.3, 7.3 | Correct numbers, fewer data errors, faster daily use |
+| **Workflow (2–3 weeks)** | ✅ 1.3, 1.5, ✅ 2.1, ✅ 2.3, 4.1, 6.2 | One payment path, fast meter rounds, receipts |
 | **Structure (3–4 weeks)** | 3.2, 3.3, 3.6, 3.9, 6.1, 7.1 | Today list grouped by building, tracked day close with owner digest, simpler navigation, faster load |
-| **Later** | 2.5, 3.4, 3.7, 3.10, 4.3, 5.x, 7.2 | Routine calendar, ageing review, automation and offline support |
+| **Later** | ✅ 2.5, 3.4, 3.7, 3.10, 4.3, 5.x, 7.2 | Routine calendar, ageing review, automation and offline support |
+
+✅ = done. 2.5 was brought forward and shipped with the other meter/invoicing items.

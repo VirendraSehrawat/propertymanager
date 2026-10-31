@@ -20,8 +20,8 @@ Daily Ledger automatically, so the day's books stay complete.
 1. Login at `https://rental-appartment-theta.vercel.app` with your staff Google account.
 2. Either:
    - type the tenant's name or phone in the **🔍 search bar** at the top and tap **💳 Record Payment**, or
-   - open **Collections**, find the invoice under **Pending Invoices**, and tap **✓ Settle**
-     (**➕ Add Payment** if it is already part-paid).
+   - open **Collections**, find the invoice under **Pending Invoices** (its search box takes the unit,
+     tenant name, phone or email), and tap **✓ Settle** (**➕ Add Payment** if it is already part-paid).
 
 ### What to fill
 

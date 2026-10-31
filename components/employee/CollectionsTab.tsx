@@ -13,6 +13,7 @@ import {
 } from "@/lib/allocation";
 import { buildCollectionPaymentPlan, buildMasterSettlePlan } from "@/lib/paymentPlan";
 import { commitPaymentPlan } from "@/lib/commitPaymentPlan";
+import { invoiceContact, matchesInvoiceSearch, unitsById } from "@/lib/invoiceSearch";
 import { notifyPaymentRecorded } from "@/lib/notify";
 import { SettlePaymentModal, type SettlePaymentSubmit } from "./modals/SettlePaymentModal";
 import { SettleMasterInvoiceModal, type SettleMasterSubmit } from "./modals/SettleMasterInvoiceModal";
@@ -166,15 +167,12 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
         .sort((a, b) => b._effectiveDate.localeCompare(a._effectiveDate));
     const [settledLimit, setSettledLimit] = useState(20);
     const [settledFilter, setSettledFilter] = useState("");
+    // Name / phone for search and display come from the unit (invoices only carry email).
+    const unitMap = unitsById(occupiedUnits);
     const norm = (bp?: string) => (bp || "").replace(/\s*\(.+\)\s*$/, "").trim();
     const filteredSettled = settledInvoices.filter(inv => {
         if (collectionFilter !== "all" && collectionFilter !== "overdue" && norm(inv.billingPeriod) !== collectionFilter) return false;
-        if (!settledFilter) return true;
-        const q = settledFilter.toLowerCase();
-        return (inv.unitNumber || "").toLowerCase().includes(q)
-            || (inv.tenantEmail || "").toLowerCase().includes(q)
-            || (inv.billingPeriod || "").toLowerCase().includes(q)
-            || (inv.transactionId || "").toLowerCase().includes(q);
+        return matchesInvoiceSearch(inv, settledFilter, unitMap, [inv.billingPeriod, inv.transactionId]);
     });
     // For the header total: full invoice amount for paid rows, only collected-so-far for partials.
     const totalSettledAmount = filteredSettled.reduce((s, inv) => s + Number(inv._isPartial ? (inv.amountPaid || 0) : (inv.totalAmount || 0)), 0);
@@ -197,12 +195,7 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
         return paid > 0 && paid < total;
     };
     const partialInvoices = filteredInvoices.filter(isPartialInvoice);
-    const pendingSearchQ = pendingSearch.toLowerCase().trim();
-    const unpaidInvoices = pendingSearchQ
-        ? filteredInvoices.filter(inv =>
-            (inv.unitNumber || "").toLowerCase().includes(pendingSearchQ) ||
-            (inv.tenantEmail || "").toLowerCase().includes(pendingSearchQ))
-        : filteredInvoices;
+    const unpaidInvoices = filteredInvoices.filter(inv => matchesInvoiceSearch(inv, pendingSearch, unitMap));
 
     // Written-off (uncollectible — tenant absconded etc.). Respects the active month filter.
     const writtenOffInvoices = allInvoices
@@ -532,13 +525,13 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                             type="text"
                             value={pendingSearch}
                             onChange={(e) => setPendingSearch(e.target.value)}
-                            placeholder="🔍 Search unit or tenant…"
+                            placeholder="🔍 Search unit, name, phone or email…"
                             className="w-full text-xs px-3 py-1.5 border border-gray-300 rounded-md focus:outline-none focus:border-indigo-400"
                         />
                     </div>
                     <div className="divide-y divide-gray-100 max-h-96 overflow-y-auto">
                         {unpaidInvoices.length === 0 ? (
-                            <p className="p-6 text-sm text-gray-500 text-center">🎉 No pending invoices!</p>
+                            <p className="p-6 text-sm text-gray-500 text-center">{pendingSearch.trim() ? `No pending invoices match "${pendingSearch.trim()}".` : "🎉 No pending invoices!"}</p>
                         ) : unpaidInvoices.map(inv => {
                                 const overdue = isOverdue(inv.billingPeriod);
                                 const total = Number(inv.totalAmount || 0);
@@ -555,7 +548,12 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                                                 {overdue && <span className="text-[9px] font-bold bg-red-200 text-red-800 px-1.5 py-0.5 rounded">OVERDUE</span>}
                                                 {isPartial && <span className="text-[9px] font-bold bg-amber-200 text-amber-800 px-1.5 py-0.5 rounded">PARTIAL</span>}
                                             </div>
-                                            <p className="text-xs text-gray-500">{inv.tenantEmail}</p>
+                                            {(() => {
+                                                const { tenantName } = invoiceContact(inv, unitMap);
+                                                return tenantName
+                                                    ? <p className="text-xs text-gray-700">{tenantName} <span className="text-gray-400">· {inv.tenantEmail}</span></p>
+                                                    : <p className="text-xs text-gray-500">{inv.tenantEmail}</p>;
+                                            })()}
                                             <p className={`text-xs font-medium mt-0.5 ${overdue ? "text-red-600" : "text-indigo-600"}`}>{inv.billingPeriod}</p>
                                             {(inv.rentPeriod || inv.electricityPeriod) && (
                                                 <p className="text-[10px] text-gray-500 mt-0.5">
@@ -654,7 +652,7 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                             type="text"
                             value={settledFilter}
                             onChange={(e) => { setSettledFilter(e.target.value); setSettledLimit(20); }}
-                            placeholder="Search unit / tenant / ref"
+                            placeholder="Search unit / name / phone / ref"
                             className="text-xs px-2 py-1.5 border border-green-300 rounded-md w-40 focus:outline-none focus:border-green-500"
                         />
                     </div>
