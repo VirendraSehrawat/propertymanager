@@ -168,44 +168,142 @@ the move-in date, opening meter reading captured at the same time).
 
 ## 3. Daily routine and planning
 
+> **Updated 31 Oct 2026** to match what is now built: tenant payments go through Collections only (1.3),
+> the Daily tab splits **💵 Cash in hand / 📱 UPI-Bank / ❔ Mode not recorded** (1.1), Home's Overdue list
+> shows remaining balances and opens Record Payment (1.4), and the Meter tab has rounds, drafts, checks
+> and move-in invoices (2.1–2.5). Nothing in this section is built yet.
+
+The items are ordered around the employee's day. Item numbers are unchanged so the rollout table still
+matches.
+
+| When | What the employee needs | Items |
+|---|---|---|
+| **Morning** | One list of what to do today, in walking order | 3.2, 3.6, 3.4, 3.7 |
+| **During the day** | Act straight from the list; remember what tenants said | 3.1, 3.5 |
+| **Evening** | Count the cash, close the day, tell the owner | 3.3, 3.9 |
+| **Weekly / monthly** | See which dues are getting old; prepare for move-outs | 3.10, 3.8 |
+
 ### 3.1 Make the Monthly overview actionable — S
+> ✅ **Done (31 Oct 2026).** Rows now have **💳 Record payment** (opens Collections' Settle modal; corporate-grouped invoices show *Corporate → Collections*), **📞 Call** and **💬 WhatsApp** (message quotes the remaining balance; helpers in `lib/contact.ts`), and **⚡ Enter meter** / **📝 Draft saved — generate invoice** on No Invoice Yet rows, which open the Meter tab on that unit and month (`MeterTab` `initialUnitId` / `initialBillingMonth`). Move-in invoices now count as the month's invoice.
+
 **Problem.** `MonthlyOverviewTab` groups units into Rent Paid / Rent Pending / Electricity Pending /
-No Invoice Yet, and the docs say it's used to *"plan the day's collection route"*, but the rows have no
-actions.
+No Invoice Yet and is used to plan the collection route, but its rows have no buttons. Home's Overdue
+list can now open Record Payment directly (1.4); the Monthly overview can't.
 
-**Suggestion.** Add per-row buttons: **📞 Call** (`tel:`), **💬 WhatsApp reminder** (pre-filled
-message with the due amount), **💳 Record payment**, and **⚡ Enter meter** for "No Invoice Yet".
+**Suggestion.** Add per-row buttons, reusing what already exists:
+- **💳 Record payment**: the same `jumpToInvoiceId` hand-off Home uses, so it opens Collections' Settle
+  modal on that invoice (corporate-grouped invoices go to the master invoice instead);
+- **📞 Call** (`tel:`) and **💬 WhatsApp reminder** pre-filled with the *remaining* balance, not the
+  invoice total;
+- **⚡ Enter meter** on "No Invoice Yet": opens the Meter tab on that unit (needs a small
+  `initialUnitId` prop on `MeterTab`). If the unit already has a **📝 draft reading**, show
+  *"Draft saved — generate invoice"* instead.
 
-### 3.2 Today's to-do list on Home — M
-**Problem.** Home shows lots of cards (KPIs, month card, previous balance, quick actions, overdue,
-meters pending, tasks, activity) and leaves it to the employee to work out what to do first.
+### 3.2 Today list on Home — M
+**Problem.** Home shows many separate cards (KPIs, month card, previous balance, quick actions, overdue,
+meters pending, tasks, activity) and leaves it to the employee to work out what to do first. The
+**Meters Pending** card also doesn't know about draft readings, so units read and saved as drafts
+still show as pending.
 
-**Suggestion.** Add a single **"Today"** list at the top, generated from data:
-- tenants whose `paymentDay` is today or passed and who still owe;
-- meters pending once the reading window opens (e.g. after the 1st);
-- tickets older than N days or marked urgent;
-- unsettled expenses waiting for a receipt.
+**Suggestion.** One **"Today"** list at the top, built from data, each item with one action:
 
-Each item gets one action button. Collapse the other cards below it.
+| Source | Shows when | Action |
+|---|---|---|
+| Rent due (3.4) | `paymentDay` is today or passed and the invoice still has a remaining balance | 💳 Record payment |
+| Promises (3.5) | promised date is today, or passed and still unpaid (broken promise) | 💳 Record payment · 📞 Call |
+| Meter round | from the 1st until every unit is read for the month | ⚡ Continue round (*"12 of 30 done"*) |
+| Draft readings | drafts exist for the month | 🧾 Generate N invoices |
+| Tickets | urgent, or open longer than N days | 🔧 Open ticket |
+| Routine (3.7) | a recurring chore is due | ✓ Done |
+| Move-outs (3.8) | a lease ends or notice expires within 7 days | 📋 Checklist |
+| Day close (3.3) | yesterday wasn't closed, or after 6 pm today | 🔒 Close day |
+
+Lay it out by building (3.6). The other cards collapse below the list. Fix Meters Pending to use
+`buildMeterRound` so drafted and move-in units aren't counted as pending.
 
 ### 3.3 End-of-day close — M
-**Problem.** The end-of-day check (`EMPLOYEE_WORKFLOW.md` §6) is a manual mental checklist with no record.
+**Problem.** The end-of-day check (`EMPLOYEE_WORKFLOW.md` §6, `MANAGER_ACTIONS.md` §9) is a mental
+checklist with no record. The Daily tab now shows *Cash in hand* and *UPI / Bank* separately, but nothing
+saves the reconciliation.
 
-**Suggestion.** Add a **"Close day"** action in the Daily tab:
-1. Shows expected cash = opening cash + cash inflows − cash outflows.
-2. Employee enters **actual cash counted** and any amount handed to the owner.
-3. Saves a `dayClose` record with the difference and a note; flags it to the admin if the difference
-   isn't zero.
-4. The next day's opening cash comes from this close.
-
-This turns reconciliation into a tracked step and gives the admin a daily cash trail.
+**Suggestion.** A **🔒 Close day** action in the Daily tab:
+1. **Expected cash** = opening cash + cash inflows − cash outflows. Inflows come from Collections
+   payments with mode *cash*; UPI/bank is listed separately to match against the phone or bank statement.
+2. Any **❔ Mode not recorded** inflow (older rows) must be given a mode before closing.
+3. The employee enters **actual cash counted** and any amount **handed to the owner**.
+4. A `dayClose` record saves the difference and a note; a non-zero difference is flagged to the admin.
+5. The next day's **opening cash** comes from this close. A closed day becomes read-only in the Daily
+   tab; changes need a reopen by the admin.
 
 ### 3.4 Payment-day reminders — S/M
-**Problem.** `unit.paymentDay` is stored, but nothing uses it to prompt follow-ups.
+**Problem.** `unit.paymentDay` is stored and used for rent periods (and now for the move-in pro-rating),
+but nothing uses it to prompt follow-ups. Home's Overdue list is sorted oldest first, which isn't the
+same as "who should pay today".
 
-**Suggestion.** Use it to drive the "Today" list (3.2) and a sort order in Collections
-("due today → overdue → upcoming"). If Telegram/WhatsApp notifications are enabled, send tenants
-an automatic reminder so the employee doesn't have to.
+**Suggestion.** Use it to drive the Today list (3.2), and add a sort to Collections: **due today →
+overdue → upcoming this week**. If Telegram (`lib/notify.ts`) or WhatsApp is set up for the tenant, send
+an automatic reminder the day before and on the day, showing the remaining balance, so the employee
+only chases tenants who didn't respond.
+
+### 3.5 Follow-up log and promise-to-pay — S
+**Problem.** When a tenant says *"I'll pay on Friday"*, there is nowhere to record it. Unit notes are
+free text, so the next day the employee has to remember who was chased, when, and what they said.
+
+**Suggestion.** A **📞 Log follow-up** action on overdue rows (Home, Collections, Monthly) with a small
+set of outcomes: *No answer*, *Promised on <date>*, *Will pay partly*, *Disputed*. Store it on the unit
+(e.g. `followUps[]` with date, outcome, promised date, staff). Then:
+- show *"Last contacted 2 days ago · promised 3 Nov"* on the overdue row;
+- put promises due today into the Today list, and flag **broken promises** (date passed, still unpaid);
+- leave tenants with a future promise out of the "chase today" list so they aren't called twice;
+- recording a payment in Collections closes any open promise for that tenant.
+
+### 3.6 Plan the walk by building — S
+**Problem.** Overdue tenants, pending meters and open tickets are separate lists, so the employee may
+visit the same building several times a day.
+
+**Suggestion.** Lay the Today list (3.2) out by **building, then unit number**, using the same ordering
+as the meter round (`lib/meterRound.ts`). Each building header shows its counts (*"Block A — 3 dues ·
+2 meters · 1 ticket"*), so one visit covers collection, readings and repairs. During the first week of
+the month, the meter round and rent collection for the same building appear together.
+
+### 3.7 Monthly routine calendar — M
+**Problem.** The month has a fixed rhythm (meter round in the first days, rent around each tenant's
+payment day, month-end books) and recurring chores (water-tank cleaning, fire extinguisher checks,
+common-area lights, pest control). None of it is in the app, so it depends on memory.
+
+**Suggestion.** A **Routine** list the admin sets up once: task, frequency (daily / weekly / monthly /
+every N months), building, and day. Due items appear in the Today list with a ✓ button that records who
+did it and when; overdue ones show in red. Two entries are built in: **Meter round** (from the 1st,
+showing the round's progress and any drafts to generate) and **Close day** (3.3).
+
+### 3.8 Upcoming move-outs and lease ends — S
+**Problem.** `unit.leaseEnd` is stored but only shown in the admin area. The employee finds out about a
+move-out when the tenant leaves, so the move-out checklist, deposit deduction and final invoice are
+rushed. Move-ins are covered: Assign Tenant now creates the first invoice and records the opening
+reading (2.5).
+
+**Suggestion.** A **"Coming up (30 days)"** card on Home: leases ending, notice given, and planned
+transfers, with **📋 Move-out checklist** (Checklist tab pre-filled with the unit) and **🧾 Final
+invoice** (pro-rated rent plus the final meter reading, the same maths as the transfer invoice). When the
+unit is vacated, offer to mark it ready for the next tenant.
+
+### 3.9 Automatic end-of-day summary to the owner — S
+**Problem.** The owner learns about the day by phoning the employee. Telegram already sends invoice and
+payment alerts (`lib/notify.ts`, `lib/telegram/`), but there is no daily digest.
+
+**Suggestion.** When the day is closed (3.3), or at a fixed time if it isn't, send one message:
+collected today (cash / UPI-bank, from the ledger rows behind *Collected Today*), spent today, cash
+counted vs expected, advances recorded, new and resolved tickets, meter round progress, and the top 3
+overdue tenants by remaining balance.
+
+### 3.10 Weekly review: how old the dues are — S
+**Problem.** Home's Overdue list now shows remaining balances (1.4), but it's still flat. It doesn't show
+whether dues are getting older or which tenants are becoming a risk.
+
+**Suggestion.** A weekly view (Monday) with remaining balances in **ageing buckets** (0–30, 31–60, 60+
+days), money collected this week vs last week, and tenants whose balance has grown for 2+ months in a
+row. Each tenant row shows their follow-up history (3.5) and security deposit, so the employee and owner
+can decide on the next step (notice, deposit adjustment, write-off).
 
 ---
 
@@ -331,7 +429,7 @@ double tap or retry can't record the same cash twice.
 
 | Phase | Items | Outcome |
 |---|---|---|
-| **Quick wins (1 week)** | 1.1, 1.2, 1.4, 1.6, 2.2, 2.4, 3.1, 6.3, 7.3 | Correct numbers, fewer data errors, faster daily use |
+| **Quick wins (1 week)** | 1.1, 1.2, 1.4, 1.6, 2.2, 2.4, 3.1, 3.5, 3.8, 6.3, 7.3 | Correct numbers, fewer data errors, faster daily use |
 | **Workflow (2–3 weeks)** | 1.3, 1.5, 2.1, 2.3, 4.1, 6.2 | One payment path, fast meter rounds, receipts |
-| **Structure (3–4 weeks)** | 3.2, 3.3, 6.1, 7.1 | Today list, tracked day close, simpler navigation, faster load |
-| **Later** | 2.5, 3.4, 4.3, 5.x, 7.2 | Automation and offline support |
+| **Structure (3–4 weeks)** | 3.2, 3.3, 3.6, 3.9, 6.1, 7.1 | Today list grouped by building, tracked day close with owner digest, simpler navigation, faster load |
+| **Later** | 2.5, 3.4, 3.7, 3.10, 4.3, 5.x, 7.2 | Routine calendar, ageing review, automation and offline support |

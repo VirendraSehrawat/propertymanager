@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { doc, getDoc, writeBatch, deleteField } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { computeRentPeriod, computeElectricityPeriod } from "@/lib/billingPeriods";
@@ -24,6 +24,12 @@ interface MeterTabProps {
     electricityRate: number;
     /** Used to group and order the meter round by building. */
     buildings?: { id: string; name: string }[];
+    /** Open on this unit (e.g. "⚡ Enter meter" from the Monthly overview). */
+    initialUnitId?: string;
+    /** Open on this billing month ("YYYY-MM"). */
+    initialBillingMonth?: string;
+    /** Called once the initial unit/month have been applied. */
+    onInitialConsumed?: () => void;
 }
 
 /** Firestore write for a built invoice: merge the fields, delete the cleared ones. */
@@ -67,18 +73,24 @@ function draftToInput(draft: MeterDraft): MeterInput {
  * automatically, and saving moves straight on to the next one. A reading can
  * also be saved as a draft on the unit and turned into invoices later in one go.
  */
-export function MeterTab({ occupiedUnits, allInvoices, electricityRate, buildings = [] }: MeterTabProps) {
-    const [selectedMeterUnit, setSelectedMeterUnit] = useState("");
-    const [currentReading, setCurrentReading] = useState("");
-    const [previousReadingOverride, setPreviousReadingOverride] = useState("");
-    const [meterChanged, setMeterChanged] = useState(false);
-    const [manualUnitsConsumed, setManualUnitsConsumed] = useState("");
-    const [manualUnitsReason, setManualUnitsReason] = useState("");
-    const [newMeterReading, setNewMeterReading] = useState("");
+export function MeterTab({ occupiedUnits, allInvoices, electricityRate, buildings = [], initialUnitId = "", initialBillingMonth = "", onInitialConsumed }: MeterTabProps) {
+    // A deep-linked unit with a draft reading for the month opens with that reading filled in.
+    const [initialDraft] = useState(() => {
+        const draft = occupiedUnits.find((u) => u.id === initialUnitId)?.meterDraft;
+        return draft && (!initialBillingMonth || draft.billingMonth === initialBillingMonth) ? draft : undefined;
+    });
+    const [selectedMeterUnit, setSelectedMeterUnit] = useState(initialUnitId);
+    const [currentReading, setCurrentReading] = useState(initialDraft?.currentReading !== undefined ? String(initialDraft.currentReading) : "");
+    const [previousReadingOverride, setPreviousReadingOverride] = useState(initialDraft ? String(initialDraft.previousReading) : "");
+    const [meterChanged, setMeterChanged] = useState(Boolean(initialDraft?.meterChanged));
+    const [manualUnitsConsumed, setManualUnitsConsumed] = useState(initialDraft?.manualUnits !== undefined ? String(initialDraft.manualUnits) : "");
+    const [manualUnitsReason, setManualUnitsReason] = useState(initialDraft?.manualUnitsReason || "");
+    const [newMeterReading, setNewMeterReading] = useState(initialDraft?.newMeterReading !== undefined ? String(initialDraft.newMeterReading) : "");
     const [meterPhoto, setMeterPhoto] = useState<File | null>(null);
     const [spikeChecked, setSpikeChecked] = useState(false);
     const [formError, setFormError] = useState("");
     const [billingMonth, setBillingMonth] = useState(() => {
+        if (/^\d{4}-\d{2}$/.test(initialBillingMonth)) return initialBillingMonth;
         const now = new Date();
         return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
     });
@@ -94,6 +106,13 @@ export function MeterTab({ occupiedUnits, allInvoices, electricityRate, building
     const readingInputRef = useRef<HTMLInputElement>(null);
     const photoInputRef = useRef<HTMLInputElement>(null);
     const { uploadFile, isUploading } = useUploadWithProgress();
+
+    // The initial unit/month only seed state; tell the parent so returning to
+    // the tab later starts a normal round again.
+    useEffect(() => {
+        if (initialUnitId || initialBillingMonth) onInitialConsumed?.();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     const units = useMemo(() => occupiedUnits.map((u) => {
         if (!(u.id in localDrafts)) return u;

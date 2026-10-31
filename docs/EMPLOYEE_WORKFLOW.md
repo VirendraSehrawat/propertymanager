@@ -253,8 +253,15 @@ creates the **first invoice** straight away:
    - ✅ **Rent Paid**
    - ⏳ **Rent Pending**
    - ⚡ **Electricity Pending**
-   - 📭 **No Invoice Yet** (meter reading missing)
-4. Uses this to plan the day's collection route.
+   - 📭 **No Invoice Yet** (meter reading missing). A move-in invoice counts as the month's invoice.
+4. Uses this to plan the day's collection route, acting straight from each row:
+   - **💳 Record payment** opens Collections' Record Payment on that invoice. Invoices grouped under a
+     corporate invoice show **Corporate → Collections** instead.
+   - **📞 Call** and **💬 WhatsApp** use the tenant's saved phone. The WhatsApp message is pre-filled with
+     the **remaining balance** (and a thank-you for any part already paid). Rows without a phone say
+     *No phone saved*.
+   - **⚡ Enter meter** (No Invoice Yet) opens the Meter tab on that unit and month. If a draft reading is
+     already saved, the button reads **📝 Draft saved — generate invoice** and opens with it filled in.
 
 ### Expense fund & settlement
 

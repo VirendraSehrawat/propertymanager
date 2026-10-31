@@ -169,3 +169,17 @@ describe("MeterTab — reading checks, drafts and photo", () => {
         expect(screen.getByRole("button", { name: "Generate Invoice" })).toBeDisabled();
     });
 });
+
+describe("MeterTab — opened from the Monthly overview", () => {
+    it("opens on the requested unit with its draft reading filled in", () => {
+        const onInitialConsumed = vi.fn();
+        const drafted = units.map((u) => u.id === "u2"
+            ? { ...u, meterDraft: { billingMonth: thisMonth, previousReading: 200, currentReading: 260, savedAt: "x" } }
+            : u);
+        render(<MeterTab occupiedUnits={drafted} allInvoices={[]} electricityRate={10} buildings={buildings}
+            initialUnitId="u2" initialBillingMonth={thisMonth} onInitialConsumed={onInitialConsumed} />);
+        expect(unitSelect().value).toBe("u2");
+        expect((screen.getByPlaceholderText("e.g. 1250") as HTMLInputElement).value).toBe("260");
+        expect(onInitialConsumed).toHaveBeenCalledTimes(1);
+    });
+});

@@ -88,6 +88,8 @@ export default function EmployeeDashboard() {
     const [assignOpeningReading, setAssignOpeningReading] = useState("");
     const [assignFirstInvoice, setAssignFirstInvoice] = useState(true);
     const [isAssigning, setIsAssigning] = useState(false);
+    // "⚡ Enter meter" from the Monthly overview opens the Meter tab on that unit + month.
+    const [meterJump, setMeterJump] = useState<{ unitId: string; billingMonth: string } | null>(null);
     const [isEditUnitModalOpen, setIsEditUnitModalOpen] = useState(false);
     const [editUnit, setEditUnit] = useState<Unit | null>(null);
     const [editUnitNumber, setEditUnitNumber] = useState("");
@@ -689,7 +691,15 @@ export default function EmployeeDashboard() {
 
                 {/* METER READING TAB */}
                 {activeTab === "meter" && (
-                    <MeterTab occupiedUnits={occupiedUnits} allInvoices={allInvoices} electricityRate={electricityRate} buildings={buildings} />
+                    <MeterTab
+                        occupiedUnits={occupiedUnits}
+                        allInvoices={allInvoices}
+                        electricityRate={electricityRate}
+                        buildings={buildings}
+                        initialUnitId={meterJump?.unitId}
+                        initialBillingMonth={meterJump?.billingMonth}
+                        onInitialConsumed={() => setMeterJump(null)}
+                    />
                 )}
 
                 {/* LEDGER TAB */}
@@ -704,7 +714,15 @@ export default function EmployeeDashboard() {
 
                 {/* MONTHLY OVERVIEW TAB */}
                 {activeTab === "monthly" && (
-                    <MonthlyOverviewTab allUnits={allUnits} buildings={buildings} allInvoices={allInvoices} allExpenses={allExpenses} />
+                    <MonthlyOverviewTab
+                        allUnits={allUnits}
+                        buildings={buildings}
+                        allInvoices={allInvoices}
+                        allExpenses={allExpenses}
+                        onRecordPayment={(invoiceId) => { setJumpToInvoiceId(invoiceId); setActiveTab("collections"); }}
+                        onOpenCollections={() => setActiveTab("collections")}
+                        onEnterMeter={(unitId, billingMonth) => { setMeterJump({ unitId, billingMonth }); setActiveTab("meter"); }}
+                    />
                 )}
 
                 {/* UNITS TAB */}

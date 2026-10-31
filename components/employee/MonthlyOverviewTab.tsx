@@ -1,8 +1,9 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { collectedSplit, pendingSplit } from "@/lib/allocation";
+import { collectedSplit, pendingSplit, stripBillingPeriodSuffix } from "@/lib/allocation";
 import { categoryEmoji } from "@/lib/expenses";
+import { paymentReminderText, telLink, whatsAppLink } from "@/lib/contact";
 
 interface Unit {
     id: string;
@@ -11,7 +12,10 @@ interface Unit {
     status?: string;
     tenantName?: string;
     tenantEmail?: string;
+    tenantPhone?: string;
     baseRent?: number;
+    /** Reading saved on the meter round without an invoice yet. */
+    meterDraft?: { billingMonth: string };
 }
 
 interface Building { id: string; name: string; }
@@ -27,6 +31,8 @@ interface Invoice {
     electricityCharge?: number;
     totalAmount?: number;
     amountPaid?: number;
+    /** Grouped under a corporate master invoice — settled from that card, not per unit. */
+    masterInvoiceId?: string;
 }
 
 interface Props {
@@ -35,6 +41,12 @@ interface Props {
     allInvoices: Invoice[];
     /** Optional — enables the "Expenses by Category" section for the selected month. */
     allExpenses?: Array<{ amount: number; category?: string; date?: string; createdAt?: string; buildingId?: string }>;
+    /** Opens Collections' Record Payment for this invoice. */
+    onRecordPayment?: (invoiceId: string) => void;
+    /** Opens Collections (corporate-grouped invoices are settled from the master invoice). */
+    onOpenCollections?: () => void;
+    /** Opens the Meter tab on this unit and billing month ("YYYY-MM"). */
+    onEnterMeter?: (unitId: string, billingMonth: string) => void;
 }
 
 const currentMonthISO = () => new Date().toISOString().slice(0, 7);
@@ -54,7 +66,7 @@ const GROUP_META: Record<Group, { label: string; emoji: string; color: string; b
     noInvoice: { label: "No Invoice Yet", emoji: "📭", color: "text-gray-700", bg: "bg-gray-50", border: "border-gray-200" },
 };
 
-export function MonthlyOverviewTab({ allUnits, buildings, allInvoices, allExpenses = [] }: Props) {
+export function MonthlyOverviewTab({ allUnits, buildings, allInvoices, allExpenses = [], onRecordPayment, onOpenCollections, onEnterMeter }: Props) {
     const [selectedMonth, setSelectedMonth] = useState<string>(currentMonthISO());
     const [buildingFilter, setBuildingFilter] = useState<string>("");
     const [expandedGroups, setExpandedGroups] = useState<Record<Group, boolean>>({
@@ -80,8 +92,13 @@ export function MonthlyOverviewTab({ allUnits, buildings, allInvoices, allExpens
         };
 
         scopedUnits.forEach(unit => {
+            // Prefer the regular invoice; fall back to a suffixed one for the
+            // same month (e.g. "October 2026 (Move-in)") so new tenants don't
+            // show up as "No Invoice Yet".
             const invoice = allInvoices.find(
                 inv => inv.unitId === unit.id && inv.billingPeriod === monthLabel
+            ) ?? allInvoices.find(
+                inv => inv.unitId === unit.id && stripBillingPeriodSuffix(inv.billingPeriod) === monthLabel
             );
             const buildingName = buildings.find(b => b.id === unit.buildingId)?.name || "—";
 
@@ -172,33 +189,84 @@ export function MonthlyOverviewTab({ allUnits, buildings, allInvoices, allExpens
         return { rows, total: rows.reduce((s, r) => s + r.total, 0) };
     }, [allExpenses, selectedMonth, buildingFilter]);
 
+    const actionClass = "inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-bold border transition";
+
+    const renderActions = (entry: { unit: Unit; invoice?: Invoice }, group: Group) => {
+        const { unit, invoice } = entry;
+        if (group === "paid") return null;
+
+        if (!invoice) {
+            if (!onEnterMeter) return null;
+            const drafted = unit.meterDraft?.billingMonth === selectedMonth;
+            return (
+                <button type="button" onClick={() => onEnterMeter(unit.id, selectedMonth)} className={`${actionClass} ${drafted ? "border-purple-300 bg-purple-100 text-purple-800" : "border-purple-200 bg-purple-50 text-purple-700"} hover:bg-purple-200`}>
+                    {drafted ? "📝 Draft saved — generate invoice" : "⚡ Enter meter"}
+                </button>
+            );
+        }
+
+        const total = Number(invoice.totalAmount || 0);
+        const paid = Number(invoice.amountPaid || 0);
+        const remaining = Math.max(0, total - paid);
+        const tel = telLink(unit.tenantPhone);
+        const wa = whatsAppLink(unit.tenantPhone, paymentReminderText({
+            tenantName: unit.tenantName,
+            unitNumber: unit.unitNumber,
+            billingPeriod: invoice.billingPeriod || monthLabel,
+            remaining,
+            paid,
+        }));
+        const isCorporate = Boolean(invoice.masterInvoiceId);
+        const pay = isCorporate ? onOpenCollections : onRecordPayment && (() => onRecordPayment(invoice.id));
+        return (
+            <>
+                {pay && (
+                    <button type="button" onClick={pay} className={`${actionClass} border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100`} title={isCorporate ? "Grouped under a corporate invoice — settle it from Collections" : undefined}>
+                        💳 {isCorporate ? "Corporate → Collections" : "Record payment"}
+                    </button>
+                )}
+                {tel && (
+                    <a href={tel} className={`${actionClass} border-green-200 bg-green-50 text-green-700 hover:bg-green-100`}>📞 Call</a>
+                )}
+                {wa && (
+                    <a href={wa} target="_blank" rel="noopener noreferrer" className={`${actionClass} border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100`}>💬 WhatsApp</a>
+                )}
+                {!tel && <span className="text-[10px] text-gray-400 self-center">No phone saved</span>}
+            </>
+        );
+    };
+
     const renderRow = (entry: { unit: Unit; invoice?: Invoice; buildingName: string }, group: Group) => {
         const { unit, invoice, buildingName } = entry;
+        const actions = renderActions(entry, group);
         return (
-            <div key={unit.id} className="px-3 py-2 flex justify-between items-start gap-3 border-b border-gray-100 last:border-0">
-                <div className="min-w-0 flex-1">
-                    <p className="text-sm font-bold text-gray-900">{unit.unitNumber} <span className="text-[10px] text-gray-500 font-normal">· {buildingName}</span></p>
-                    <p className="text-[11px] text-gray-600">{unit.tenantName || "—"}{unit.tenantEmail ? ` · ${unit.tenantEmail}` : ""}</p>
-                    {invoice && (
-                        <div className="mt-1 text-[10px] text-gray-500 flex gap-2 flex-wrap">
-                            <span>Rent ₹{Number(invoice.baseRent || 0).toLocaleString()}</span>
-                            <span>Elec ₹{Number(invoice.electricityCharge || 0).toLocaleString()}</span>
-                            <span>Paid ₹{Number(invoice.amountPaid || 0).toLocaleString()}</span>
-                        </div>
-                    )}
+            <div key={unit.id} className="px-3 py-2 border-b border-gray-100 last:border-0">
+                <div className="flex justify-between items-start gap-3">
+                    <div className="min-w-0 flex-1">
+                        <p className="text-sm font-bold text-gray-900">{unit.unitNumber} <span className="text-[10px] text-gray-500 font-normal">· {buildingName}</span></p>
+                        <p className="text-[11px] text-gray-600">{unit.tenantName || "—"}{unit.tenantEmail ? ` · ${unit.tenantEmail}` : ""}</p>
+                        {invoice && (
+                            <div className="mt-1 text-[10px] text-gray-500 flex gap-2 flex-wrap">
+                                <span>Rent ₹{Number(invoice.baseRent || 0).toLocaleString()}</span>
+                                <span>Elec ₹{Number(invoice.electricityCharge || 0).toLocaleString()}</span>
+                                <span>Paid ₹{Number(invoice.amountPaid || 0).toLocaleString()}</span>
+                            </div>
+                        )}
+                    </div>
+                    <div className="text-right shrink-0">
+                        {invoice ? (
+                            <>
+                                <p className="text-sm font-bold text-gray-900">₹{Number(invoice.totalAmount || 0).toLocaleString()}</p>
+                                {group !== "paid" && (
+                                    <p className="text-[10px] font-bold text-red-600">DUE ₹{Math.max(0, Number(invoice.totalAmount || 0) - Number(invoice.amountPaid || 0)).toLocaleString()}</p>
+                                )}
+                            </>
+                        ) : (
+                            <p className="text-[10px] text-gray-400">Base rent ₹{Number(unit.baseRent || 0).toLocaleString()}</p>
+                        )}
+                    </div>
                 </div>
-                <div className="text-right shrink-0">
-                    {invoice ? (
-                        <>
-                            <p className="text-sm font-bold text-gray-900">₹{Number(invoice.totalAmount || 0).toLocaleString()}</p>
-                            {group !== "paid" && (
-                                <p className="text-[10px] font-bold text-red-600">DUE ₹{(Number(invoice.totalAmount || 0) - Number(invoice.amountPaid || 0)).toLocaleString()}</p>
-                            )}
-                        </>
-                    ) : (
-                        <p className="text-[10px] text-gray-400">Base rent ₹{Number(unit.baseRent || 0).toLocaleString()}</p>
-                    )}
-                </div>
+                {actions && <div className="mt-1.5 flex flex-wrap gap-1.5">{actions}</div>}
             </div>
         );
     };

@@ -103,7 +103,7 @@ After saving the payment:
 | **📓 Daily** | Inflows are created automatically from Collections. Use Daily only for **➖ Outflows**. |
 | **💰 Expenses** | This tab is for **money going out** (labour, materials, utility bills paid to vendors). |
 | **Meter** | This tab **generates** the electricity/rent invoice for the month. It does not record payment. |
-| **🏘 Monthly** | Read-only overview. Use it to *see* who has paid. |
+| **🏘 Monthly** | Overview of who has paid. Its **💳 Record payment** button opens Collections — the payment is still saved there. |
 
 Inflow rows created by Collections show **"via Collections"** in the Daily tab and can't be deleted
 there — deleting only the cash row would leave the invoice marked paid.
@@ -142,7 +142,7 @@ Money going OUT (labour / material / vendor)?
 3. Match **📱 UPI / Bank** with the payments received on your phone / bank statement.
 4. Match the **Outflow total** with the receipts you paid out.
 5. Confirm **Net** is what you'll deposit / carry over.
-6. Open **🏘 Monthly** → check anyone still marked **⏳ Rent Pending** or **⚡ Electricity Pending** whom you should follow up with tomorrow.
+6. Open **🏘 Monthly** → check anyone still marked **⏳ Rent Pending** or **⚡ Electricity Pending**, and send a **💬 WhatsApp** reminder (pre-filled with the balance) or plan a call for tomorrow.
 7. Logout.
 
 ---
