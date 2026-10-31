@@ -5,6 +5,7 @@ import { doc, updateDoc, addDoc, collection } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { Modal } from "@/components/ui";
 import type { InventoryItem, Building } from "@/types";
+import { toast } from "@/components/ui";
 
 interface InventoryTabProps {
     allInventory: InventoryItem[];
@@ -36,14 +37,14 @@ export function InventoryTab({ allInventory, buildings }: InventoryTabProps) {
             });
             setIsModalOpen(false);
             setName(""); setQty(""); setBuilding(""); setLocation(""); setCondition("good"); setNotes("");
-            alert("Inventory item added!");
-        } catch (error) { console.error(error); alert("Failed to add inventory item."); } finally { setIsSubmitting(false); }
+            toast.success("Inventory item added.");
+        } catch (error) { console.error(error); toast.error("Failed to add inventory item."); } finally { setIsSubmitting(false); }
     };
 
     const handleUpdateQty = async (itemId: string, newQty: number) => {
         try {
             await updateDoc(doc(db, "inventory", itemId), { quantity: newQty, updatedAt: new Date().toISOString() });
-        } catch (error) { console.error(error); alert("Failed to update quantity."); }
+        } catch (error) { console.error(error); toast.error("Failed to update quantity."); }
     };
 
     const filtered = inventoryFilter ? allInventory.filter(i => i.buildingId === inventoryFilter) : allInventory;
@@ -98,7 +99,7 @@ export function InventoryTab({ allInventory, buildings }: InventoryTabProps) {
                     </div>
                     <div>
                         <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Quantity *</label>
-                        <input type="number" required min="0" value={qty} onChange={(e) => setQty(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
+                        <input type="number" inputMode="decimal" required min="0" value={qty} onChange={(e) => setQty(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
                     </div>
                     <div>
                         <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Building</label>
@@ -123,7 +124,7 @@ export function InventoryTab({ allInventory, buildings }: InventoryTabProps) {
                         <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Notes</label>
                         <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
                     </div>
-                    <div className="flex gap-2 pt-2">
+                    <div className="flex gap-2 pt-2 sticky bottom-0 bg-white pb-1">
                         <button type="button" onClick={() => setIsModalOpen(false)} className="flex-1 py-2 border border-gray-300 rounded-md text-sm text-gray-600">Cancel</button>
                         <button type="submit" disabled={isSubmitting} className="flex-1 py-2 bg-cyan-600 text-white rounded-md text-sm font-medium hover:bg-cyan-700 disabled:bg-cyan-400">{isSubmitting ? "Saving..." : "Add Item"}</button>
                     </div>

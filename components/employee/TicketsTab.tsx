@@ -7,6 +7,7 @@ import { db } from "@/lib/firebase";
 import { Modal, Lightbox, type LightboxItem } from "@/components/ui";
 import { useUploadWithProgress, UploadProgressBar } from "@/lib/useUpload";
 import type { MaintenanceTicket, Unit, Building } from "@/types";
+import { toast } from "@/components/ui";
 
 interface TicketsTabProps {
     tickets: MaintenanceTicket[];
@@ -52,7 +53,7 @@ export function TicketsTab({ tickets, isResolved, allUnits, buildings, userEmail
                 status: "in-progress",
                 comments: arrayUnion({ author: "Maintenance Staff", text: "Staff has acknowledged the issue and is working on it.", timestamp: new Date().toISOString() }),
             });
-        } catch (error) { console.error("Failed to update status:", error); alert("Could not update ticket."); }
+        } catch (error) { console.error("Failed to update status:", error); toast.error("Could not update ticket."); }
     };
 
     const handleResolveSubmit = async (e: React.FormEvent) => {
@@ -67,7 +68,7 @@ export function TicketsTab({ tickets, isResolved, allUnits, buildings, userEmail
                 comments: arrayUnion({ author: "Maintenance Staff", text: resolutionNote || "Issue has been resolved.", timestamp: new Date().toISOString() }),
             });
             setIsResolveModalOpen(false); setSelectedTicket(null); setResolutionNote(""); setResolutionFile(null);
-        } catch (error) { console.error(error); alert("Failed to submit resolution."); } finally { setIsSubmitting(false); }
+        } catch (error) { console.error(error); toast.error("Failed to submit resolution."); } finally { setIsSubmitting(false); }
     };
 
     /**
@@ -109,8 +110,8 @@ export function TicketsTab({ tickets, isResolved, allUnits, buildings, userEmail
             });
             setIsReportOpen(false);
             setReportUnit(""); setReportCategory("Maintenance"); setReportDesc(""); setReportFiles([]);
-            alert("Issue reported successfully!");
-        } catch (error) { console.error(error); alert("Failed to report issue."); } finally { setIsSubmittingReport(false); }
+            toast.success("Issue reported.");
+        } catch (error) { console.error(error); toast.error("Failed to report issue."); } finally { setIsSubmittingReport(false); }
     };
 
     const handleAddComment = async (ticketId: string) => {
@@ -121,7 +122,7 @@ export function TicketsTab({ tickets, isResolved, allUnits, buildings, userEmail
                 comments: arrayUnion({ author: userEmail || "Staff", text: commentText.trim(), timestamp: new Date().toISOString() }),
             });
             setCommentText(""); setCommentTicketId("");
-        } catch (error) { console.error(error); alert("Failed to add comment."); } finally { setIsAddingComment(false); }
+        } catch (error) { console.error(error); toast.error("Failed to add comment."); } finally { setIsAddingComment(false); }
     };
 
     const handleChangeTicketStatus = async (ticketId: string, newStatus: string) => {
@@ -130,7 +131,7 @@ export function TicketsTab({ tickets, isResolved, allUnits, buildings, userEmail
                 status: newStatus,
                 comments: arrayUnion({ author: userEmail || "Staff", text: `Status changed to ${newStatus.toUpperCase()}`, timestamp: new Date().toISOString() }),
             });
-        } catch (error) { console.error(error); alert("Failed to update status."); }
+        } catch (error) { console.error(error); toast.error("Failed to update status."); }
     };
 
     return (
@@ -326,7 +327,7 @@ export function TicketsTab({ tickets, isResolved, allUnits, buildings, userEmail
                         )}
                     </div>
                     {isUploading && <UploadProgressBar progress={uploadProgress} count={uploadCount} />}
-                    <div className="flex gap-2 pt-2">
+                    <div className="flex gap-2 pt-2 sticky bottom-0 bg-white pb-1">
                         <button type="button" onClick={() => setIsReportOpen(false)} className="flex-1 py-2 border border-gray-300 rounded-md text-sm text-gray-600">Cancel</button>
                         <button type="submit" disabled={isSubmittingReport || isUploading} className="flex-1 py-2 bg-red-600 text-white rounded-md text-sm font-medium hover:bg-red-700 disabled:bg-red-400">{isSubmittingReport ? "Submitting..." : "Report Issue"}</button>
                     </div>

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { collection, doc, writeBatch } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { askReason, confirmAction, toast } from "@/components/ui";
 import { EXPENSE_CATEGORIES, categoryEmoji } from "@/lib/expenses";
 import { buildExpenseWrite, closedDayError, orphanedExpenseMirrors, softDeletePatch, todayLocal, type MirrorRow } from "@/lib/expenseWrite";
 import type { DayClose } from "@/lib/dayClose";
@@ -41,7 +42,7 @@ export function AdminExpensesTab({ expenses: allExpenses, dailyLedgerEntries = [
         if (!expenseAmount || !expenseDesc) return;
         const dateStr = expenseDate || todayLocal();
         const closed = closedDayError(dateStr, dayCloses);
-        if (closed) { alert(closed); return; }
+        if (closed) { toast.error(closed); return; }
         setIsSubmitting(true);
         try {
             const expenseRef = doc(collection(db, "expenses"));
@@ -69,7 +70,7 @@ export function AdminExpensesTab({ expenses: allExpenses, dailyLedgerEntries = [
             setExpenseDate("");
         } catch (error) {
             console.error("Failed to add expense:", error);
-            alert("Failed to add expense.");
+            toast.error("Failed to add expense.");
         } finally {
             setIsSubmitting(false);
         }
@@ -78,10 +79,9 @@ export function AdminExpensesTab({ expenses: allExpenses, dailyLedgerEntries = [
     // Soft delete with a reason, cascading to the Daily-ledger mirror (same as the employee tab).
     const handleDeleteExpense = async (exp: Expense) => {
         const closed = closedDayError(exp.date, dayCloses);
-        if (closed) { alert(closed); return; }
-        const reason = window.prompt(`Delete expense "${exp.description}" (₹${Number(exp.amount).toLocaleString()})?\n\nPlease provide a reason (required):`, "");
-        if (reason === null) return;
-        if (!reason.trim()) { alert("A reason is required to delete an expense."); return; }
+        if (closed) { toast.error(closed); return; }
+        const reason = await askReason({ title: `Delete expense of ₹${Number(exp.amount).toLocaleString()}?`, message: exp.description });
+        if (!reason) return;
         try {
             const patch = softDeletePatch(by, reason, new Date().toISOString());
             const batch = writeBatch(db);
@@ -90,13 +90,18 @@ export function AdminExpensesTab({ expenses: allExpenses, dailyLedgerEntries = [
             await batch.commit();
         } catch (error) {
             console.error("Failed to delete expense:", error);
-            alert("Failed to delete expense.");
+            toast.error("Failed to delete expense.");
         }
     };
 
     // One-off repair: Daily-ledger outflows left behind by hard-deleted expenses.
     const handleFixOrphans = async () => {
-        if (!window.confirm(`Remove ${orphans.length} Daily-ledger outflow${orphans.length !== 1 ? "s" : ""} whose expense was deleted? They are soft-deleted with a reason, not erased.`)) return;
+        if (!(await confirmAction({
+            title: `Remove ${orphans.length} Daily-ledger outflow${orphans.length !== 1 ? "s" : ""}?`,
+            message: "Their expense was deleted. They are soft-deleted with a reason, not erased.",
+            confirmLabel: "Remove",
+            destructive: true,
+        }))) return;
         setIsFixingOrphans(true);
         try {
             const patch = softDeletePatch(by, "Expense was deleted — orphaned Daily-ledger mirror", new Date().toISOString());
@@ -105,7 +110,7 @@ export function AdminExpensesTab({ expenses: allExpenses, dailyLedgerEntries = [
             await batch.commit();
         } catch (error) {
             console.error("Failed to clean up orphaned rows:", error);
-            alert("Failed to clean up the Daily ledger.");
+            toast.error("Failed to clean up the Daily ledger.");
         } finally {
             setIsFixingOrphans(false);
         }

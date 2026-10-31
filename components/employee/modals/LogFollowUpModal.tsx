@@ -107,7 +107,7 @@ function FollowUpForm({ unit, onClose, currentUserEmail, remaining, payments = [
                         {outcome === "partial" && (
                             <div>
                                 <label htmlFor="fu-amount" className="block text-xs font-bold text-gray-500 uppercase mb-1">Amount (₹) *</label>
-                                <input id="fu-amount" type="number" min="1" value={promisedAmount} onChange={e => setPromisedAmount(e.target.value)} placeholder={remaining ? String(remaining) : ""} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
+                                <input id="fu-amount" type="number" inputMode="decimal" min="1" value={promisedAmount} onChange={e => setPromisedAmount(e.target.value)} placeholder={remaining ? String(remaining) : ""} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
                             </div>
                         )}
                     </div>
@@ -132,7 +132,7 @@ function FollowUpForm({ unit, onClose, currentUserEmail, remaining, payments = [
                         ))}
                     </div>
                 )}
-                <div className="flex gap-2 pt-1">
+                <div className="flex gap-2 pt-1 sticky bottom-0 bg-white pb-1">
                     <button type="button" onClick={onClose} className="flex-1 py-2 border border-gray-300 rounded-md text-sm text-gray-600">Cancel</button>
                     <button type="submit" disabled={isSaving || errors.length > 0} className="flex-1 py-2 rounded-md text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300">
                         {isSaving ? "Saving…" : "Save follow-up"}

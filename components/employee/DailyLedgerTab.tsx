@@ -4,11 +4,13 @@ import { useMemo, useState } from "react";
 import { collection, doc, updateDoc, writeBatch } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { COL } from "@/lib/collections";
-import { Modal } from "@/components/ui";
+import { Modal, askReason, toast } from "@/components/ui";
 import { useUploadWithProgress, UploadProgressBar } from "@/lib/useUpload";
 import { localDateKey, splitInflowByMode } from "@/lib/payments";
 import { isDayClosed, type DayClose } from "@/lib/dayClose";
 import { DayClosePanel } from "./DayClosePanel";
+import { softDeletePatch } from "@/lib/expenseWrite";
+import { rememberBuilding, rememberedBuilding } from "@/lib/prefs";
 
 interface DailyLedgerEntry {
     id: string;
@@ -87,7 +89,9 @@ export function DailyLedgerTab({ entries, buildings, allUnits, currentUserEmail,
     const { uploadFile, uploadProgress, isUploading, resetProgress } = useUploadWithProgress();
 
     const resetForm = () => {
-        setCategory(OUTFLOW_CATEGORIES[0]); setBuildingId(""); setUnitId("");
+        // Start from the building used last time on this device (§6.3), if it still exists.
+        const lastBuilding = rememberedBuilding();
+        setCategory(OUTFLOW_CATEGORIES[0]); setBuildingId(buildings.some(b => b.id === lastBuilding) ? lastBuilding : ""); setUnitId("");
         setAmount(""); setDescription(""); setEntryDate(todayISO());
         setWorkerName(""); setHoursWorked(""); setQuantity(""); setVendor("");
         setReceiptFile(null); resetProgress();
@@ -106,8 +110,8 @@ export function DailyLedgerTab({ entries, buildings, allUnits, currentUserEmail,
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!amount || Number(amount) <= 0) { alert("Enter a valid amount."); return; }
-        if (isDayClosed(dayCloses, entryDate || todayISO())) { alert("That day is closed. Ask the admin to reopen it, or pick another date."); return; }
+        if (!amount || Number(amount) <= 0) { toast.error("Enter a valid amount."); return; }
+        if (isDayClosed(dayCloses, entryDate || todayISO())) { toast.error("That day is closed. Ask the admin to reopen it, or pick another date."); return; }
         setIsSaving(true);
         try {
             // Upload receipt image first (if any). Fail-safe: entry still saves without it if upload fails.
@@ -173,32 +177,28 @@ export function DailyLedgerTab({ entries, buildings, allUnits, currentUserEmail,
 
             setIsModalOpen(false);
             resetForm();
+            toast.success("Outflow saved (also in Expenses).");
         } catch (err) {
             console.error(err);
-            alert("Failed to save entry.");
+            toast.error("Failed to save entry.");
         } finally {
             setIsSaving(false);
         }
     };
 
     const handleDelete = async (entry: DailyLedgerEntry) => {
-        const reason = window.prompt(`Delete ${entry.direction} entry of ₹${entry.amount}?\n\nPlease provide a reason (required):`, "");
-        if (reason === null) return; // cancelled
-        const trimmed = reason.trim();
-        if (!trimmed) { alert("A reason is required to delete an entry."); return; }
+        const reason = await askReason({ title: `Delete ${entry.direction} entry of ₹${Number(entry.amount).toLocaleString()}?`, message: entry.description || entry.category });
+        if (!reason) return; // cancelled
         try {
-            const patch = {
-                deleted: true,
-                deleteReason: trimmed,
-                deletedBy: currentUserEmail || "",
-                deletedAt: new Date().toISOString(),
-            } as const;
-            await updateDoc(doc(db, COL.dailyLedger, entry.id), patch);
-            if (entry.expenseId) {
-                await updateDoc(doc(db, COL.expenses, entry.expenseId), patch);
-            }
+            // The row and its mirrored expense are deleted together.
+            const patch = softDeletePatch(currentUserEmail || "", reason, new Date().toISOString());
+            const batch = writeBatch(db);
+            batch.update(doc(db, COL.dailyLedger, entry.id), patch);
+            if (entry.expenseId) batch.update(doc(db, COL.expenses, entry.expenseId), patch);
+            await batch.commit();
+            toast.success("Entry deleted.");
         }
-        catch (err) { console.error(err); alert("Failed to delete."); }
+        catch (err) { console.error(err); toast.error("Failed to delete."); }
     };
 
     // Give a mode to an older inflow saved without one, so the day can be closed.
@@ -209,7 +209,7 @@ export function DailyLedgerTab({ entries, buildings, allUnits, currentUserEmail,
                 modeSetBy: currentUserEmail || "",
                 modeSetAt: new Date().toISOString(),
             });
-        } catch (err) { console.error(err); alert("Failed to save the payment mode."); }
+        } catch (err) { console.error(err); toast.error("Failed to save the payment mode."); }
     };
     const isLocked = (entry: DailyLedgerEntry) => isDayClosed(dayCloses, entry.date);
 
@@ -362,7 +362,7 @@ export function DailyLedgerTab({ entries, buildings, allUnits, currentUserEmail,
                         </div>
                         <div>
                             <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Amount (₹) *</label>
-                            <input type="number" min="1" required value={amount} onChange={(e) => setAmount(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
+                            <input type="number" inputMode="decimal" min="1" required value={amount} onChange={(e) => setAmount(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
                         </div>
                     </div>
 
@@ -378,7 +378,7 @@ export function DailyLedgerTab({ entries, buildings, allUnits, currentUserEmail,
 
                     <div>
                         <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Building</label>
-                        <select value={buildingId} onChange={(e) => { setBuildingId(e.target.value); setUnitId(""); }} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm">
+                        <select value={buildingId} onChange={(e) => { setBuildingId(e.target.value); setUnitId(""); rememberBuilding(e.target.value); }} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm">
                             <option value="">General (no building)</option>
                             {buildings.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
                         </select>
@@ -405,7 +405,7 @@ export function DailyLedgerTab({ entries, buildings, allUnits, currentUserEmail,
                             </div>
                             <div>
                                 <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Hours</label>
-                                <input type="number" min="0" step="0.5" value={hoursWorked} onChange={(e) => setHoursWorked(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
+                                <input type="number" inputMode="decimal" min="0" step="0.5" value={hoursWorked} onChange={(e) => setHoursWorked(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
                             </div>
                         </div>
                     )}
@@ -414,7 +414,7 @@ export function DailyLedgerTab({ entries, buildings, allUnits, currentUserEmail,
                         <div className="grid grid-cols-2 gap-3">
                             <div>
                                 <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Qty</label>
-                                <input type="number" min="0" value={quantity} onChange={(e) => setQuantity(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
+                                <input type="number" inputMode="decimal" min="0" value={quantity} onChange={(e) => setQuantity(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
                             </div>
                             <div>
                                 <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Vendor</label>
@@ -446,7 +446,7 @@ export function DailyLedgerTab({ entries, buildings, allUnits, currentUserEmail,
                         <textarea rows={2} value={description} onChange={(e) => setDescription(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" placeholder="Optional notes" />
                     </div>
 
-                    <div className="flex gap-2 pt-2">
+                    <div className="flex gap-2 pt-2 sticky bottom-0 bg-white pb-1">
                         <button type="button" onClick={() => setIsModalOpen(false)} className="flex-1 py-2 border border-gray-300 rounded-md text-sm text-gray-600">Cancel</button>
                         <button type="submit" disabled={isSaving || isUploading} className="flex-1 py-2 rounded-md text-sm font-medium text-white bg-red-600 hover:bg-red-700 disabled:bg-red-400">
                             {isUploading ? "Uploading..." : isSaving ? "Saving..." : "Save Entry"}
@@ -484,7 +484,7 @@ function EntryRow({ entry, onDelete, onSetMode, locked, compact }: {
                             aria-label="Set payment mode"
                             value=""
                             onChange={(e) => e.target.value && onSetMode(entry, e.target.value)}
-                            className="text-[10px] font-bold border border-red-300 text-red-700 bg-red-50 rounded px-1 py-0.5"
+                            className="text-xs font-bold border border-red-300 text-red-700 bg-red-50 rounded px-2 min-h-11"
                         >
                             <option value="">❔ Set mode…</option>
                             <option value="cash">Cash</option>
@@ -516,7 +516,7 @@ function EntryRow({ entry, onDelete, onSetMode, locked, compact }: {
                     // Owned by a Collections payment — deleting only this row would leave the invoice marked paid.
                     <span className="text-[10px] text-gray-400" title="Recorded from Collections">via Collections</span>
                 ) : (
-                    <button onClick={() => onDelete(entry)} className="text-[10px] text-gray-400 hover:text-red-600">Delete</button>
+                    <button onClick={() => onDelete(entry)} className="text-xs text-gray-500 hover:text-red-600 min-h-11 min-w-11 px-2">Delete</button>
                 )}
             </div>
         </div>

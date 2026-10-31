@@ -5,6 +5,7 @@ import { addDoc, collection } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useUploadWithProgress, UploadProgressBar } from "@/lib/useUpload";
 import type { Building, Checklist, Unit } from "@/types";
+import { toast } from "@/components/ui";
 
 interface ChecklistTabProps {
     allUnits: Unit[];
@@ -58,14 +59,14 @@ export function ChecklistTab({ allUnits, occupiedUnits, buildings, allChecklists
                 createdAt: new Date().toISOString(),
                 createdBy: userEmail,
             });
-            alert(`${checklistType === "move-in" ? "Move-in" : "Move-out"} checklist saved!`);
+            toast.success(`${checklistType === "move-in" ? "Move-in" : "Move-out"} checklist saved.`);
             setChecklistUnit("");
             setChecklistRooms([{ room: "Living Room", condition: "good", photo: null, damages: "" }]);
             setChecklistNotes("");
             setChecklistDeduction("");
         } catch (error) {
             console.error(error);
-            alert("Failed to save checklist.");
+            toast.error("Failed to save checklist.");
         } finally {
             setIsSubmittingChecklist(false);
         }
@@ -123,7 +124,7 @@ export function ChecklistTab({ allUnits, occupiedUnits, buildings, allChecklists
                     {checklistType === "move-out" && (
                         <div className="bg-red-50 border border-red-200 rounded-lg p-3">
                             <label className="block text-sm font-medium text-red-700 mb-1">Security Deposit Deduction (₹)</label>
-                            <input type="number" min="0" value={checklistDeduction} onChange={(e) => setChecklistDeduction(e.target.value)} className="w-full px-3 py-2 border border-red-300 rounded-lg" placeholder="0 if no deduction" />
+                            <input type="number" inputMode="decimal" min="0" value={checklistDeduction} onChange={(e) => setChecklistDeduction(e.target.value)} className="w-full px-3 py-2 border border-red-300 rounded-lg" placeholder="0 if no deduction" />
                             <p className="text-[10px] text-red-500 mt-1">Amount to deduct from security deposit for damages</p>
                         </div>
                     )}

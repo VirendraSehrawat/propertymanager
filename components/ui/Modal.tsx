@@ -29,7 +29,9 @@ export function Modal({ isOpen, onClose, children, className = "max-w-md", botto
             onClick={onClose}
         >
             <div
-                className={`bg-white ${bottomSheet ? "rounded-t-2xl sm:rounded-2xl" : "rounded-xl"} p-6 w-full ${className} shadow-2xl`}
+                // Capped to the screen height so long forms scroll inside the dialog and a
+                // `sticky bottom-0` Save row stays visible above the keyboard (§6.3).
+                className={`bg-white ${bottomSheet ? "rounded-t-2xl sm:rounded-2xl" : "rounded-xl"} p-6 w-full ${className} shadow-2xl max-h-[calc(100dvh-2rem)] overflow-y-auto`}
                 onClick={(e) => e.stopPropagation()}
             >
                 {children}

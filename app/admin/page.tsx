@@ -15,6 +15,7 @@ import {
 import { auth, db } from "@/lib/firebase";
 import { mapSnapshot } from "@/lib/firestore";
 import { COL } from "@/lib/collections";
+import { DialogHost } from "@/components/ui";
 import { closesNeedingReview, type DayClose } from "@/lib/dayClose";
 import { useAuth } from "@/context/AuthContext";
 import type {
@@ -447,6 +448,8 @@ export default function AdminDashboard() {
                     <AdminSettingsTab initialUpiId={upiId} initialPayeeName={payeeName} />
                 )}
             </main>
+            {/* Toasts and confirm / reason dialogs used by shared tabs (§6.2). */}
+            <DialogHost />
         </div>
     );
 }

@@ -20,10 +20,10 @@ where in the code it applies. Effort is marked **S** (under a day), **M** (a few
 
 *Updated: 31 Oct 2026*
 
-**Done (17):** 1.1, 1.2, 1.3, 1.4, 1.6 · 2.1, 2.2, 2.3, 2.4, 2.5 · 3.1–3.5 · 4.4, 4.5. Each is marked ✅ in its section with what shipped.
+**Done (21):** 1.1, 1.2, 1.3, 1.4, 1.6 · 2.1, 2.2, 2.3, 2.4, 2.5 · 3.1–3.5 · 4.4, 4.5 · 6.1–6.4. Each is marked ✅ in its section with what shipped.
 Sections 1 (Collecting money) and 2 (Meter readings and invoicing) are complete except **1.5 Receipts**.
 
-**Next up (open quick wins):** 3.8, 4.2, 4.9, 4.13, 6.3, 7.3.
+**Next up (open quick wins):** 3.8, 4.2, 4.9, 4.13, 7.3.
 
 ---
 
@@ -39,8 +39,8 @@ Sections 1 (Collecting money) and 2 (Meter readings and invoicing) are complete 
 | 6 | Protect **paid invoices from being overwritten** by the Meter tab | Override resets `status` to `unpaid` on an already-paid invoice | S | ✅ Done (2.4) |
 | 7 | **Shareable receipt** (WhatsApp/print) after every payment | Tenants ask for receipts; the roadmap already promises one | M | Open (1.5) |
 | 8 | Add **actions to the Monthly overview rows** (Call, Record payment, Enter meter) | It's a read-only list today, used to plan the collection route | S | ✅ Done (3.1) |
-| 9 | Replace `alert()` / `confirm()` / `prompt()` with **toasts and in-app dialogs** | Blocking pop-ups slow every save, and some are easy to dismiss by accident | M | Open (6.2) |
-| 10 | **Cut the tab bar** from 13 tabs to ~5 primary destinations | Hard to find things on a phone; related work is spread across tabs | M | Open (6.1) |
+| 9 | Replace `alert()` / `confirm()` / `prompt()` with **toasts and in-app dialogs** | Blocking pop-ups slow every save, and some are easy to dismiss by accident | M | ✅ Done (6.2) |
+| 10 | **Cut the tab bar** from 13 tabs to ~5 primary destinations | Hard to find things on a phone; related work is spread across tabs | M | ✅ Done (6.1) |
 
 ---
 
@@ -544,6 +544,8 @@ sheet. Merge the **Tasks** and **Done** tabs into one **Tasks** tab with an Open
 ## 6. Navigation and interaction
 
 ### 6.1 Reduce the tab bar — M
+> ✅ **Done (31 Oct 2026).** Fixed bottom bar **🏠 Home · 💳 Collect · 📓 Books · 🔧 Tasks · ☰ More** (`components/employee/EmployeeNav.tsx`, groups in `lib/employeeNav.ts`), with a segmented switch for the screens of the current group (Collections | Monthly, Daily | Expenses | Ledger, Open | Done) and a **More** sheet (Meter, Units, Occupancy, Checklist, Inventory, Help). Red counts: pending invoices, open tickets, units needing a reading. The screen is kept in the URL (`/employee?tab=meter`, so links work) and remembered on the device (`localStorage`; per device rather than per user, since the device is personal). Ledger history sits under Books as suggested.
+
 **Problem.** There are **13 tabs** (Home, Collections, Tasks, Meter, Done, Ledger, Daily, Monthly,
 Units, Occupancy, Checklist, Expenses, Inventory) in a horizontal strip on a `max-w-2xl` layout. On a
 phone most of them are off-screen.
@@ -562,6 +564,8 @@ Remember the last-used tab per user (in `localStorage`) and support deep links (
 so admins can send direct links.
 
 ### 6.2 Replace blocking pop-ups — M
+> ✅ **Done (31 Oct 2026)** for the employee dashboard: every `alert` / `confirm` / `prompt` in `app/employee` and `components/employee` (≈70) now uses `components/ui/Dialogs.tsx` — **toasts** (success / error, optional action), **confirm** dialogs (destructive button on the right, red) and a **reason** dialog with one-tap reasons (*Duplicate entry, Wrong amount, Wrong date, Wrong building / unit, Entered by mistake*; write-offs get their own list). The host is mounted on the employee and admin pages; elsewhere the helpers fall back to the browser dialogs. **Undo** is offered after settling / un-settling an expense. Not done: Undo after soft-deletes — Firestore rules freeze deleted rows for staff (only an admin can restore), so the reason dialog is the safety step instead; the admin pages' own pop-ups are unchanged.
+
 **Problem.** Feedback relies on `window.alert`, `window.confirm` and `window.prompt` (for example the
 delete-reason prompt in Daily/Expenses, and success alerts after every save). These block the UI, look
 different on each browser, and are easy to dismiss with a stray tap.
@@ -574,6 +578,8 @@ different on each browser, and are easy to dismiss with a stray tap.
 - Add **Undo** (about 10 seconds) after soft-deletes and settlements where that is safe.
 
 ### 6.3 Mobile input ergonomics — S
+> ✅ **Done (31 Oct 2026).** All 29 number fields on the employee screens open the number pad (`inputMode="decimal"`); card actions (Today, Monthly, Collections, Daily, Expenses) are at least 44 px tall; dialogs are capped to the screen height with the Cancel/Save row pinned to the bottom (`Modal` plus the hand-built dialogs); the Daily ➖ Outflow and Expenses forms start with the last-used building (`lib/prefs.ts`). The Meter tab has no building picker — the round already walks building by building — so there is nothing to remember there.
+
 **Suggestion.**
 - Use `inputMode="numeric"` on amount and meter fields so the number pad opens.
 - Use larger tap targets (at least 44px) on the action buttons in cards. Several are `text-[10px]` now.
@@ -581,6 +587,8 @@ different on each browser, and are easy to dismiss with a stray tap.
 - Remember the last-used **building** in the Daily, Meter and Expenses forms.
 
 ### 6.4 Clean up inline editors in the tenant profile — S
+> ✅ **Done (31 Oct 2026).** `components/employee/ProfileBillingForm.tsx`: labelled Payment day, Security deposit and Electricity rate fields with validation and **one Save** (disabled until something changes), saving only what changed (empty clears a field) and confirming with a toast. No more `document.getElementById`.
+
 **Problem.** In the tenant profile, payment day and security deposit are saved by reading values with
 `document.getElementById(...)` and an unlabelled ✓ button, followed by an `alert`.
 
@@ -630,9 +638,9 @@ double tap or retry can't record the same cash twice.
 
 | Phase | Items | Outcome |
 |---|---|---|
-| **Quick wins (1 week)** | ✅ 1.1, ✅ 1.2, ✅ 1.4, ✅ 1.6, ✅ 2.2, ✅ 2.4, ✅ 3.1, ✅ 3.5, 3.8, ✅ 4.4, ✅ 4.5, 4.2, 4.9, 4.13, 6.3, 7.3 | Correct numbers, fewer data errors, faster daily use |
-| **Workflow (2–3 weeks)** | ✅ 1.3, 1.5, ✅ 2.1, ✅ 2.3, 4.1, 4.6, 4.14, 6.2 | One payment path, fast meter rounds, receipts |
-| **Structure (3–4 weeks)** | ✅ 3.2, ✅ 3.3, 3.6, 3.9, 6.1, 7.1, 4.3, 4.7, 4.12 | Today list grouped by building, tracked day close with owner digest, simpler navigation, faster load |
+| **Quick wins (1 week)** | ✅ 1.1, ✅ 1.2, ✅ 1.4, ✅ 1.6, ✅ 2.2, ✅ 2.4, ✅ 3.1, ✅ 3.5, 3.8, ✅ 4.4, ✅ 4.5, 4.2, 4.9, 4.13, ✅ 6.3, 7.3 | Correct numbers, fewer data errors, faster daily use |
+| **Workflow (2–3 weeks)** | ✅ 1.3, 1.5, ✅ 2.1, ✅ 2.3, 4.1, 4.6, 4.14, ✅ 6.2 | One payment path, fast meter rounds, receipts |
+| **Structure (3–4 weeks)** | ✅ 3.2, ✅ 3.3, 3.6, 3.9, ✅ 6.1, 7.1, 4.3, 4.7, 4.12 | Today list grouped by building, tracked day close with owner digest, simpler navigation, faster load |
 | **Later** | ✅ 2.5, ✅ 3.4, 3.7, 3.10, 5.x, 7.2, 4.8, 4.10, 4.11, 4.15 | Routine calendar, ageing review, automation and offline support |
 
 ✅ = done. 2.5 and 3.4 were brought forward.

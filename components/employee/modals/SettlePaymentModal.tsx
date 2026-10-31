@@ -85,7 +85,7 @@ export function SettlePaymentModal({
 
     return (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={onCancel}>
-            <div className="bg-white p-6 rounded-xl shadow-xl max-w-md w-full space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-white p-6 rounded-xl shadow-xl max-w-md w-full space-y-4 max-h-[calc(100dvh-2rem)] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
                 <div>
                     <h3 className="text-lg font-bold text-gray-800">{"\u2713"} Record Payment</h3>
                     <p className="text-xs text-gray-500 mt-0.5">{invoice.unitNumber} {"\u2014"} {invoice.billingPeriod}</p>
@@ -123,7 +123,7 @@ export function SettlePaymentModal({
                         <div>
                             <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Amount Received (₹)</label>
                             <input
-                                type="number"
+                                type="number" inputMode="decimal"
                                 value={received}
                                 onChange={(e) => setReceived(e.target.value)}
                                 min={1}
@@ -203,7 +203,7 @@ export function SettlePaymentModal({
                             className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
                         />
                     </div>
-                    <div className="flex gap-2 pt-2">
+                    <div className="flex gap-2 pt-2 sticky bottom-0 bg-white pb-1">
                         <button type="button" onClick={onCancel} className="flex-1 py-2 border border-gray-300 rounded-md text-sm text-gray-600">Cancel</button>
                         <button type="submit" disabled={isSubmitting || !receivedValid} className="flex-1 py-2 bg-green-600 text-white rounded-md text-sm font-bold hover:bg-green-700 disabled:bg-green-400">
                             {isSubmitting ? "Saving..." : `\u2713 Save ₹${receivedNum.toLocaleString()}`}

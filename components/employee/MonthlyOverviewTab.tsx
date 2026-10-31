@@ -198,7 +198,7 @@ export function MonthlyOverviewTab({ allUnits, buildings, allInvoices, allExpens
         return { rows, total: rows.reduce((s, r) => s + r.total, 0) };
     }, [allExpenses, selectedMonth, buildingFilter]);
 
-    const actionClass = "inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-bold border transition";
+    const actionClass = "inline-flex items-center gap-1 min-h-11 px-3 rounded-md text-xs font-bold border transition";
 
     const renderActions = (entry: { unit: Unit; invoice?: Invoice }, group: Group) => {
         const { unit, invoice } = entry;

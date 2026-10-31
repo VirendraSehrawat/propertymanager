@@ -16,7 +16,8 @@ interface TodayCardProps {
     onLogFollowUp?: (unitId: string, remaining: number) => void;
 }
 
-const actionBtn = "text-[11px] font-bold px-2.5 py-1 rounded-md border transition";
+// At least 44px tall so they are easy to hit on a phone (§6.3).
+const actionBtn = "inline-flex items-center min-h-11 text-xs font-bold px-3 rounded-md border transition";
 
 /**
  * Home's "Today" list (§3.2 of `docs/EMPLOYEE_WORKFLOW_IMPROVEMENTS.md`):

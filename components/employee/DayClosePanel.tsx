@@ -204,7 +204,7 @@ export function DayClosePanel({ date, today, entries, closes, currentUserEmail, 
                                 {prev ? (
                                     <span className="font-bold">{inr(openingCash)} <span className="text-[10px] font-normal text-gray-500">from {fmtDate(prev.date)}</span></span>
                                 ) : (
-                                    <input type="number" min="0" step="any" value={openingInput} onChange={e => setOpeningInput(e.target.value)} placeholder="0" aria-label="Opening cash" className="w-28 px-2 py-1 border border-gray-300 rounded text-right" />
+                                    <input type="number" inputMode="decimal" min="0" step="any" value={openingInput} onChange={e => setOpeningInput(e.target.value)} placeholder="0" aria-label="Opening cash" className="w-28 px-2 py-1 border border-gray-300 rounded text-right" />
                                 )}
                             </div>
                             {!prev && <p className="text-[10px] text-gray-500">No earlier close — enter the cash you started the day with.</p>}
@@ -219,11 +219,11 @@ export function DayClosePanel({ date, today, entries, closes, currentUserEmail, 
                         <div className="grid grid-cols-2 gap-3">
                             <div>
                                 <label htmlFor="dc-actual" className="block text-xs font-bold text-gray-500 uppercase mb-1">Cash counted *</label>
-                                <input id="dc-actual" type="number" min="0" step="any" required value={actualInput} onChange={e => setActualInput(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
+                                <input id="dc-actual" type="number" inputMode="decimal" min="0" step="any" required value={actualInput} onChange={e => setActualInput(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
                             </div>
                             <div>
                                 <label htmlFor="dc-handed" className="block text-xs font-bold text-gray-500 uppercase mb-1">Handed to owner</label>
-                                <input id="dc-handed" type="number" min="0" step="any" value={handedInput} onChange={e => setHandedInput(e.target.value)} placeholder="0" className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
+                                <input id="dc-handed" type="number" inputMode="decimal" min="0" step="any" value={handedInput} onChange={e => setHandedInput(e.target.value)} placeholder="0" className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
                             </div>
                         </div>
                         {actualInput !== "" && (
@@ -240,7 +240,7 @@ export function DayClosePanel({ date, today, entries, closes, currentUserEmail, 
                             <ul className="text-[11px] text-red-600 list-disc pl-4">{errors.map(m => <li key={m}>{m}</li>)}</ul>
                         )}
                         {saveError && <p className="text-[11px] text-red-600">{saveError}</p>}
-                        <div className="flex gap-2 pt-1">
+                        <div className="flex gap-2 pt-1 sticky bottom-0 bg-white pb-1">
                             <button type="button" onClick={() => setIsOpen(false)} className="flex-1 py-2 border border-gray-300 rounded-md text-sm text-gray-600">Cancel</button>
                             <button type="submit" disabled={isSaving || errors.length > 0} className="flex-1 py-2 rounded-md text-sm font-bold text-white bg-gray-800 hover:bg-gray-900 disabled:bg-gray-400">
                                 {isSaving ? "Saving…" : "🔒 Close day"}

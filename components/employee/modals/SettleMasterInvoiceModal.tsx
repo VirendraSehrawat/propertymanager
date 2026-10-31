@@ -55,7 +55,7 @@ export function SettleMasterInvoiceModal({
 
     return (
         <div className="fixed inset-0 bg-black/60 flex items-end sm:items-center justify-center p-4 z-50 overflow-y-auto" onClick={onCancel}>
-            <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-lg p-5" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-lg p-5 max-h-[calc(100dvh-2rem)] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
                 <div className="flex items-start justify-between mb-3">
                     <div className="min-w-0">
                         <h2 className="text-lg font-bold">Settle {master.id}</h2>
@@ -86,7 +86,7 @@ export function SettleMasterInvoiceModal({
 
                 <label className="text-[10px] font-bold text-gray-500 uppercase">Amount received</label>
                 <input
-                    type="number"
+                    type="number" inputMode="decimal"
                     value={received}
                     onChange={(e) => setReceived(e.target.value)}
                     disabled={kind === "full"}

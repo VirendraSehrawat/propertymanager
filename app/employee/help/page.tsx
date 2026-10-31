@@ -45,6 +45,14 @@ export default function EmployeeHelpPage() {
                     </div>
                 </section>
 
+                {/* FINDING YOUR WAY */}
+                <section className="bg-white rounded-xl shadow-sm border border-gray-200 p-5 text-sm text-gray-700 space-y-2">
+                    <h2 className="text-base font-bold text-gray-900">🧭 Finding your way</h2>
+                    <p>Use the bar at the bottom: <strong>🏠 Home</strong> · <strong>💳 Collect</strong> (Collections, Monthly) · <strong>📓 Books</strong> (Daily, Expenses, Ledger) · <strong>🔧 Tasks</strong> (Open, Done) · <strong>☰ More</strong> (Meter, Units, Occupancy, Checklist, Inventory, Help). Switch between the screens of a section with the buttons at the top.</p>
+                    <p>The app reopens where you left off. To send someone straight to a screen, share a link like <code>/employee?tab=meter</code>.</p>
+                    <p>Deleting asks for a reason (tap a common one or type your own). After settling an expense you can tap <strong>Undo</strong> for a few seconds.</p>
+                </section>
+
                 {/* WHAT THE INVOICE COVERS */}
                 <section id="invoice-covers" className="bg-white rounded-xl shadow-sm border border-amber-200 overflow-hidden scroll-mt-20">
                     <div className="bg-amber-50 px-6 py-4 border-b border-amber-200">

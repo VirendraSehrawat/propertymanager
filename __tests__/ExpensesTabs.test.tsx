@@ -34,6 +34,8 @@ vi.mock("firebase/firestore", () => ({
 
 import { ExpensesTab } from "@/components/employee/ExpensesTab";
 import { AdminExpensesTab } from "@/components/admin/AdminExpensesTab";
+import { DialogHost } from "@/components/ui";
+import { updateDoc } from "firebase/firestore";
 
 const today = localDateKey(new Date());
 const exp = (id: string, amount: number, extra: Partial<Expense> = {}): Expense => ({
@@ -89,6 +91,18 @@ describe("Employee Expenses tab", () => {
             expect.objectContaining({ op: "update", ref: { col: "expenses", id: "a" }, data: expect.objectContaining({ deleted: true, deleteReason: "Duplicate", deletedBy: "e@x.com" }) }),
             expect.objectContaining({ op: "update", ref: { col: "dailyLedger", id: "L-a" }, data: expect.objectContaining({ deleted: true }) }),
         ]);
+    });
+});
+
+describe("Employee Expenses tab — settle with Undo (§6.2)", () => {
+    it("settles straight away and Undo reverses it", async () => {
+        const user = userEvent.setup();
+        render(<><ExpensesTab allExpenses={[exp("a", 300)]} allAllocations={[]} buildings={[]} userEmail="e@x.com" /><DialogHost /></>);
+        await user.click(screen.getByRole("button", { name: "✓ Settle" }));
+        expect(updateDoc).toHaveBeenLastCalledWith({ col: "expenses", id: "a" }, expect.objectContaining({ settled: true, settledBy: "e@x.com" }));
+        expect(screen.getByRole("status")).toHaveTextContent("Settled ₹300");
+        await user.click(screen.getByRole("button", { name: "Undo" }));
+        expect(updateDoc).toHaveBeenLastCalledWith({ col: "expenses", id: "a" }, expect.objectContaining({ settled: false }));
     });
 });
 

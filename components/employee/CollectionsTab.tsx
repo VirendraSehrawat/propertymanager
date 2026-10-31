@@ -18,6 +18,7 @@ import { dueInfo, dueLabel, isSameTenant, sortByDue } from "@/lib/paymentDue";
 import { followUpStatus } from "@/lib/followUp";
 import { LogFollowUpModal } from "./modals/LogFollowUpModal";
 import { notifyPaymentRecorded } from "@/lib/notify";
+import { askReason, confirmAction, toast } from "@/components/ui";
 import { SettlePaymentModal, type SettlePaymentSubmit } from "./modals/SettlePaymentModal";
 import { SettleMasterInvoiceModal, type SettleMasterSubmit } from "./modals/SettleMasterInvoiceModal";
 
@@ -90,19 +91,20 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                 paidAt: new Date().toISOString(),
             });
         } catch (e) {
-            alert(e instanceof Error ? e.message : String(e));
+            toast.error(e instanceof Error ? e.message : String(e));
         } finally {
             setIsSettling("");
         }
     }
 
     async function handleWriteOff(inv: Invoice) {
-        const reason = window.prompt(
-            `Mark invoice ${inv.unitNumber} · ${inv.billingPeriod} as UNCOLLECTIBLE?\n\n` +
-            `This will remove it from pending collections without recording a payment.\n\n` +
-            `Reason (e.g. "Tenant absconded on 5 Sep"):`
-        );
-        if (!reason || !reason.trim()) return;
+        const reason = await askReason({
+            title: `Write off ${inv.unitNumber} · ${inv.billingPeriod}?`,
+            message: "It will be removed from pending collections without recording a payment.",
+            reasons: ["Tenant absconded", "Tenant left without paying", "Waived by owner", "Dispute settled"],
+            confirmLabel: "Write off",
+        });
+        if (!reason) return;
         setWritingOff(inv.id);
         try {
             await updateDoc(doc(db, COL.invoices, inv.id), {
@@ -113,14 +115,14 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                 writtenOffReason: reason.trim(),
             });
         } catch (e) {
-            alert(e instanceof Error ? e.message : String(e));
+            toast.error(e instanceof Error ? e.message : String(e));
         } finally {
             setWritingOff("");
         }
     }
 
     async function handleReopenWriteOff(inv: Invoice) {
-        if (!confirm(`Reopen invoice ${inv.unitNumber} · ${inv.billingPeriod}? It will return to pending collections.`)) return;
+        if (!(await confirmAction({ title: `Reopen ${inv.unitNumber} · ${inv.billingPeriod}?`, message: "It will return to pending collections.", confirmLabel: "Reopen" }))) return;
         setWritingOff(inv.id);
         try {
             const priorPaid = Number(inv.amountPaid || 0);
@@ -134,7 +136,7 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                 writtenOffReason: deleteField(),
             });
         } catch (e) {
-            alert(e instanceof Error ? e.message : String(e));
+            toast.error(e instanceof Error ? e.message : String(e));
         } finally {
             setWritingOff("");
         }
@@ -261,7 +263,7 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
         if (!settleInvoice) return;
         const inv = settleInvoice;
         const { received, mode, reference, note } = payload;
-        if (received <= 0) { alert("Enter an amount greater than zero."); return; }
+        if (received <= 0) { toast.error("Enter an amount greater than zero."); return; }
         setIsSettling(inv.id);
         try {
             // Build the full write-set (invoice patches + ledger rows + daily
@@ -293,11 +295,12 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                 });
             });
             const credit = plan.ledgerRows.find(r => r.type === "credit");
-            if (credit) alert(`🪙 ₹${credit.amountPaid.toLocaleString()} recorded as an advance for ${inv.unitNumber}.`);
+            if (credit) toast.info(`🪙 ₹${credit.amountPaid.toLocaleString()} recorded as an advance for ${inv.unitNumber}.`);
+            else toast.success(`Payment of ₹${received.toLocaleString()} recorded for ${inv.unitNumber}.`);
             setSettleInvoice(null);
         } catch (error) {
             console.error(error);
-            alert("Failed to settle invoice.");
+            toast.error("Failed to settle invoice.");
         } finally {
             setIsSettling("");
         }
@@ -370,12 +373,12 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                 await updateDoc(doc(db, COL.units, editInvoice.unitId), { lastMeterReading: currReading });
             }
 
-            alert("Invoice updated!\n\nRent: \u20B9" + baseRent + "\nElectricity: " + units + " \u00D7 \u20B9" + rate + " = \u20B9" + electricityCharge + "\nTotal: \u20B9" + totalAmount);
+            toast.success("Invoice updated.\n\nRent: \u20B9" + baseRent + "\nElectricity: " + units + " \u00D7 \u20B9" + rate + " = \u20B9" + electricityCharge + "\nTotal: \u20B9" + totalAmount);
             setIsEditInvoiceOpen(false);
             setEditInvoice(null);
         } catch (error) {
             console.error(error);
-            alert("Failed to update invoice.");
+            toast.error("Failed to update invoice.");
         } finally {
             setIsSavingInvoice(false);
         }
@@ -409,7 +412,7 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
             await commitPaymentPlan(db, plan);
             setSettleMaster(null);
         } catch (e) {
-            alert(e instanceof Error ? e.message : String(e));
+            toast.error(e instanceof Error ? e.message : String(e));
         } finally {
             setIsSettlingMaster(false);
         }
@@ -595,9 +598,9 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                                             {inv.meterPhotoUrl && (
                                                 <a href={inv.meterPhotoUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] text-purple-600 hover:underline mt-0.5 block">📷 Meter photo ({inv.currentReading ?? "—"})</a>
                                             )}
-                                            <button onClick={() => { const unit = occupiedUnits.find(u => u.id === inv.unitId); if (unit) openTenantProfile(unit); }} className="text-[10px] text-indigo-600 hover:underline mt-1">View Profile {"\u2192"}</button>
+                                            <button onClick={() => { const unit = occupiedUnits.find(u => u.id === inv.unitId); if (unit) openTenantProfile(unit); }} className="text-xs text-indigo-600 hover:underline min-h-11 inline-flex items-center">View Profile {"\u2192"}</button>
                                             {rowUnit && isSameTenant(inv, rowUnit) && (
-                                                <button onClick={() => setFollowUpFor({ unitId: rowUnit.id, remaining })} className="text-[10px] text-gray-600 hover:underline mt-1 ml-3">📝 Log follow-up</button>
+                                                <button onClick={() => setFollowUpFor({ unitId: rowUnit.id, remaining })} className="text-xs text-gray-600 hover:underline min-h-11 inline-flex items-center ml-4">📝 Log follow-up</button>
                                             )}
                                         </div>
                                         <div className="text-right flex flex-col items-end gap-2">
@@ -610,17 +613,17 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                                                 )}
                                             </div>
                                             <div className="flex gap-1.5 flex-wrap justify-end">
-                                                <button onClick={() => openEditInvoice(inv)} className="text-xs px-3 py-1.5 bg-blue-600 text-white rounded-md font-bold hover:bg-blue-700 transition">{"\u270F\uFE0F"} Edit</button>
+                                                <button onClick={() => openEditInvoice(inv)} className="text-xs px-3 min-h-11 bg-blue-600 text-white rounded-md font-bold hover:bg-blue-700 transition">{"\u270F\uFE0F"} Edit</button>
                                                 {alreadyCovered ? (
-                                                    <button onClick={() => handleCloseAlreadyPaid(inv)} disabled={isSettling === inv.id} className="text-xs px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 rounded-md font-bold transition text-white disabled:opacity-60" title="Amount collected already covers this invoice — mark it paid.">
+                                                    <button onClick={() => handleCloseAlreadyPaid(inv)} disabled={isSettling === inv.id} className="text-xs px-3 min-h-11 bg-emerald-600 hover:bg-emerald-700 rounded-md font-bold transition text-white disabled:opacity-60" title="Amount collected already covers this invoice — mark it paid.">
                                                         {isSettling === inv.id ? "..." : "\u2705 Close (paid)"}
                                                     </button>
                                                 ) : (
-                                                    <button onClick={() => openSettleModal(inv)} disabled={isSettling === inv.id} className={`text-xs px-3 py-1.5 rounded-md font-bold transition text-white disabled:opacity-60 ${isPartial ? "bg-amber-600 hover:bg-amber-700" : "bg-green-600 hover:bg-green-700"}`}>
+                                                    <button onClick={() => openSettleModal(inv)} disabled={isSettling === inv.id} className={`text-xs px-3 min-h-11 rounded-md font-bold transition text-white disabled:opacity-60 ${isPartial ? "bg-amber-600 hover:bg-amber-700" : "bg-green-600 hover:bg-green-700"}`}>
                                                         {isSettling === inv.id ? "..." : isPartial ? "\u2795 Add Payment" : "\u2713 Settle"}
                                                     </button>
                                                 )}
-                                                <button onClick={() => handleWriteOff(inv)} disabled={writingOff === inv.id} className="text-xs px-2 py-1.5 bg-gray-100 text-gray-600 border border-gray-300 rounded-md font-bold hover:bg-gray-200 transition disabled:opacity-60" title="Mark uncollectible (tenant absconded)">
+                                                <button onClick={() => handleWriteOff(inv)} disabled={writingOff === inv.id} className="text-xs px-3 min-h-11 bg-gray-100 text-gray-600 border border-gray-300 rounded-md font-bold hover:bg-gray-200 transition disabled:opacity-60" title="Mark uncollectible (tenant absconded)">
                                                     {writingOff === inv.id ? "..." : "🚫"}
                                                 </button>
                                             </div>
@@ -793,7 +796,7 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
 
             {isEditInvoiceOpen && editInvoice && (
                 <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setIsEditInvoiceOpen(false)}>
-                    <div className="bg-white p-6 rounded-xl shadow-xl max-w-md w-full space-y-4" onClick={(e) => e.stopPropagation()}>
+                    <div className="bg-white p-6 rounded-xl shadow-xl max-w-md w-full space-y-4 max-h-[calc(100dvh-2rem)] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
                         <h3 className="text-lg font-bold text-gray-800">{"\u270F\uFE0F"} Edit Invoice</h3>
                         <p className="text-xs text-gray-500">{editInvoice.unitNumber} {"\u2014"} {editInvBillingMonth}</p>
                         {/* Carry Forward Breakdown */}
@@ -821,33 +824,33 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                             </div>
                             <div>
                                 <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Base Rent ({"\u20B9"})</label>
-                                <input type="number" required min="0" value={editInvBaseRent} onChange={(e) => setEditInvBaseRent(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
+                                <input type="number" inputMode="decimal" required min="0" value={editInvBaseRent} onChange={(e) => setEditInvBaseRent(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
                             </div>
                             <div className="grid grid-cols-2 gap-3">
                                 <div>
                                     <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Prev Reading</label>
-                                    <input type="number" min="0" value={editInvPrevReading} onChange={(e) => setEditInvPrevReading(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
+                                    <input type="number" inputMode="decimal" min="0" value={editInvPrevReading} onChange={(e) => setEditInvPrevReading(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
                                 </div>
                                 <div>
                                     <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Curr Reading</label>
-                                    <input type="number" min="0" value={editInvCurrReading} onChange={(e) => setEditInvCurrReading(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
+                                    <input type="number" inputMode="decimal" min="0" value={editInvCurrReading} onChange={(e) => setEditInvCurrReading(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
                                 </div>
                             </div>
                             <div className="grid grid-cols-2 gap-3">
                                 <div>
                                     <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Units Consumed</label>
-                                    <input type="number" required min="0" value={editInvUnitsConsumed} onChange={(e) => setEditInvUnitsConsumed(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
+                                    <input type="number" inputMode="decimal" required min="0" value={editInvUnitsConsumed} onChange={(e) => setEditInvUnitsConsumed(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
                                 </div>
                                 <div>
                                     <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Rate ({"\u20B9"}/unit)</label>
-                                    <input type="number" required min="0" value={editInvElecRate} onChange={(e) => setEditInvElecRate(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
+                                    <input type="number" inputMode="decimal" required min="0" value={editInvElecRate} onChange={(e) => setEditInvElecRate(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
                                 </div>
                             </div>
                             <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs text-gray-700 space-y-1">
                                 <p><strong>Electricity:</strong> {Number(editInvUnitsConsumed) || 0} {"\u00D7"} {"\u20B9"}{Number(editInvElecRate) || 0} = {"\u20B9"}{((Number(editInvUnitsConsumed) || 0) * (Number(editInvElecRate) || 0)).toLocaleString()}</p>
                                 <p><strong>Estimated Total:</strong> {"\u20B9"}{((Number(editInvBaseRent) || 0) + (Number(editInvUnitsConsumed) || 0) * (Number(editInvElecRate) || 0)).toLocaleString()} <span className="text-gray-400">(+ carry-forward)</span></p>
                             </div>
-                            <div className="flex gap-2 pt-2">
+                            <div className="flex gap-2 pt-2 sticky bottom-0 bg-white pb-1">
                                 <button type="button" onClick={() => setIsEditInvoiceOpen(false)} className="flex-1 py-2 border border-gray-300 rounded-md text-sm text-gray-600">Cancel</button>
                                 <button type="submit" disabled={isSavingInvoice} className="flex-1 py-2 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 disabled:bg-blue-400">{isSavingInvoice ? "Saving..." : "Save Changes"}</button>
                             </div>

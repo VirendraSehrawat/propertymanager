@@ -7,22 +7,11 @@ import { pendingSplit } from "@/lib/allocation";
 import { buildMeterRound } from "@/lib/meterRound";
 import { buildTodayList } from "@/lib/todayList";
 import { TodayCard } from "./TodayCard";
+import type { EmployeeTab } from "@/lib/employeeNav";
 import { LogFollowUpModal } from "./modals/LogFollowUpModal";
 
-export type HomeTabNavTarget =
-    | "home"
-    | "active"
-    | "resolved"
-    | "meter"
-    | "collections"
-    | "ledger"
-    | "daily"
-    | "monthly"
-    | "units"
-    | "occupancy"
-    | "checklist"
-    | "expenses"
-    | "inventory";
+/** Screens Home can open — the employee dashboard's tabs (lib/employeeNav.ts). */
+export type HomeTabNavTarget = EmployeeTab;
 
 interface HomeTabProps {
     allInvoices: Invoice[];

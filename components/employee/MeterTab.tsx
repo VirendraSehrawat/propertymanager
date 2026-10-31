@@ -17,6 +17,7 @@ import {
 } from "@/lib/meterInvoice";
 import { useUploadWithProgress } from "@/lib/useUpload";
 import type { Unit, Invoice, MeterDraft } from "@/types";
+import { confirmAction } from "@/components/ui";
 
 interface MeterTabProps {
     occupiedUnits: Unit[];
@@ -190,20 +191,20 @@ export function MeterTab({ occupiedUnits, allInvoices, electricityRate, building
     };
 
     /** Billing month sanity: confirm before stamping invoices in the past or future. */
-    const confirmBillingMonth = (): boolean => {
+    const confirmBillingMonth = async (): Promise<boolean> => {
         const now = new Date();
         const nowYm = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
         const chosenLabel = billingMonthLabel(billingMonth);
         if (billingMonth < nowYm) {
             const nowLabel = now.toLocaleString("default", { month: "long", year: "numeric" });
-            return window.confirm(
-                `⚠️ Billing month is in the past.\n\n` +
-                `Chosen: ${chosenLabel}\nCurrent: ${nowLabel}\n\n` +
-                `The invoice will be stamped as ${chosenLabel}. Continue?`,
-            );
+            return confirmAction({
+                title: "⚠️ Billing month is in the past",
+                message: `Chosen: ${chosenLabel}\nCurrent: ${nowLabel}\n\nThe invoice will be stamped as ${chosenLabel}.`,
+                confirmLabel: "Continue",
+            });
         }
         if (billingMonth > nowYm) {
-            return window.confirm(`⚠️ Billing month is in the future (${chosenLabel}). Continue?`);
+            return confirmAction({ title: "⚠️ Billing month is in the future", message: `The invoice will be stamped as ${chosenLabel}.`, confirmLabel: "Continue" });
         }
         return true;
     };
@@ -230,7 +231,7 @@ export function MeterTab({ occupiedUnits, allInvoices, electricityRate, building
     const handleGenerateMeterInvoice = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!validateEntry() || !selectedUnit || !input) return;
-        if (!confirmBillingMonth()) return;
+        if (!(await confirmBillingMonth())) return;
         const unit = selectedUnit;
 
         setIsGeneratingInvoice(true);
@@ -250,11 +251,12 @@ export function MeterTab({ occupiedUnits, allInvoices, electricityRate, building
                 const outcome = dryRun.decision.kind === "override" && paid > 0
                     ? `\n\n₹${paid.toLocaleString()} already paid stays on the invoice → ${dryRun.decision.status === "paid" ? "PAID" : "PARTIAL"} against the new total ₹${dryRun.totalAmount.toLocaleString()}.`
                     : "";
-                if (!window.confirm(
-                    `⚠️ Invoice already exists for ${unit.unitNumber} — ${existing.billingPeriod}\n\n` +
-                    `Status: ${existing.status?.toUpperCase()}\nAmount: ₹${existing.totalAmount}${outcome}\n\n` +
-                    `Do you want to OVERRIDE this invoice?`,
-                )) return;
+                if (!(await confirmAction({
+                    title: `⚠️ Invoice already exists for ${unit.unitNumber} — ${existing.billingPeriod}`,
+                    message: `Status: ${existing.status?.toUpperCase()}\nAmount: ₹${existing.totalAmount}${outcome}\n\nDo you want to OVERRIDE this invoice?`,
+                    confirmLabel: "Override",
+                    destructive: true,
+                }))) return;
             }
 
             const meterPhotoUrl = (await uploadPhoto(unit)) || unit.meterDraft?.meterPhotoUrl;
@@ -333,8 +335,12 @@ export function MeterTab({ occupiedUnits, allInvoices, electricityRate, building
     const handleGenerateDrafts = async () => {
         const drafted = round.stops.filter((s) => s.drafted && s.unit.meterDraft);
         if (!drafted.length) return;
-        if (!window.confirm(`Generate ${drafted.length} invoice${drafted.length === 1 ? "" : "s"} for ${billingMonthLabel(billingMonth)} from the saved readings?`)) return;
-        if (!confirmBillingMonth()) return;
+        if (!(await confirmAction({
+            title: `Generate ${drafted.length} invoice${drafted.length === 1 ? "" : "s"}?`,
+            message: `For ${billingMonthLabel(billingMonth)}, from the saved readings.`,
+            confirmLabel: "Generate",
+        }))) return;
+        if (!(await confirmBillingMonth())) return;
 
         const saved = new Set(savedUnitIds);
         const drafts = { ...localDrafts };
@@ -512,7 +518,7 @@ export function MeterTab({ occupiedUnits, allInvoices, electricityRate, building
                 {selectedUnit && (
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Previous Month Reading</label>
-                        <input type="number" min="0" value={previousReadingOverride !== "" ? previousReadingOverride : (selectedUnit?.lastMeterReading ?? "")} onChange={(e) => setPreviousReadingOverride(e.target.value)} className="w-full px-3 py-2.5 border border-gray-300 rounded-lg" placeholder="Auto-filled from system" />
+                        <input type="number" inputMode="decimal" min="0" value={previousReadingOverride !== "" ? previousReadingOverride : (selectedUnit?.lastMeterReading ?? "")} onChange={(e) => setPreviousReadingOverride(e.target.value)} className="w-full px-3 py-2.5 border border-gray-300 rounded-lg" placeholder="Auto-filled from system" />
                         <p className="text-[10px] text-gray-500 mt-1">Auto-filled from last saved reading. Edit if incorrect.</p>
                     </div>
                 )}
@@ -533,7 +539,7 @@ export function MeterTab({ occupiedUnits, allInvoices, electricityRate, building
                             <p className="text-xs text-orange-700 font-medium">📝 Optional: Override units consumed manually</p>
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Manual Units Consumed</label>
-                                <input type="number" min="0" value={manualUnitsConsumed} onChange={(e) => { setManualUnitsConsumed(e.target.value); setFormError(""); }} className="w-full px-3 py-2.5 border border-orange-300 rounded-lg" placeholder="Leave empty to auto-calculate from readings" />
+                                <input type="number" inputMode="decimal" min="0" value={manualUnitsConsumed} onChange={(e) => { setManualUnitsConsumed(e.target.value); setFormError(""); }} className="w-full px-3 py-2.5 border border-orange-300 rounded-lg" placeholder="Leave empty to auto-calculate from readings" />
                             </div>
                             {manualUnitsConsumed && Number(manualUnitsConsumed) > 0 && (
                                 <div>
@@ -548,11 +554,11 @@ export function MeterTab({ occupiedUnits, allInvoices, electricityRate, building
                         <p className="text-xs text-yellow-700 font-medium">Enter units consumed manually (from old + new meter final readings)</p>
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">Units Consumed *</label>
-                            <input type="number" required min="0" value={manualUnitsConsumed} onChange={(e) => { setManualUnitsConsumed(e.target.value); setSpikeChecked(false); }} className="w-full px-3 py-2.5 border border-gray-300 rounded-lg" placeholder="e.g. 120" />
+                            <input type="number" inputMode="decimal" required min="0" value={manualUnitsConsumed} onChange={(e) => { setManualUnitsConsumed(e.target.value); setSpikeChecked(false); }} className="w-full px-3 py-2.5 border border-gray-300 rounded-lg" placeholder="e.g. 120" />
                         </div>
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">New Meter Reading (starting reading of new meter)</label>
-                            <input type="number" min="0" value={newMeterReading} onChange={(e) => setNewMeterReading(e.target.value)} className="w-full px-3 py-2.5 border border-gray-300 rounded-lg" placeholder="e.g. 0 or starting value" />
+                            <input type="number" inputMode="decimal" min="0" value={newMeterReading} onChange={(e) => setNewMeterReading(e.target.value)} className="w-full px-3 py-2.5 border border-gray-300 rounded-lg" placeholder="e.g. 0 or starting value" />
                             <p className="text-xs text-gray-500 mt-1">This will be saved as the last reading for next month</p>
                         </div>
                     </div>

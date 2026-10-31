@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { signOut } from "firebase/auth";
 import { auth, db } from "@/lib/firebase";
-import { collection, onSnapshot, doc, updateDoc, arrayUnion, query, where, writeBatch, getDocs, deleteField } from "firebase/firestore";
+import { collection, onSnapshot, doc, updateDoc, arrayUnion, query, where, writeBatch, getDocs } from "firebase/firestore";
 import { useUploadWithProgress, UploadProgressBar } from "@/lib/useUpload";
 import { mapSnapshot } from "@/lib/firestore";
 import type { DayClose } from "@/lib/dayClose";
@@ -29,7 +29,10 @@ import type {
     Unit,
 } from "@/types";
 import { CollectionsTab, OccupancyTab, LedgerTab, TicketsTab, MeterTab, ExpensesTab, InventoryTab, DailyLedgerTab, MonthlyOverviewTab, HomeTab, ChecklistTab, UnitsTab } from "@/components/employee";
-import { TabButton } from "@/components/ui";
+import { DialogHost, confirmAction, toast } from "@/components/ui";
+import { EmployeeBottomNav, EmployeeSubTabs } from "@/components/employee/EmployeeNav";
+import { persistTab, readInitialTab, type EmployeeTab } from "@/lib/employeeNav";
+import { ProfileBillingForm } from "@/components/employee/ProfileBillingForm";
 
 export default function EmployeeDashboard() {
     const { user, role, loading } = useAuth();
@@ -38,7 +41,13 @@ export default function EmployeeDashboard() {
 
     const [activeTickets, setActiveTickets] = useState<MaintenanceTicket[]>([]);
     const [resolvedTickets, setResolvedTickets] = useState<MaintenanceTicket[]>([]);
-    const [activeTab, setActiveTab] = useState<"home" | "active" | "resolved" | "meter" | "collections" | "ledger" | "daily" | "monthly" | "units" | "occupancy" | "checklist" | "expenses" | "inventory">("home");
+    // Start on ?tab=… or the last screen used on this device (§6.1). The page shows
+    // "Loading…" until auth resolves, so reading the browser here can't cause a hydration mismatch.
+    const [activeTab, setActiveTabState] = useState<EmployeeTab>(readInitialTab);
+    const setActiveTab = useCallback((tab: EmployeeTab) => {
+        setActiveTabState(tab);
+        persistTab(tab);
+    }, []);
 
     // Meter Reading States
     const [occupiedUnits, setOccupiedUnits] = useState<Unit[]>([]);
@@ -264,7 +273,7 @@ export default function EmployeeDashboard() {
         try {
             await updateDoc(doc(db, "units", profileUnit.id), { tenantName: profileName, tenantPhone: profilePhone, tenantEmail: profileEmail.toLowerCase() });
             setIsTenantProfileOpen(false); setProfileUnit(null);
-        } catch (error) { console.error(error); alert("Failed to update tenant."); } finally { setIsSavingProfile(false); }
+        } catch (error) { console.error(error); toast.error("Failed to update tenant."); } finally { setIsSavingProfile(false); }
     };
 
     const handleAddNote = async () => {
@@ -275,7 +284,7 @@ export default function EmployeeDashboard() {
             // Refresh profileUnit from occupiedUnits
             const updated = occupiedUnits.find(u => u.id === profileUnit.id);
             if (updated) setProfileUnit({ ...updated });
-        } catch (error) { console.error(error); alert("Failed to add note."); }
+        } catch (error) { console.error(error); toast.error("Failed to add note."); }
     };
 
     const handleUploadTenantDoc = async (e: React.FormEvent) => {
@@ -286,7 +295,7 @@ export default function EmployeeDashboard() {
             const fileUrl = await uploadFile(`tenant_docs/${profileUnit.id}/${Date.now()}_${profileDocFile.name}`, profileDocFile);
             await updateDoc(doc(db, "units", profileUnit.id), { documents: arrayUnion({ name: profileDocName, url: fileUrl, uploadedAt: new Date().toISOString() }) });
             setProfileDocName(""); setProfileDocFile(null);
-        } catch (error) { console.error(error); alert("Failed to upload document."); } finally { setIsUploadingDoc(false); }
+        } catch (error) { console.error(error); toast.error("Failed to upload document."); } finally { setIsUploadingDoc(false); }
     };
 
     // --- Unit Management Handlers ---
@@ -304,7 +313,7 @@ export default function EmployeeDashboard() {
     const handleAssignTenant = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!assignUnit) return;
-        if (assignMode === "new" && !assignName && !assignEmail && !assignPhone) { alert("Please enter at least a name, email, or phone."); return; }
+        if (assignMode === "new" && !assignName && !assignEmail && !assignPhone) { toast.error("Please enter at least a name, email, or phone."); return; }
         const source = assignMode === "existing" ? assignSourceUnit : undefined;
         if (assignMode === "existing" && !source) return;
 
@@ -339,10 +348,10 @@ export default function EmployeeDashboard() {
 
             setIsAssignModalOpen(false); setAssignUnit(null); setAssignEmail(""); setAssignName(""); setAssignPhone(""); setAssignPaymentDay(""); setAssignSecurityDeposit(""); setAssignExistingUnit("");
             const verb = assignMode === "new" ? "moved in to" : "transferred to";
-            alert(firstInvoice
+            toast.success(firstInvoice
                 ? `✅ Tenant ${verb} ${assignUnit.unitNumber}.\n\n📄 First invoice ₹${firstInvoice.rent.rent.toLocaleString()} created for ${firstInvoice.rent.rentPeriod}${firstInvoice.rent.fullMonth ? "" : ` (${firstInvoice.rent.days} days)`}. It's in Collections.`
                 : `✅ Tenant ${verb} ${assignUnit.unitNumber}.\n\n📄 No invoice created. The next Meter round will bill rent and electricity from reading ${openingReading}.`);
-        } catch (error) { console.error(error); alert("Failed to assign tenant."); } finally { setIsAssigning(false); }
+        } catch (error) { console.error(error); toast.error("Failed to assign tenant."); } finally { setIsAssigning(false); }
     };
 
     const handleEditUnit = async (e: React.FormEvent) => {
@@ -360,7 +369,7 @@ export default function EmployeeDashboard() {
             }
 
             setIsEditUnitModalOpen(false); setEditUnit(null);
-        } catch (error) { console.error(error); alert("Failed to update unit."); }
+        } catch (error) { console.error(error); toast.error("Failed to update unit."); }
     };
 
     const handleRemoveTenant = async (unitId: string) => {
@@ -369,11 +378,11 @@ export default function EmployeeDashboard() {
         const deduction = unit?.lastChecklistDeduction ? Number(unit.lastChecklistDeduction) : 0;
         const refund = Math.max(0, deposit - deduction);
 
-        let msg = "Remove this tenant from the unit?";
+        let msg = "Their details move to the unit's tenant history.";
         if (deposit > 0) {
-            msg = `Remove tenant from ${unit?.unitNumber}?\n\n💰 Security Deposit: ₹${deposit.toLocaleString()}${deduction > 0 ? `\n⚠️ Deduction: ₹${deduction.toLocaleString()}` : ""}\n✅ Refund Due: ₹${refund.toLocaleString()}\n\nMake sure to return the security deposit to the tenant.`;
+            msg = `💰 Security Deposit: ₹${deposit.toLocaleString()}${deduction > 0 ? `\n⚠️ Deduction: ₹${deduction.toLocaleString()}` : ""}\n✅ Refund Due: ₹${refund.toLocaleString()}\n\nMake sure to return the security deposit to the tenant.`;
         }
-        if (!window.confirm(msg)) return;
+        if (!(await confirmAction({ title: `Remove tenant from ${unit?.unitNumber || "this unit"}?`, message: msg, confirmLabel: "Remove tenant", destructive: true }))) return;
         try {
             // Save tenant history before clearing
             const historyEntry = {
@@ -404,11 +413,11 @@ export default function EmployeeDashboard() {
                 ? `\n\n⚠️ ${unpaidForUnit.length} unpaid invoice(s) still open for this unit — settle or write them off before billing the new tenant.`
                 : `\n\n📄 Reminder: generate a final/prorated invoice for the move-out if needed, and a fresh invoice once the next tenant moves in.`;
             if (deposit > 0) {
-                alert(`✅ Tenant removed.\n\n💰 Please return ₹${refund.toLocaleString()} security deposit to the tenant.${unpaidNote}`);
+                toast.success(`✅ Tenant removed.\n\n💰 Please return ₹${refund.toLocaleString()} security deposit to the tenant.${unpaidNote}`);
             } else {
-                alert(`✅ Tenant removed.${unpaidNote}`);
+                toast.success(`✅ Tenant removed.${unpaidNote}`);
             }
-        } catch (error) { console.error(error); alert("Failed to remove tenant."); }
+        } catch (error) { console.error(error); toast.error("Failed to remove tenant."); }
     };
 
     const handleUnitDocUpload = async (e: React.FormEvent) => {
@@ -419,7 +428,7 @@ export default function EmployeeDashboard() {
             const fileUrl = await uploadFile(`tenant_docs/${unitDocUnit.id}/${Date.now()}_${unitDocFile.name}`, unitDocFile);
             await updateDoc(doc(db, "units", unitDocUnit.id), { documents: arrayUnion({ name: unitDocName, url: fileUrl, uploadedAt: new Date().toISOString() }) });
             setIsUnitDocModalOpen(false); setUnitDocUnit(null); setUnitDocName(""); setUnitDocFile(null);
-        } catch (error) { console.error(error); alert("Failed to upload document."); } finally { setIsUploadingDoc(false); }
+        } catch (error) { console.error(error); toast.error("Failed to upload document."); } finally { setIsUploadingDoc(false); }
     };
 
     // --- Transfer Tenant Handler ---
@@ -443,7 +452,7 @@ export default function EmployeeDashboard() {
         if (!transferSourceUnit || !transferDestUnit) return;
         const destUnit = allUnits.find(u => u.id === transferDestUnit);
         if (!destUnit) return;
-        if (destUnit.status === "occupied") { alert("Destination unit is already occupied."); return; }
+        if (destUnit.status === "occupied") { toast.error("Destination unit is already occupied."); return; }
 
         setIsTransferring(true);
         try {
@@ -544,12 +553,12 @@ export default function EmployeeDashboard() {
                     ? `\n🏠 Co-tenant(s) stayed in ${transferSourceUnit.unitNumber}`
                     : `\n👥 Co-tenant(s) moved to ${destUnit.unitNumber}`)
                 : "";
-            alert(`✅ Tenant transferred from ${transferSourceUnit.unitNumber} → ${destUnit.unitNumber}${transferInvoiceMode !== "none" ? "\n📄 Invoice generated for old unit." : ""}${coTenantMsg}`);
+            toast.success(`✅ Tenant transferred from ${transferSourceUnit.unitNumber} → ${destUnit.unitNumber}${transferInvoiceMode !== "none" ? "\n📄 Invoice generated for old unit." : ""}${coTenantMsg}`);
             setIsTransferModalOpen(false);
             setTransferSourceUnit(null);
         } catch (error) {
             console.error(error);
-            alert("Failed to transfer tenant.");
+            toast.error("Failed to transfer tenant.");
         } finally {
             setIsTransferring(false);
         }
@@ -561,31 +570,39 @@ export default function EmployeeDashboard() {
     // --- Multiple Tenants (Co-Tenants) ---
     const handleAddCoTenant = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!coTenantUnit || (!coTenantEmail && !coTenantName && !coTenantPhone)) { alert("Please enter at least a name, email, or phone."); return; }
+        if (!coTenantUnit || (!coTenantEmail && !coTenantName && !coTenantPhone)) { toast.error("Please enter at least a name, email, or phone."); return; }
         try {
             const newCoTenant = { name: coTenantName, phone: coTenantPhone, email: coTenantEmail ? coTenantEmail.toLowerCase() : "", addedAt: new Date().toISOString() };
             await updateDoc(doc(db, "units", coTenantUnit.id), { coTenants: arrayUnion(newCoTenant) });
             setIsAddCoTenantOpen(false); setCoTenantUnit(null); setCoTenantName(""); setCoTenantPhone(""); setCoTenantEmail("");
-        } catch (error) { console.error(error); alert("Failed to add co-tenant."); }
+        } catch (error) { console.error(error); toast.error("Failed to add co-tenant."); }
     };
 
     const handleRemoveCoTenant = async (unitId: string, coTenant: { addedAt: string; name?: string; email?: string; phone?: string }) => {
-        if (!window.confirm(`Remove co-tenant ${coTenant.name || coTenant.email || coTenant.phone}?`)) return;
+        if (!(await confirmAction({ title: `Remove co-tenant ${coTenant.name || coTenant.email || coTenant.phone}?`, message: "They will no longer be listed on this unit.", confirmLabel: "Remove", destructive: true }))) return;
         try {
             const unitDoc = allUnits.find(u => u.id === unitId);
             const updatedCoTenants = (unitDoc?.coTenants || []).filter((ct) => ct.addedAt !== coTenant.addedAt);
             await updateDoc(doc(db, "units", unitId), { coTenants: updatedCoTenants });
-        } catch (error) { console.error(error); alert("Failed to remove co-tenant."); }
+        } catch (error) { console.error(error); toast.error("Failed to remove co-tenant."); }
     };
 
     // --- Inventory Handlers ---
     // (moved into components/employee/InventoryTab.tsx)
 
+    // Counts on the bottom navigation and sub-tabs.
+    const currentMonthLabel = new Date().toLocaleString("default", { month: "long", year: "numeric" });
+    const navBadges: Partial<Record<EmployeeTab, number>> = {
+        collections: allInvoices.filter(inv => inv.status === "unpaid" || inv.status === "pending").length,
+        active: activeTickets.length,
+        meter: occupiedUnits.filter(u => !allInvoices.some(inv => inv.unitId === u.id && inv.billingPeriod === currentMonthLabel)).length,
+    };
+
     if (loading) return <div className="min-h-screen flex items-center justify-center bg-gray-50">Loading...</div>;
     if (!user || role !== "employee") return null;
 
     return (
-        <div className="min-h-screen bg-gray-100 pb-12">
+        <div className="min-h-screen bg-gray-100 pb-28">
             {/* MOBILE FRIENDLY NAV */}
             <nav className="bg-orange-600 px-4 py-4 flex justify-between items-center text-white shadow-md sticky top-0 z-10">
                 <div>
@@ -652,30 +669,8 @@ export default function EmployeeDashboard() {
                     })()}
                 </div>
 
-                {/* TABS */}
-                {(() => {
-                    const pendingCount = allInvoices.filter(inv => inv.status === "unpaid" || inv.status === "pending").length;
-                    const currentMonthLabel = new Date().toLocaleString("default", { month: "long", year: "numeric" });
-                    const unitsNeedingMeter = occupiedUnits.filter(u => !allInvoices.some(inv => inv.unitId === u.id && inv.billingPeriod === currentMonthLabel)).length;
-                    const thisMonthExpenses = allExpenses.filter(exp => { const d = new Date(exp.date || exp.createdAt); const now = new Date(); return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear(); }).length;
-                    return (
-                    <div className="flex flex-wrap bg-gray-200 rounded-lg p-1 shadow-inner gap-1">
-                        <TabButton label="🏠 Home" isActive={activeTab === "home"} onClick={() => setActiveTab("home")} activeColor="text-gray-800" />
-                        <TabButton label={`Collections${pendingCount > 0 ? ` (${pendingCount})` : ""}`} isActive={activeTab === "collections"} onClick={() => setActiveTab("collections")} activeColor="text-indigo-600" />
-                        <TabButton label={`Tasks (${activeTickets.length})`} isActive={activeTab === "active"} onClick={() => setActiveTab("active")} activeColor="text-orange-600" />
-                        <TabButton label={`Meter${unitsNeedingMeter > 0 ? ` (${unitsNeedingMeter})` : ""}`} isActive={activeTab === "meter"} onClick={() => setActiveTab("meter")} activeColor="text-purple-600" />
-                        <TabButton label={`Done (${resolvedTickets.length})`} isActive={activeTab === "resolved"} onClick={() => setActiveTab("resolved")} activeColor="text-green-600" />
-                        <TabButton label="Ledger" isActive={activeTab === "ledger"} onClick={() => setActiveTab("ledger")} activeColor="text-teal-600" />
-                        <TabButton label="📓 Daily" isActive={activeTab === "daily"} onClick={() => setActiveTab("daily")} activeColor="text-teal-700" />
-                        <TabButton label="🏘 Monthly" isActive={activeTab === "monthly"} onClick={() => setActiveTab("monthly")} activeColor="text-emerald-700" />
-                        <TabButton label="Units" isActive={activeTab === "units"} onClick={() => setActiveTab("units")} activeColor="text-blue-600" />
-                        <TabButton label="📊 Occupancy" isActive={activeTab === "occupancy"} onClick={() => setActiveTab("occupancy")} activeColor="text-emerald-600" />
-                        <TabButton label="📋 Checklist" isActive={activeTab === "checklist"} onClick={() => setActiveTab("checklist")} activeColor="text-pink-600" />
-                        <TabButton label={`💰 Expenses${thisMonthExpenses > 0 ? ` (${thisMonthExpenses})` : ""}`} isActive={activeTab === "expenses"} onClick={() => setActiveTab("expenses")} activeColor="text-amber-600" />
-                        <TabButton label="📦 Inventory" isActive={activeTab === "inventory"} onClick={() => setActiveTab("inventory")} activeColor="text-cyan-600" />
-                    </div>
-                    );
-                })()}
+                {/* Sub-tabs of the current section (e.g. Collections | Monthly); main nav is at the bottom. */}
+                <EmployeeSubTabs activeTab={activeTab} onSelect={setActiveTab} badges={navBadges} />
 
                 {/* HOME / DAILY SUMMARY TAB */}
                 {activeTab === "home" && (
@@ -824,7 +819,7 @@ export default function EmployeeDashboard() {
             {/* TENANT PROFILE MODAL */}
             {isTenantProfileOpen && profileUnit && (
                 <div className="fixed inset-0 bg-black bg-opacity-60 flex items-end sm:items-center justify-center p-4 z-50 overflow-y-auto">
-                    <div className="bg-white rounded-t-2xl sm:rounded-2xl p-6 w-full max-w-md shadow-2xl my-8">
+                    <div className="bg-white rounded-t-2xl sm:rounded-2xl p-6 w-full max-w-md shadow-2xl my-8 max-h-[calc(100dvh-2rem)] overflow-y-auto">
                         <h2 className="text-xl font-bold mb-1">👤 {profileUnit.unitNumber} — Tenant Profile</h2>
                         <p className="text-sm text-gray-500 mb-5">Edit details, manage documents, and add notes.</p>
 
@@ -836,56 +831,13 @@ export default function EmployeeDashboard() {
                             <button type="submit" disabled={isSavingProfile} className="w-full py-2.5 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700 disabled:bg-indigo-400">{isSavingProfile ? "Saving..." : "Save Details"}</button>
                         </form>
 
-                        {/* Payment Day & Security Deposit */}
-                        <div className="border-t border-gray-200 pt-4 mb-4">
-                            <h3 className="text-sm font-bold text-gray-800 mb-2">📅 Payment & Security</h3>
-                            <div className="grid grid-cols-2 gap-3">
-                                <div>
-                                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Payment Day</label>
-                                    <div className="flex gap-1">
-                                        <input type="number" min="1" max="31" defaultValue={profileUnit.paymentDay || ""} id="profilePaymentDay" className="flex-1 px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="1-31" />
-                                        <button type="button" onClick={async () => { const val = (document.getElementById('profilePaymentDay') as HTMLInputElement).value; if (val) { await updateDoc(doc(db, "units", profileUnit.id), { paymentDay: Number(val) }); alert("Payment day saved!"); } }} className="px-2 py-1 bg-indigo-100 text-indigo-700 rounded text-xs font-bold hover:bg-indigo-200">✓</button>
-                                    </div>
-                                    {profileUnit.paymentDay && <p className="text-[10px] text-indigo-600 mt-0.5">Current: {profileUnit.paymentDay}th of every month</p>}
-                                </div>
-                                <div>
-                                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Security Deposit</label>
-                                    <div className="flex gap-1">
-                                        <input type="number" min="0" defaultValue={profileUnit.securityDeposit || ""} id="profileSecurityDeposit" className="flex-1 px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="₹" />
-                                        <button type="button" onClick={async () => { const val = (document.getElementById('profileSecurityDeposit') as HTMLInputElement).value; if (val) { await updateDoc(doc(db, "units", profileUnit.id), { securityDeposit: Number(val), securityDepositDate: profileUnit.securityDepositDate || new Date().toISOString() }); alert("Security deposit saved!"); } }} className="px-2 py-1 bg-green-100 text-green-700 rounded text-xs font-bold hover:bg-green-200">✓</button>
-                                    </div>
-                                    {profileUnit.securityDeposit && <p className="text-[10px] text-green-600 mt-0.5">₹{Number(profileUnit.securityDeposit).toLocaleString()} {profileUnit.securityDepositDate ? `(${new Date(profileUnit.securityDepositDate).toLocaleDateString()})` : ""}</p>}
-                                </div>
-                            </div>
-                            {/* Per-tenant Electricity Rate */}
-                            <div className="mt-3">
-                                <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">⚡ Electricity Rate (₹ per unit)</label>
-                                <div className="flex gap-1">
-                                    <input type="number" min="0" step="0.01" defaultValue={profileUnit.electricityRate ?? ""} id="profileElectricityRate" className="flex-1 px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder={`Default ₹${electricityRate}/unit`} />
-                                    <button type="button" onClick={async () => {
-                                        const raw = (document.getElementById('profileElectricityRate') as HTMLInputElement).value;
-                                        try {
-                                            if (raw === "" || raw === null) {
-                                                await updateDoc(doc(db, "units", profileUnit.id), { electricityRate: deleteField() });
-                                                setProfileUnit({ ...profileUnit, electricityRate: undefined });
-                                                alert(`Custom rate cleared. Using default ₹${electricityRate}/unit.`);
-                                            } else {
-                                                const val = Number(raw);
-                                                if (!(val > 0)) { alert("Enter a positive rate, or leave empty to use default."); return; }
-                                                await updateDoc(doc(db, "units", profileUnit.id), { electricityRate: val });
-                                                setProfileUnit({ ...profileUnit, electricityRate: val });
-                                                alert(`Electricity rate saved: ₹${val}/unit`);
-                                            }
-                                        } catch (err) { console.error(err); alert("Failed to save rate."); }
-                                    }} className="px-2 py-1 bg-purple-100 text-purple-700 rounded text-xs font-bold hover:bg-purple-200">✓</button>
-                                </div>
-                                <p className="text-[10px] text-purple-600 mt-0.5">
-                                    {Number(profileUnit.electricityRate) > 0
-                                        ? `Custom: ₹${Number(profileUnit.electricityRate)}/unit — applied to future meter invoices for this tenant.`
-                                        : `Using default ₹${electricityRate}/unit. Set a value here to override for this tenant.`}
-                                </p>
-                            </div>
-                        </div>
+                        {/* Payment Day, Security Deposit & Electricity Rate */}
+                        <ProfileBillingForm
+                            key={profileUnit.id}
+                            unit={profileUnit}
+                            defaultElectricityRate={electricityRate}
+                            onSaved={(fields) => setProfileUnit({ ...profileUnit, ...fields })}
+                        />
 
                         {/* Documents */}
                         <div className="border-t border-gray-200 pt-4 mb-4">
@@ -991,7 +943,7 @@ export default function EmployeeDashboard() {
                 };
                 return (
                     <div className="fixed inset-0 bg-black/60 flex items-end sm:items-center justify-center p-4 z-50 overflow-y-auto" onClick={() => setIsTodayCollectionsOpen(false)}>
-                        <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-lg shadow-2xl my-8 overflow-hidden" onClick={(e) => e.stopPropagation()}>
+                        <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-lg shadow-2xl my-8 overflow-hidden max-h-[calc(100dvh-2rem)] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
                             <div className="bg-green-50 px-5 py-4 border-b border-green-200 flex justify-between items-center">
                                 <div>
                                     <h2 className="text-lg font-bold text-green-800">💵 Collected Today</h2>
@@ -1049,7 +1001,7 @@ export default function EmployeeDashboard() {
             {/* ASSIGN TENANT MODAL */}
             {isAssignModalOpen && assignUnit && (
                 <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setIsAssignModalOpen(false)}>
-                    <div className="bg-white p-6 rounded-xl shadow-xl max-w-md w-full space-y-4" onClick={(e) => e.stopPropagation()}>
+                    <div className="bg-white p-6 rounded-xl shadow-xl max-w-md w-full space-y-4 max-h-[calc(100dvh-2rem)] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
                         <h3 className="text-lg font-bold text-gray-800">Assign Tenant to {assignUnit.unitNumber}</h3>
                         <div className="flex gap-2">
                             <button onClick={() => setAssignMode("new")} className={`flex-1 py-2 rounded-md text-sm font-medium ${assignMode === "new" ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600"}`}>New Tenant</button>
@@ -1064,11 +1016,11 @@ export default function EmployeeDashboard() {
                                     <div className="grid grid-cols-2 gap-2">
                                         <div>
                                             <label className="block text-[10px] font-bold text-gray-500 uppercase mb-0.5">Payment Day (1-31)</label>
-                                            <input type="number" min="1" max="31" placeholder="e.g. 5" value={assignPaymentDay} onChange={(e) => setAssignPaymentDay(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
+                                            <input type="number" inputMode="decimal" min="1" max="31" placeholder="e.g. 5" value={assignPaymentDay} onChange={(e) => setAssignPaymentDay(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
                                         </div>
                                         <div>
                                             <label className="block text-[10px] font-bold text-gray-500 uppercase mb-0.5">Security Deposit (₹)</label>
-                                            <input type="number" min="0" placeholder="e.g. 10000" value={assignSecurityDeposit} onChange={(e) => setAssignSecurityDeposit(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
+                                            <input type="number" inputMode="decimal" min="0" placeholder="e.g. 10000" value={assignSecurityDeposit} onChange={(e) => setAssignSecurityDeposit(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
                                         </div>
                                     </div>
                                 </>
@@ -1118,7 +1070,7 @@ export default function EmployeeDashboard() {
             {/* EDIT UNIT MODAL */}
             {isEditUnitModalOpen && editUnit && (
                 <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setIsEditUnitModalOpen(false)}>
-                    <div className="bg-white p-6 rounded-xl shadow-xl max-w-md w-full space-y-4" onClick={(e) => e.stopPropagation()}>
+                    <div className="bg-white p-6 rounded-xl shadow-xl max-w-md w-full space-y-4 max-h-[calc(100dvh-2rem)] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
                         <h3 className="text-lg font-bold text-gray-800">Edit Unit</h3>
                         <form onSubmit={handleEditUnit} className="space-y-3">
                             <div>
@@ -1127,7 +1079,7 @@ export default function EmployeeDashboard() {
                             </div>
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Base Rent (₹)</label>
-                                <input type="number" required value={editBaseRent} onChange={(e) => setEditBaseRent(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
+                                <input type="number" inputMode="decimal" required value={editBaseRent} onChange={(e) => setEditBaseRent(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
                             </div>
                             <div className="flex gap-2">
                                 <button type="button" onClick={() => setIsEditUnitModalOpen(false)} className="flex-1 py-2 border border-gray-300 rounded-md text-sm text-gray-600">Cancel</button>
@@ -1141,7 +1093,7 @@ export default function EmployeeDashboard() {
             {/* UNIT DOCUMENT UPLOAD MODAL */}
             {isUnitDocModalOpen && unitDocUnit && (
                 <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setIsUnitDocModalOpen(false)}>
-                    <div className="bg-white p-6 rounded-xl shadow-xl max-w-md w-full space-y-4" onClick={(e) => e.stopPropagation()}>
+                    <div className="bg-white p-6 rounded-xl shadow-xl max-w-md w-full space-y-4 max-h-[calc(100dvh-2rem)] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
                         <h3 className="text-lg font-bold text-gray-800">Upload Document for {unitDocUnit.unitNumber}</h3>
                         <p className="text-xs text-gray-500">{unitDocUnit.tenantName || unitDocUnit.tenantEmail}</p>
                         <form onSubmit={handleUnitDocUpload} className="space-y-3">
@@ -1160,7 +1112,7 @@ export default function EmployeeDashboard() {
             {/* ADD CO-TENANT MODAL */}
             {isAddCoTenantOpen && coTenantUnit && (
                 <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setIsAddCoTenantOpen(false)}>
-                    <div className="bg-white p-6 rounded-xl shadow-xl max-w-md w-full space-y-4" onClick={(e) => e.stopPropagation()}>
+                    <div className="bg-white p-6 rounded-xl shadow-xl max-w-md w-full space-y-4 max-h-[calc(100dvh-2rem)] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
                         <h3 className="text-lg font-bold text-gray-800">👥 Add Co-Tenant to {coTenantUnit.unitNumber}</h3>
                         <p className="text-xs text-gray-500">Primary: {coTenantUnit.tenantName || coTenantUnit.tenantEmail}</p>
                         {coTenantUnit.coTenants && coTenantUnit.coTenants.length > 0 && (
@@ -1210,12 +1162,12 @@ export default function EmployeeDashboard() {
                             <div className="grid grid-cols-2 gap-3">
                                 <div>
                                     <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Rent — Current Room</label>
-                                    <input type="number" min="0" value={transferCurrentRent} onChange={(e) => setTransferCurrentRent(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" placeholder="Old room rent" />
+                                    <input type="number" inputMode="decimal" min="0" value={transferCurrentRent} onChange={(e) => setTransferCurrentRent(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" placeholder="Old room rent" />
                                     <p className="text-[10px] text-gray-400 mt-0.5">Used to pro-rate old unit invoice.</p>
                                 </div>
                                 <div>
                                     <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Rent — New Room</label>
-                                    <input type="number" min="0" value={transferNewRent} onChange={(e) => setTransferNewRent(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" placeholder="New room rent" disabled={!transferDestUnit} />
+                                    <input type="number" inputMode="decimal" min="0" value={transferNewRent} onChange={(e) => setTransferNewRent(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" placeholder="New room rent" disabled={!transferDestUnit} />
                                     <p className="text-[10px] text-gray-400 mt-0.5">Applied to destination unit.</p>
                                 </div>
                             </div>
@@ -1307,7 +1259,7 @@ export default function EmployeeDashboard() {
                                     <p className="text-xs text-blue-700 font-medium">Electricity reading at transfer</p>
                                     <div>
                                         <label className="block text-[10px] text-gray-500 mb-0.5">Previous: {transferSourceUnit.lastMeterReading || 0}</label>
-                                        <input type="number" min="0" placeholder="Current meter reading" value={transferLastReading} onChange={(e) => setTransferLastReading(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
+                                        <input type="number" inputMode="decimal" min="0" placeholder="Current meter reading" value={transferLastReading} onChange={(e) => setTransferLastReading(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
                                     </div>
                                     <p className="text-[10px] text-blue-600">Leave same as previous if meter not applicable.</p>
                                 </div>
@@ -1318,7 +1270,7 @@ export default function EmployeeDashboard() {
                                 <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 space-y-2">
                                     <div>
                                         <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Amount (₹) *</label>
-                                        <input type="number" required min="0" value={transferCustomAmount} onChange={(e) => setTransferCustomAmount(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" placeholder="e.g. 5000" />
+                                        <input type="number" inputMode="decimal" required min="0" value={transferCustomAmount} onChange={(e) => setTransferCustomAmount(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" placeholder="e.g. 5000" />
                                     </div>
                                     <div>
                                         <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Note / Reason</label>
@@ -1327,7 +1279,7 @@ export default function EmployeeDashboard() {
                                 </div>
                             )}
 
-                            <div className="flex gap-2 pt-2">
+                            <div className="flex gap-2 pt-2 sticky bottom-0 bg-white pb-1">
                                 <button type="button" onClick={() => setIsTransferModalOpen(false)} className="flex-1 py-2 border border-gray-300 rounded-md text-sm text-gray-600">Cancel</button>
                                 <button type="submit" disabled={isTransferring} className="flex-1 py-2 bg-orange-600 text-white rounded-md text-sm font-medium hover:bg-orange-700 disabled:bg-orange-400">{isTransferring ? "Transferring..." : "Transfer Tenant"}</button>
                             </div>
@@ -1336,9 +1288,9 @@ export default function EmployeeDashboard() {
                 </div>
             )}
 
-
-
-
+            <EmployeeBottomNav activeTab={activeTab} onSelect={setActiveTab} badges={navBadges} />
+            {/* Toasts and confirm / reason dialogs (§6.2) — last, so they sit above other modals. */}
+            <DialogHost />
         </div>
     );
 }

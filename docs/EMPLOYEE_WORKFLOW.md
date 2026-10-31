@@ -17,11 +17,28 @@ The employee is the person on the ground: collecting money from tenants, paying 
 
 ## 2. Employee Dashboard — Overview
 
-The dashboard has a top-level **tabbed navigation**. The employee uses these tabs throughout the day.
+Navigation is a **bottom bar** with five entries; sections with more than one screen show a switch
+at the top (e.g. **Collections | Monthly**):
 
-Key tabs used in this workflow:
+| Bottom bar | Screens |
+|---|---|
+| 🏠 **Home** | Home (Today list) |
+| 💳 **Collect** | Collections · Monthly |
+| 📓 **Books** | Daily · Expenses · Ledger |
+| 🔧 **Tasks** | Open · Done |
+| ☰ **More** | Meter · Units · Occupancy · Checklist · Inventory · Help |
 
-| Tab | Purpose |
+Red counts show pending invoices (Collect), open tickets (Tasks) and units still needing a meter reading
+(More → Meter). The app reopens on the screen used last on that phone, and a link such as
+`/employee?tab=meter` opens a screen directly — handy for sending a colleague straight to it.
+
+Confirmations, delete reasons and messages appear inside the app (not as browser pop-ups). Deleting an
+entry asks for a reason with one-tap choices (*Duplicate entry*, *Wrong amount*, …). Settling an expense
+happens straight away with an **Undo** button for a few seconds.
+
+Key screens used in this workflow:
+
+| Screen | Purpose |
 |-----|---------|
 | **🏠 Home** | **📋 Today** list (what to do now, by building), KPIs, quick actions; month summary, overdue, meters pending, tasks and activity under **📊 More** |
 | **📓 Daily** | The core ledger screen — add deposit/expense entries |

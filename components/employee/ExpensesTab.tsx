@@ -3,11 +3,12 @@
 import { useState } from "react";
 import { doc, updateDoc, addDoc, collection, deleteDoc, deleteField, writeBatch } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { Modal } from "@/components/ui";
+import { Modal, askReason, confirmAction, toast } from "@/components/ui";
 import { useUploadWithProgress, UploadProgressBar } from "@/lib/useUpload";
 import { calculateFundSummary, filterExpenses, buildSettlementUpdate, EXPENSE_CATEGORIES, categoryEmoji } from "@/lib/expenses";
 import { buildExpenseWrite, closedDayError, softDeletePatch, todayLocal } from "@/lib/expenseWrite";
 import type { DayClose } from "@/lib/dayClose";
+import { rememberBuilding, rememberedBuilding } from "@/lib/prefs";
 import type { Allocation, Building, Expense } from "@/types";
 
 interface ExpensesTabProps {
@@ -61,6 +62,8 @@ export function ExpensesTab({ allExpenses, allAllocations, buildings, userEmail,
     const openAddExpense = () => {
         setIsExpenseModalOpen(true);
         setExpenseDate(todayLocal());
+        const lastBuilding = rememberedBuilding();
+        setExpenseBuilding(buildings.some((b) => b.id === lastBuilding) ? lastBuilding : "");
     };
 
     const openAddAllocation = () => {
@@ -95,7 +98,7 @@ export function ExpensesTab({ allExpenses, allAllocations, buildings, userEmail,
         if (!expenseAmount || !expenseDesc) return;
         const dateStr = expenseDate || todayLocal();
         const closed = closedDayError(dateStr, dayCloses);
-        if (closed) { alert(closed); return; }
+        if (closed) { toast.error(closed); return; }
         setIsSubmittingExpense(true);
         try {
             let receiptUrl = "";
@@ -129,10 +132,10 @@ export function ExpensesTab({ allExpenses, allAllocations, buildings, userEmail,
             setExpenseDate("");
             setExpenseBuilding("");
             setExpenseReceipt(null);
-            alert("Expense logged (also visible in Daily Ledger)!");
+            toast.success("Expense logged (also visible in Daily Ledger).");
         } catch (error) {
             console.error(error);
-            alert("Failed to log expense.");
+            toast.error("Failed to log expense.");
         } finally {
             setIsSubmittingExpense(false);
         }
@@ -141,11 +144,9 @@ export function ExpensesTab({ allExpenses, allAllocations, buildings, userEmail,
     const handleSoftDeleteExpense = async (exp: Expense) => {
         if (exp.deleted) return;
         const closed = closedDayError(exp.date, dayCloses);
-        if (closed) { alert(closed); return; }
-        const reason = window.prompt(`Delete expense "${exp.description}" (₹${Number(exp.amount).toLocaleString()})?\n\nPlease provide a reason (required):`, "");
-        if (reason === null) return;
-        const trimmed = reason.trim();
-        if (!trimmed) { alert("A reason is required to delete an expense."); return; }
+        if (closed) { toast.error(closed); return; }
+        const trimmed = await askReason({ title: `Delete expense of ₹${Number(exp.amount).toLocaleString()}?`, message: exp.description });
+        if (!trimmed) return;
         try {
             // Expense and its Daily-ledger mirror are deleted together.
             const patch = softDeletePatch(userEmail, trimmed, new Date().toISOString());
@@ -153,7 +154,8 @@ export function ExpensesTab({ allExpenses, allAllocations, buildings, userEmail,
             batch.update(doc(db, "expenses", exp.id), patch);
             if (exp.dailyLedgerId) batch.update(doc(db, "dailyLedger", exp.dailyLedgerId), patch);
             await batch.commit();
-        } catch (error) { console.error(error); alert("Failed to delete expense."); }
+            toast.success("Expense deleted (and removed from the Daily ledger).");
+        } catch (error) { console.error(error); toast.error("Failed to delete expense."); }
     };
 
     const handleAddAllocation = async (e: React.FormEvent) => {
@@ -174,37 +176,48 @@ export function ExpensesTab({ allExpenses, allAllocations, buildings, userEmail,
                     updatedBy: userEmail,
                     updatedAt: new Date().toISOString(),
                 });
-                alert("Allocation updated!");
+                toast.success("Allocation updated.");
             } else {
                 await addDoc(collection(db, "allocations"), {
                     ...payload,
                     createdBy: userEmail,
                     createdAt: new Date().toISOString(),
                 });
-                alert("Allocated amount added!");
+                toast.success("Allocated amount added.");
             }
             closeAllocationModal();
         } catch (error) {
             console.error(error);
-            alert("Failed to save allocation.");
+            toast.error("Failed to save allocation.");
         } finally {
             setIsSubmittingAllocation(false);
         }
     };
 
     const handleDeleteAllocation = async (a: Allocation) => {
-        if (!window.confirm(`Delete allocation of ₹${Number(a.amount).toLocaleString()} (${a.note || "no note"})?\n\nThis will reduce the total allocated fund.`)) return;
+        if (!(await confirmAction({
+            title: `Delete allocation of ₹${Number(a.amount).toLocaleString()}?`,
+            message: `${a.note || "No note"}\n\nThis will reduce the total allocated fund.`,
+            confirmLabel: "Delete",
+            destructive: true,
+        }))) return;
         try {
             await deleteDoc(doc(db, "allocations", a.id));
-        } catch (error) { console.error(error); alert("Failed to delete allocation."); }
+        } catch (error) { console.error(error); toast.error("Failed to delete allocation."); }
     };
 
-    const handleToggleExpenseSettled = async (exp: Expense) => {
-        const nextSettled = !exp.settled;
-        if (nextSettled && !window.confirm(`Mark "${exp.description}" (₹${Number(exp.amount).toLocaleString()}) as settled? This will be deducted from the allocated amount.`)) return;
+    // Settling is applied straight away with an Undo, instead of a blocking confirm.
+    const handleToggleExpenseSettled = async (exp: Expense, opts: { undo?: boolean } = {}) => {
         try {
             await updateDoc(doc(db, "expenses", exp.id), buildSettlementUpdate(exp.settled, userEmail, deleteField()) as Record<string, unknown>);
-        } catch (error) { console.error(error); alert("Failed to update expense."); }
+            if (!opts.undo) {
+                const settledNow = !exp.settled;
+                toast.success(
+                    settledNow ? `Settled ₹${Number(exp.amount).toLocaleString()} — deducted from the fund.` : "Marked as not settled.",
+                    { action: { label: "Undo", onClick: () => handleToggleExpenseSettled({ ...exp, settled: settledNow }, { undo: true }) } },
+                );
+            }
+        } catch (error) { console.error(error); toast.error("Failed to update expense."); }
     };
 
     return (
@@ -469,10 +482,10 @@ export function ExpensesTab({ allExpenses, allAllocations, buildings, userEmail,
                                                 <p className="font-bold text-red-700">₹{Number(exp.amount).toLocaleString()}</p>
                                                 {exp.receiptUrl && <a href={exp.receiptUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] text-blue-600 hover:underline">📎 Receipt</a>}
                                                 <div className="flex gap-1">
-                                                    <button onClick={() => handleToggleExpenseSettled(exp)} className={`text-[10px] font-bold px-2 py-1 rounded-md transition ${exp.settled ? "bg-gray-100 text-gray-600 hover:bg-gray-200" : "bg-green-600 text-white hover:bg-green-700"}`}>
+                                                    <button onClick={() => handleToggleExpenseSettled(exp)} className={`text-xs font-bold px-3 min-h-11 rounded-md transition ${exp.settled ? "bg-gray-100 text-gray-600 hover:bg-gray-200" : "bg-green-600 text-white hover:bg-green-700"}`}>
                                                         {exp.settled ? "Undo" : "✓ Settle"}
                                                     </button>
-                                                    <button onClick={() => handleSoftDeleteExpense(exp)} title="Delete with reason" className="text-[10px] font-bold px-2 py-1 rounded-md bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 transition">🗑</button>
+                                                    <button onClick={() => handleSoftDeleteExpense(exp)} title="Delete with reason" className="text-xs font-bold px-3 min-h-11 min-w-11 rounded-md bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 transition">🗑</button>
                                                 </div>
                                             </div>
                                         </div>
@@ -491,7 +504,7 @@ export function ExpensesTab({ allExpenses, allAllocations, buildings, userEmail,
                 <form onSubmit={handleAddAllocation} className="space-y-3">
                     <div>
                         <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Amount (₹) *</label>
-                        <input type="number" required min="1" value={allocAmount} onChange={(e) => setAllocAmount(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" placeholder="e.g. 20000" />
+                        <input type="number" inputMode="decimal" required min="1" value={allocAmount} onChange={(e) => setAllocAmount(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" placeholder="e.g. 20000" />
                     </div>
                     <div>
                         <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Building</label>
@@ -508,7 +521,7 @@ export function ExpensesTab({ allExpenses, allAllocations, buildings, userEmail,
                         <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Date</label>
                         <input type="date" value={allocDate} onChange={(e) => setAllocDate(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
                     </div>
-                    <div className="flex gap-2 pt-2">
+                    <div className="flex gap-2 pt-2 sticky bottom-0 bg-white pb-1">
                         <button type="button" onClick={closeAllocationModal} className="flex-1 py-2 border border-gray-300 rounded-md text-sm text-gray-600">Cancel</button>
                         <button type="submit" disabled={isSubmittingAllocation} className="flex-1 py-2 bg-emerald-600 text-white rounded-md text-sm font-medium hover:bg-emerald-700 disabled:bg-emerald-400">{isSubmittingAllocation ? "Saving..." : (editingAllocationId ? "Save Changes" : "Add Allocation")}</button>
                     </div>
@@ -521,7 +534,7 @@ export function ExpensesTab({ allExpenses, allAllocations, buildings, userEmail,
                 <form onSubmit={handleAddExpense} className="space-y-3 mt-3">
                     <div>
                         <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Amount (₹) *</label>
-                        <input type="number" required min="1" value={expenseAmount} onChange={(e) => setExpenseAmount(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" placeholder="e.g. 500" />
+                        <input type="number" inputMode="decimal" required min="1" value={expenseAmount} onChange={(e) => setExpenseAmount(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" placeholder="e.g. 500" />
                     </div>
                     <div>
                         <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Category</label>
@@ -531,7 +544,7 @@ export function ExpensesTab({ allExpenses, allAllocations, buildings, userEmail,
                     </div>
                     <div>
                         <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Building</label>
-                        <select value={expenseBuilding} onChange={(e) => setExpenseBuilding(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm">
+                        <select value={expenseBuilding} onChange={(e) => { setExpenseBuilding(e.target.value); rememberBuilding(e.target.value); }} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm">
                             <option value="">General (All Buildings)</option>
                             {buildings.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
                         </select>
@@ -549,7 +562,7 @@ export function ExpensesTab({ allExpenses, allAllocations, buildings, userEmail,
                         <input type="file" accept="image/*,.pdf" onChange={(e) => setExpenseReceipt(e.target.files?.[0] || null)} className="w-full text-sm text-gray-500" />
                     </div>
                     {isUploading && <UploadProgressBar progress={uploadProgress} />}
-                    <div className="flex gap-2 pt-2">
+                    <div className="flex gap-2 pt-2 sticky bottom-0 bg-white pb-1">
                         <button type="button" onClick={() => setIsExpenseModalOpen(false)} className="flex-1 py-2 border border-gray-300 rounded-md text-sm text-gray-600">Cancel</button>
                         <button type="submit" disabled={isSubmittingExpense || isUploading} className="flex-1 py-2 bg-amber-600 text-white rounded-md text-sm font-medium hover:bg-amber-700 disabled:bg-amber-400">{isSubmittingExpense ? "Saving..." : "Log Expense"}</button>
                     </div>
