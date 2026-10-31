@@ -6,13 +6,12 @@ import { db } from "@/lib/firebase";
 import { COL } from "@/lib/collections";
 import type { Invoice, LedgerEntry, MasterInvoice, Unit } from "@/types";
 import {
-    allocatePartialPayment,
     composeInvoiceTotal,
     carryForwardFromInvoices,
     carryForwardItems,
     pendingSplit,
 } from "@/lib/allocation";
-import { buildSettlePlan, buildMasterSettlePlan } from "@/lib/paymentPlan";
+import { buildCollectionPaymentPlan, buildMasterSettlePlan } from "@/lib/paymentPlan";
 import { commitPaymentPlan } from "@/lib/commitPaymentPlan";
 import { notifyPaymentRecorded } from "@/lib/notify";
 import { SettlePaymentModal, type SettlePaymentSubmit } from "./modals/SettlePaymentModal";
@@ -246,27 +245,31 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [jumpToInvoiceId]);
 
+    // The unit's other pending invoices — any amount above the selected
+    // invoice's balance waterfalls across these (see buildCollectionPaymentPlan).
+    const otherPendingFor = (inv: Invoice) => allInvoices.filter(i =>
+        i.id !== inv.id &&
+        i.unitId === inv.unitId &&
+        (i.status === "unpaid" || i.status === "pending") &&
+        !i.masterInvoiceId,
+    );
+
     const handleConfirmSettle = async (payload: SettlePaymentSubmit) => {
         if (!settleInvoice) return;
         const inv = settleInvoice;
-        const { received: receivedInput, mode, reference, note } = payload;
-        const alloc = allocatePartialPayment(receivedInput, {
-            totalAmount: Number(inv.totalAmount || 0),
-            amountPaid: Number(inv.amountPaid || 0),
-            baseRent: Number(inv.baseRent || 0),
-            electricityCharge: Number(inv.electricityCharge || 0),
-        });
-        const received = receivedInput; // for user-facing checks
+        const { received, mode, reference, note } = payload;
         if (received <= 0) { alert("Enter an amount greater than zero."); return; }
-        if (received > alloc.remaining) { alert(`Amount received (₹${received}) exceeds remaining balance (₹${alloc.remaining}).`); return; }
         setIsSettling(inv.id);
         try {
-            // Build the full write-set (invoice patch + ledger row) and commit
-            // it in a single atomic batch so a partial/full settlement can never
-            // update the invoice without its matching ledger row.
+            // Build the full write-set (invoice patches + ledger rows + daily
+            // ledger inflow) and commit it in a single atomic batch so a
+            // settlement can never update an invoice without its ledger row.
+            // Amounts above this invoice's balance clear the unit's other
+            // pending invoices oldest-first; any remainder becomes an advance.
             // See docs/ATOMIC_TRANSACTIONS_PLAN.md (Phase 3).
-            const plan = buildSettlePlan({
+            const plan = buildCollectionPaymentPlan({
                 invoice: inv,
+                otherPending: otherPendingFor(inv),
                 received,
                 mode,
                 reference,
@@ -274,15 +277,20 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                 settledBy: userEmail,
             });
             const { ledgerIds } = await commitPaymentPlan(db, plan);
-            // Fire-and-forget Telegram notification (outside the atomic unit).
-            notifyPaymentRecorded({
-                invoiceId: inv.id,
-                amount: received,
-                fully: alloc.fullyPaid,
-                mode,
-                reference: reference.trim() || undefined,
-                ledgerId: ledgerIds[0],
+            // Fire-and-forget Telegram notification per invoice paid (outside the atomic unit).
+            plan.ledgerRows.forEach((row, i) => {
+                if (!row.invoiceId) return; // advance/credit — not tied to an invoice
+                notifyPaymentRecorded({
+                    invoiceId: row.invoiceId,
+                    amount: row.amountPaid,
+                    fully: row.type === "payment",
+                    mode,
+                    reference: reference.trim() || undefined,
+                    ledgerId: ledgerIds[i],
+                });
             });
+            const credit = plan.ledgerRows.find(r => r.type === "credit");
+            if (credit) alert(`🪙 ₹${credit.amountPaid.toLocaleString()} recorded as an advance for ${inv.unitNumber}.`);
             setSettleInvoice(null);
         } catch (error) {
             console.error(error);
@@ -819,6 +827,7 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                     key={settleInvoice.id}
                     invoice={settleInvoice}
                     allLedgerEntries={allLedgerEntries}
+                    otherPendingInvoices={otherPendingFor(settleInvoice)}
                     isSubmitting={isSettling === settleInvoice.id}
                     onCancel={() => setSettleInvoice(null)}
                     onSubmit={handleConfirmSettle}

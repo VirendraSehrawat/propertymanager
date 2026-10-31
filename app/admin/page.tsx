@@ -399,8 +399,8 @@ export default function AdminDashboard() {
                         entries={dailyLedgerEntries}
                         buildings={buildings}
                         allUnits={allUnits}
-                        allInvoices={allInvoicesForDashboard}
                         currentUserEmail={user?.email || "admin"}
+                        onGoToCollections={() => setActiveTab("invoices")}
                     />
                 )}
 

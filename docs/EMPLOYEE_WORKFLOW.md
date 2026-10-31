@@ -37,52 +37,27 @@ Key tabs used in this workflow:
 
 Below is the standard sequence an employee follows each day.
 
-### Step A — Open the Daily Ledger
+### Step A — Record tenant payments in Collections
 
-1. Employee taps **📓 Daily** tab.
-2. Screen shows:
-   - Two buttons: **➕ Inflow** and **➖ Outflow**
-   - View toggle: **📅 Daily** / **🗓 Monthly**
-   - Date/month picker
-   - Building filter
-   - Totals: Inflow / Outflow / Net
+All tenant payments (cash, UPI, bank, cheque) are recorded in **Collections** —
+see **§4 Collecting rent** below. There is no ➕ Inflow button on the Daily tab:
+each payment saved in Collections writes its own inflow row to the Daily Ledger
+automatically, with its payment mode.
 
 ---
 
-### Step B — Deposit Entry (money collected from tenant)
+### Step B — Open the Daily Ledger
 
-This is used when a **tenant pays** rent, electricity, or maintenance charges.
-
-1. Employee taps **➕ Inflow**.
-2. Fills the form:
-   - **Date** (defaults to today)
-   - **Amount (₹)** — what the tenant paid
-   - **Type** — one of:
-     - `rent`
-     - `electricity`
-     - `maintenance`
-     - `deposit`
-     - `other`
-   - **Building** — pick the building
-   - **Apartment / Unit** — pick the unit (once building is selected)
-   - **Description** — optional note
-3. If there is a **pending invoice** for that unit, a **teal preview box** appears showing:
-   - Which invoice will be auto-settled
-   - Amount due
-   - How many other invoices are pending
-4. Employee taps **Save Entry**.
-
-**What the app does automatically:**
-
-- Writes a new document in the `dailyLedger` Firestore collection.
-- If the entry is `inflow` **and** the category is `rent / electricity / maintenance` **and** a unit is selected **and** that unit has a pending invoice:
-  - Applies the payment to the **oldest pending invoice** for that unit.
-  - If amount covers the full remaining due → invoice marked **paid** (`status = "paid"`, `paidAt` timestamp added).
-  - If amount is less → invoice keeps `status = "unpaid"` but `amountPaid` is incremented (partial payment).
-  - Adds a matching row in the `ledger` collection so it shows up under the Tenant's payment history.
-- Employee sees a confirmation:
-  - ✅ *"Invoice settled"* on full payment
-  - 💵 *"Partial payment ₹X applied. Remaining ₹Y"* on partial payment
+1. Employee taps **📓 Daily** tab.
+2. Screen shows:
+   - **💳 Collect →** (jumps to Collections) and **➖ Outflow**
+   - View toggle: **📅 Daily** / **🗓 Monthly**
+   - Date/month picker
+   - Building filter
+   - Totals: Inflow / Outflow / Net, plus inflow split into **💵 Cash in hand** and **📱 UPI / Bank**
+3. Inflow rows created by Collections show their mode (e.g. `UPI · TXN-77`) and
+   **via Collections** instead of a Delete link — fix a wrong payment from
+   Collections, not here.
 
 ---
 
@@ -166,13 +141,12 @@ Result:
 Use this when the tenant hands over less than the full due.
 
 1. Tap 🟢 **✓ Settle**.
-2. In the modal, tap **Partial…** (or just start typing — the field is pre-filled
-   with the full due; overwrite it with the smaller amount received).
+2. In the modal, tap **Other amount…** and enter the smaller amount received.
 3. Enter mode + reference + note.
 4. Tap **Confirm**.
 
 Result:
-- Invoice stays in the pending list with `status: "partial"`, `amountPaid` set to
+- Invoice stays in the pending list with `status: "pending"`, `amountPaid` set to
   the received amount, and a **PARTIAL** badge shown on the card.
 - One row added to `ledger` with `type: "partial-payment"`.
 - The Settle button on the card flips to 🟠 **➕ Add Payment** for the next visit.
@@ -186,7 +160,7 @@ same invoice.
    Payment** button and a **PARTIAL** badge.
 2. Tap 🟠 **➕ Add Payment**.
 3. The modal opens with:
-   - **Partial** mode **auto-selected** (no need to tap it again).
+   - **Other amount** **auto-selected** (no need to tap it again).
    - A **Prior payments on this invoice** strip listing every earlier
      instalment with date, mode, reference, and amount — so you can verify
      what has already been collected before typing the new amount:
@@ -206,7 +180,7 @@ Result:
   reads the invoice's current `amountPaid` and adds the new receipt.
 - If the new total covers `totalAmount`, the invoice flips to `status: "paid"`
   and moves out of the pending list.
-- Otherwise it stays as `partial` and the card is still available for the next
+- Otherwise it stays `pending` and the card is still available for the next
   visit — repeat this step as many times as needed.
 - Each instalment creates its own `ledger` row, so the daily ledger and
   Ledger tab correctly reflect the day the cash actually came in — not the
@@ -220,20 +194,30 @@ Result:
 - **Reference field.** For UPI/bank, paste the txn id every time. It shows up
   in the *Prior payments* strip on the next visit, which is invaluable for
   reconciling with the bank statement.
-- **Auto-settle from Daily Ledger.** If you enter a Deposit on the **📓 Daily**
-  tab that matches a unit's outstanding invoice, the app will auto-settle it
-  and write the same `ledger` row automatically — the Collections tab and the
-  Daily tab are two doors into the same underlying logic.
+- **Several months at once, or extra money.** Enter the whole amount under
+  **Other amount…** (or tap **All N pending ₹…**). The selected invoice is
+  cleared first, then the tenant's other pending invoices oldest-first; any
+  remainder is kept as an **advance (credit)**. The modal previews this before
+  you save. Corporate (master-invoice) children are not included.
+- **No invoice yet?** Generate it from the **Meter** tab first, then record the
+  payment here.
 
 ---
 
 ### Monthly meter reading (once a month per unit)
 
-1. Employee opens **Meter** tab.
-2. Selects unit + billing month.
+The Meter tab works as a **meter round**: walk the building and enter readings one unit after another.
+
+1. Employee opens **Meter** tab and checks the **billing month**.
+2. The first unit still needing a reading for that month is already selected. Units are ordered by
+   building, then unit number, and a progress bar shows *"N of M done · Block A"*.
+   The **Pending / All units** toggle controls the list; ✓ marks units already billed.
 3. Enters current meter reading (or manual units consumed if the meter was replaced).
-4. App computes: `baseRent + (unitsConsumed × electricityRate) + carryForward` and creates an invoice in the `invoices` collection.
-5. That invoice will now show up in **Collections**, **🏘 Monthly**, and can be **auto-settled from the Daily Ledger** once the tenant pays.
+4. Taps **Save & next →**. The app computes `baseRent + (unitsConsumed × electricityRate) + carryForward`,
+   creates the invoice in `invoices`, shows a short confirmation, and moves to the next pending unit with
+   the reading field ready. **Skip →** moves on without saving (tenant not home); skipped units come
+   back round at the end.
+5. That invoice will now show up in **Collections**, **🏘 Monthly**, and is settled from **Collections** once the tenant pays.
 
 ### Monthly property overview
 
@@ -258,12 +242,11 @@ Result:
 
 | Action | Collection | Notable Fields |
 |--------|-----------|----------------|
-| Deposit entry | `dailyLedger` | `direction: "inflow"`, `category`, `unitId`, `amount`, `date` |
-| Deposit auto-settle | `invoices` (update) | `status`, `amountPaid`, `paidAt` |
-| Deposit auto-settle | `ledger` (add) | `invoiceId`, `amountPaid`, `transactionId: "DAILY_LEDGER_AUTOSETTLE"` |
+| Tenant payment (Collections) | `invoices` (update) | `status`, `amountPaid`, `paidAt`, `transactionId` |
+| Tenant payment (Collections) | `ledger` (add, one per invoice + `credit` for any advance) | `invoiceId`, `amountPaid`, `type`, `paymentMode`, `paymentReference` |
+| Tenant payment (Collections) | `dailyLedger` (add, one per payment) | `direction: "inflow"`, `amount`, `paymentMode`, `invoiceId` |
 | Expense entry | `dailyLedger` | `direction: "outflow"`, `category`, `workerName`, `hoursWorked`, `vendor`, `quantity` |
 | Meter reading | `invoices` | `unitId`, `currentReading`, `electricityCharge`, `totalAmount`, `billingPeriod` |
-| Manual collection | `invoices` + `ledger` | `status: "paid"`, `transactionId: "CASH_COLLECTED"` |
 | Long-lived expense | `expenses` | `amount`, `category`, `settled`, `settledAt` |
 | Allocated fund | `allocations` | `amount`, `date`, `note` |
 
@@ -275,7 +258,7 @@ At the end of each day the employee typically:
 
 1. Opens **📓 Daily** in **Daily view** for today's date.
 2. Confirms:
-   - Total **Inflow** matches cash collected.
+   - **💵 Cash in hand** matches the cash collected, and **📱 UPI / Bank** matches payments received digitally.
    - Total **Outflow** matches receipts / paid labour.
    - **Net** equals what should be handed over / retained.
 3. Opens **🏘 Monthly** briefly to see if any units still need collection.
@@ -291,11 +274,13 @@ Login (Google)
       ▼
 Employee Dashboard
       │
+      ├── Collections → ✓ Settle / ➕ Add Payment   (the only way to record a tenant payment)
+      │     ├── amount = balance → invoice PAID
+      │     ├── amount < balance → invoice PARTIAL
+      │     └── amount > balance → other pending invoices oldest-first, rest kept as advance
+      │              └── writes the inflow row to 📓 Daily Ledger
+      │
       ├── 📓 Daily Ledger
-      │     ├── ➕ Inflow  → Deposit entry
-      │     │        └── auto-settle matching invoice
-      │     │             ├── Full payment → invoice PAID
-      │     │             └── Partial     → invoice AMOUNT_PAID updated
       │     └── ➖ Outflow → Expense entry
       │              ├── labour  (worker, hours)
       │              └── material (qty, vendor)
@@ -323,4 +308,4 @@ Employee Dashboard
 
 ---
 
-*Last updated: 4 Sep 2026*
+*Last updated: 31 Oct 2026*

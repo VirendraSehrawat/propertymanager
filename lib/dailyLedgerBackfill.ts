@@ -18,7 +18,9 @@
  * Rows whose `transactionId` is `DAILY_LEDGER_AUTOSETTLE` are skipped: those
  * were produced by a manual Daily Ledger inflow entry, which ALREADY created
  * its own `dailyLedger` row at the time — backfilling would double-count the
- * cash.
+ * cash. Rows flagged `dailyLedgerConsolidated` are skipped for the same reason:
+ * a Collections payment larger than one invoice writes several ledger rows but
+ * a single consolidated `dailyLedger` row in the same batch.
  *
  * ── De-duplication ──────────────────────────────────────────────────────────
  * Any settlement already mirrored into `dailyLedger` (post Phase-8 fix, or a
@@ -43,6 +45,7 @@ export interface LedgerRowForBackfill {
     settledBy?: string;
     createdAt: string;
     deleted?: boolean;
+    dailyLedgerConsolidated?: boolean;
 }
 
 export interface MasterLedgerRowForBackfill extends LedgerRowForBackfill {
@@ -98,6 +101,7 @@ export function planLedgerBackfill(
         if (row.deleted) continue;
         if (!SINGLE_SETTLEMENT_TYPES.has(row.type)) continue;
         if (row.transactionId === DAILY_LEDGER_AUTOSETTLE_TXN) continue;
+        if (row.dailyLedgerConsolidated) continue;
         if (!row.invoiceId) continue;
         const amount = Math.max(0, Number(row.amountPaid) || 0);
         if (amount <= 0) continue;

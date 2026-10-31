@@ -1,17 +1,20 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { doc, getDoc, writeBatch, deleteField } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { computeRentPeriod, computeElectricityPeriod } from "@/lib/billingPeriods";
 import { carryForwardFromInvoices, carryForwardBreakdown, composeInvoiceTotal } from "@/lib/allocation";
 import { notifyInvoiceCreated } from "@/lib/notify";
+import { billingMonthLabel, buildMeterRound, nextPendingUnitId } from "@/lib/meterRound";
 import type { Unit, Invoice } from "@/types";
 
 interface MeterTabProps {
     occupiedUnits: Unit[];
     allInvoices: Invoice[];
     electricityRate: number;
+    /** Used to group and order the meter round by building. */
+    buildings?: { id: string; name: string }[];
 }
 
 /**
@@ -23,8 +26,12 @@ interface MeterTabProps {
  * All form state is local. Parent still owns the Firestore listeners for
  * `units` and `ledger`; this component only performs one-shot reads on
  * submit and a batched write.
+ *
+ * Works as a "meter round": units are ordered by building then unit number,
+ * the first unit still needing a reading for the billing month is selected
+ * automatically, and saving moves straight on to the next one.
  */
-export function MeterTab({ occupiedUnits, allInvoices, electricityRate }: MeterTabProps) {
+export function MeterTab({ occupiedUnits, allInvoices, electricityRate, buildings = [] }: MeterTabProps) {
     const [selectedMeterUnit, setSelectedMeterUnit] = useState("");
     const [currentReading, setCurrentReading] = useState("");
     const [previousReadingOverride, setPreviousReadingOverride] = useState("");
@@ -37,10 +44,46 @@ export function MeterTab({ occupiedUnits, allInvoices, electricityRate }: MeterT
         return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
     });
     const [isGeneratingInvoice, setIsGeneratingInvoice] = useState(false);
+    const [showAllUnits, setShowAllUnits] = useState(false);
+    // Units saved in this round whose invoice may not have reached the listener yet.
+    const [savedUnitIds, setSavedUnitIds] = useState<ReadonlySet<string>>(new Set());
+    const [toast, setToast] = useState<string | null>(null);
+    const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const readingInputRef = useRef<HTMLInputElement>(null);
+
+    const buildingNames = useMemo(() => Object.fromEntries(buildings.map((b) => [b.id, b.name])), [buildings]);
+    const round = buildMeterRound(occupiedUnits, allInvoices, billingMonth, buildingNames, savedUnitIds);
+    // An explicit pick wins; otherwise the round's first pending unit is active.
+    const activeUnitId = selectedMeterUnit && occupiedUnits.some((u) => u.id === selectedMeterUnit)
+        ? selectedMeterUnit
+        : nextPendingUnitId(round);
+    const activeStop = round.stops.find((s) => s.unit.id === activeUnitId);
+    const hasNextPending = nextPendingUnitId(round, activeUnitId) !== "";
+
+    const showToast = (text: string) => {
+        setToast(text);
+        if (toastTimer.current) clearTimeout(toastTimer.current);
+        toastTimer.current = setTimeout(() => setToast(null), 5000);
+    };
+
+    const resetReadingFields = () => {
+        setCurrentReading("");
+        setPreviousReadingOverride("");
+        setMeterChanged(false);
+        setManualUnitsConsumed("");
+        setManualUnitsReason("");
+        setNewMeterReading("");
+    };
+
+    const goToUnit = (unitId: string) => {
+        setSelectedMeterUnit(unitId);
+        resetReadingFields();
+        requestAnimationFrame(() => readingInputRef.current?.focus());
+    };
 
     const handleGenerateMeterInvoice = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!selectedMeterUnit || !billingMonth) return;
+        if (!activeUnitId || !billingMonth) return;
         if (!meterChanged && !currentReading) return;
         if (meterChanged && !manualUnitsConsumed) return;
 
@@ -64,7 +107,7 @@ export function MeterTab({ occupiedUnits, allInvoices, electricityRate }: MeterT
             )) return;
         }
 
-        const unit = occupiedUnits.find((u) => u.id === selectedMeterUnit);
+        const unit = occupiedUnits.find((u) => u.id === activeUnitId);
         if (!unit) return;
 
         const [year, month] = billingMonth.split("-");
@@ -145,20 +188,19 @@ export function MeterTab({ occupiedUnits, allInvoices, electricityRate }: MeterT
             // Fire-and-forget Telegram notification (admin + tenant if linked).
             notifyInvoiceCreated(invoiceId);
 
-            const cfMsg = carryForward !== 0 ? `\n${carryForward > 0 ? "⚠️ Previous Balance Due" : "✓ Advance / Credit"}: ${carryForward > 0 ? "+" : "−"}₹${Math.abs(carryForward).toLocaleString()}` : "";
-            const meterNote = meterChanged ? "\n⚠️ Meter was changed — units entered manually" : "";
-            const manualNote = manualOverrideNote ? `\n📝 Manual units: ${manualOverrideNote}` : "";
-            const rentP = computeRentPeriod(billingMonth, Number(unit.paymentDay) || undefined);
-            const elecP = computeElectricityPeriod(billingMonth);
-            alert(`Invoice generated for ${unit.unitNumber}!${meterNote}${manualNote}\n\n🏠 Rent (${rentP}): ₹${Number(unit.baseRent || 0).toLocaleString()}\n⚡ Electricity (${elecP}): ${unitsConsumed} units × ₹${effectiveRate} = ₹${electricityCharge.toLocaleString()}${cfMsg}\n─────────────\nTotal: ₹${totalAmount.toLocaleString()}`);
-
-            setSelectedMeterUnit("");
-            setCurrentReading("");
-            setPreviousReadingOverride("");
-            setMeterChanged(false);
-            setManualUnitsConsumed("");
-            setManualUnitsReason("");
-            setNewMeterReading("");
+            // Move straight on to the next unit still needing a reading.
+            const saved = new Set(savedUnitIds).add(unit.id);
+            const nextId = nextPendingUnitId(
+                buildMeterRound(occupiedUnits, allInvoices, billingMonth, buildingNames, saved),
+                unit.id,
+            );
+            const nextUnit = occupiedUnits.find((u) => u.id === nextId);
+            setSavedUnitIds(saved);
+            showToast(
+                `✅ ${unit.unitNumber}: ₹${totalAmount.toLocaleString()} invoice (${unitsConsumed} units)` +
+                (nextUnit ? ` · Next: ${nextUnit.unitNumber}` : " · Round complete 🎉"),
+            );
+            goToUnit(nextId);
         } catch (error) {
             console.error(error);
             alert("Failed to generate invoice.");
@@ -167,7 +209,13 @@ export function MeterTab({ occupiedUnits, allInvoices, electricityRate }: MeterT
         }
     };
 
-    const selectedUnit = occupiedUnits.find((x) => x.id === selectedMeterUnit);
+    const selectedUnit = activeStop?.unit;
+    const visibleStops = round.stops.filter((s) => showAllUnits || !s.done || s.unit.id === activeUnitId);
+    const stopsByBuilding = visibleStops.reduce<Record<string, typeof visibleStops>>((acc, stop) => {
+        (acc[stop.buildingName] = acc[stop.buildingName] || []).push(stop);
+        return acc;
+    }, {});
+    const roundLabel = billingMonthLabel(billingMonth);
 
     return (
         <div className="bg-white rounded-xl shadow-sm border border-purple-200 overflow-hidden">
@@ -195,14 +243,52 @@ export function MeterTab({ occupiedUnits, allInvoices, electricityRate }: MeterT
             </div>
 
             <form onSubmit={handleGenerateMeterInvoice} className="p-5 space-y-4">
+                {/* Round progress */}
+                <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 space-y-2">
+                    <div className="flex justify-between items-center gap-2 text-xs">
+                        <span className="font-bold text-purple-800">
+                            🚶 Meter round · {roundLabel}
+                        </span>
+                        <span className="font-bold text-purple-700">
+                            {round.doneCount} of {round.total} done{activeStop ? ` · ${activeStop.buildingName}` : ""}
+                        </span>
+                    </div>
+                    <div className="h-2 bg-purple-100 rounded-full overflow-hidden">
+                        <div className="h-full bg-purple-600 transition-all" style={{ width: `${round.total ? (round.doneCount / round.total) * 100 : 0}%` }} />
+                    </div>
+                    {round.total > 0 && round.doneCount === round.total && (
+                        <p className="text-xs text-green-700 font-medium">🎉 Every occupied unit has an invoice for {roundLabel}. Switch to <strong>All units</strong> to redo one.</p>
+                    )}
+                </div>
+
                 <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Select Unit</label>
-                    <select required value={selectedMeterUnit} onChange={(e) => { setSelectedMeterUnit(e.target.value); setPreviousReadingOverride(""); }} className="w-full px-3 py-2.5 border border-gray-300 rounded-lg">
-                        <option value="" disabled>Choose an occupied unit...</option>
-                        {occupiedUnits.map((u) => (
-                            <option key={u.id} value={u.id}>{u.unitNumber} — {u.tenantEmail || u.tenantName || "Tenant"} (Last: {u.lastMeterReading || 0})</option>
-                        ))}
-                    </select>
+                    <div className="flex justify-between items-center mb-1">
+                        <label htmlFor="meterUnit" className="block text-sm font-medium text-gray-700">Unit</label>
+                        <div className="flex text-[11px] font-bold rounded-md border border-gray-300 overflow-hidden">
+                            <button type="button" onClick={() => setShowAllUnits(false)} className={`px-2 py-1 ${!showAllUnits ? "bg-purple-600 text-white" : "bg-white text-gray-600"}`}>Pending</button>
+                            <button type="button" onClick={() => setShowAllUnits(true)} className={`px-2 py-1 ${showAllUnits ? "bg-purple-600 text-white" : "bg-white text-gray-600"}`}>All units</button>
+                        </div>
+                    </div>
+                    <div className="flex gap-2">
+                        <select id="meterUnit" required value={activeUnitId} onChange={(e) => goToUnit(e.target.value)} className="flex-1 min-w-0 px-3 py-2.5 border border-gray-300 rounded-lg">
+                            <option value="" disabled>{visibleStops.length ? "Choose a unit..." : "No units pending"}</option>
+                            {Object.entries(stopsByBuilding).map(([buildingName, stops]) => (
+                                <optgroup key={buildingName} label={buildingName}>
+                                    {stops.map(({ unit: u, done }) => (
+                                        <option key={u.id} value={u.id}>{done ? "✓ " : ""}{u.unitNumber} — {u.tenantName || u.tenantEmail || "Tenant"} (Last: {u.lastMeterReading || 0})</option>
+                                    ))}
+                                </optgroup>
+                            ))}
+                        </select>
+                        {hasNextPending && (
+                            <button type="button" onClick={() => goToUnit(nextPendingUnitId(round, activeUnitId))} className="shrink-0 px-3 py-2.5 border border-gray-300 rounded-lg text-sm font-bold text-gray-600 hover:bg-gray-50" title="Tenant not home? Come back to this unit later.">
+                                Skip →
+                            </button>
+                        )}
+                    </div>
+                    {activeStop?.done && (
+                        <p className="text-[11px] text-amber-700 mt-1">⚠️ {activeStop.unit.unitNumber} already has an invoice for {roundLabel} — saving will ask before overriding it.</p>
+                    )}
                 </div>
 
                 {selectedUnit && (
@@ -214,7 +300,7 @@ export function MeterTab({ occupiedUnits, allInvoices, electricityRate }: MeterT
 
                 <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Billing Month</label>
-                    <input type="month" required value={billingMonth} onChange={(e) => setBillingMonth(e.target.value)} className="w-full px-3 py-2.5 border border-gray-300 rounded-lg" />
+                    <input type="month" required value={billingMonth} onChange={(e) => { setBillingMonth(e.target.value); setSavedUnitIds(new Set()); goToUnit(""); }} className="w-full px-3 py-2.5 border border-gray-300 rounded-lg" />
                     {billingMonth && (() => {
                         const rp = computeRentPeriod(billingMonth, Number(selectedUnit?.paymentDay) || undefined);
                         const ep = computeElectricityPeriod(billingMonth);
@@ -231,7 +317,7 @@ export function MeterTab({ occupiedUnits, allInvoices, electricityRate }: MeterT
                     <label htmlFor="meterChanged" className="text-sm text-yellow-800 font-medium cursor-pointer">⚠️ Meter was changed / replaced</label>
                 </div>
 
-                {selectedMeterUnit && (
+                {selectedUnit && (
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Previous Month Reading</label>
                         <input type="number" min="0" value={previousReadingOverride || (selectedUnit?.lastMeterReading ?? "")} onChange={(e) => setPreviousReadingOverride(e.target.value)} className="w-full px-3 py-2.5 border border-gray-300 rounded-lg" placeholder="Auto-filled from system" />
@@ -243,7 +329,7 @@ export function MeterTab({ occupiedUnits, allInvoices, electricityRate }: MeterT
                     <>
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">Current Month Reading *</label>
-                            <input type="number" required min="0" value={currentReading} onChange={(e) => setCurrentReading(e.target.value)} className="w-full px-3 py-2.5 border border-gray-300 rounded-lg" placeholder="e.g. 1250" />
+                            <input ref={readingInputRef} type="number" inputMode="numeric" required min="0" value={currentReading} onChange={(e) => setCurrentReading(e.target.value)} className="w-full px-3 py-2.5 border border-gray-300 rounded-lg" placeholder="e.g. 1250" />
                         </div>
 
                         <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 space-y-3">
@@ -346,10 +432,17 @@ export function MeterTab({ occupiedUnits, allInvoices, electricityRate }: MeterT
                     );
                 })()}
 
-                <button type="submit" disabled={isGeneratingInvoice} className="w-full py-3 bg-purple-600 text-white rounded-lg font-bold hover:bg-purple-700 transition shadow-sm disabled:bg-purple-400">
-                    {isGeneratingInvoice ? "Generating..." : "Generate Invoice"}
+                <button type="submit" disabled={isGeneratingInvoice || !selectedUnit} className="w-full py-3 bg-purple-600 text-white rounded-lg font-bold hover:bg-purple-700 transition shadow-sm disabled:bg-purple-400">
+                    {isGeneratingInvoice ? "Generating..." : hasNextPending && !activeStop?.done ? "Save & next →" : "Generate Invoice"}
                 </button>
             </form>
+
+            {toast && (
+                <div role="status" className="fixed bottom-4 left-4 right-4 sm:left-auto sm:right-4 sm:max-w-sm z-50 bg-gray-900 text-white text-sm rounded-lg shadow-lg px-4 py-3 flex items-start gap-3">
+                    <span className="flex-1">{toast}</span>
+                    <button type="button" onClick={() => setToast(null)} className="text-gray-400 hover:text-white" aria-label="Dismiss">✕</button>
+                </div>
+            )}
         </div>
     );
 }

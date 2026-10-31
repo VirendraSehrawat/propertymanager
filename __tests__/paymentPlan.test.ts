@@ -11,6 +11,7 @@ import { describe, it, expect } from "vitest";
 import {
     buildSettlePlan,
     buildInflowPlan,
+    buildCollectionPaymentPlan,
     buildMasterSettlePlan,
     assertPlanInvariant,
     countPlanWrites,
@@ -337,5 +338,74 @@ describe("countPlanWrites", () => {
         });
         // 2 patches + 2 ledger rows + 1 master + 1 daily = 6
         expect(countPlanWrites(plan)).toBe(6);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// buildCollectionPaymentPlan — Collections Record Payment with overpayment
+// ---------------------------------------------------------------------------
+
+describe("buildCollectionPaymentPlan", () => {
+    const sel = {
+        id: "sel", unitId: "u1", unitNumber: "101", tenantEmail: "t@example.com",
+        billingPeriod: "October 2026", totalAmount: 6000, amountPaid: 1000,
+        baseRent: 5000, electricityCharge: 1000,
+    };
+    const other = (id: string, created: string, total: number) => ({
+        id, unitId: "u1", unitNumber: "101", tenantEmail: "t@example.com",
+        totalAmount: total, amountPaid: 0, billingPeriod: created, status: "unpaid", createdAt: created,
+    });
+
+    it("is identical to buildSettlePlan when the amount fits the selected invoice", () => {
+        const input = { invoice: sel, otherPending: [other("o1", "2026-08-01", 5000)], received: 3000, mode: "cash" as const, now: NOW };
+        const { otherPending: _unused, ...settleInput } = input;
+        void _unused;
+        expect(buildCollectionPaymentPlan(input)).toEqual(buildSettlePlan(settleInput));
+    });
+
+    it("clears the selected invoice first, waterfalls the rest oldest-first, and keeps leftover as credit", () => {
+        const plan = buildCollectionPaymentPlan({
+            invoice: sel,
+            otherPending: [other("newer", "2026-09-01", 4000), other("older", "2026-08-01", 3000)],
+            received: 13000, mode: "upi", reference: "TXN-9", note: "three months", settledBy: "emp@x", now: NOW,
+        });
+        // 5,000 clears `sel`; 8,000 extra → older 3,000, newer 4,000, 1,000 advance.
+        expect(plan.invoicePatches.map(p => [p.invoiceId, p.patch.amountPaid])).toEqual([
+            ["sel", 6000], ["older", 3000], ["newer", 4000],
+        ]);
+        expect(plan.ledgerRows.map(r => [r.type, r.amountPaid])).toEqual([
+            ["payment", 5000], ["payment", 3000], ["payment", 4000], ["credit", 1000],
+        ]);
+        for (const r of plan.ledgerRows) {
+            expect(r.transactionId).toBe("UPI:TXN-9");
+            expect(r.paymentMode).toBe("upi");
+            expect(r.paymentNote).toBe("three months");
+            expect(r.dailyLedgerConsolidated).toBe(true);
+        }
+        // One daily-ledger inflow for the whole amount handed over.
+        expect(plan.dailyLedgerRow!.data).toMatchObject({
+            direction: "inflow", amount: 13000, invoiceId: "sel", paymentMode: "upi",
+            invoiceIds: ["sel", "older", "newer"],
+        });
+        expectInvariantHolds(plan);
+    });
+
+    it("leaves the next invoice partly paid when the extra doesn't cover it", () => {
+        const plan = buildCollectionPaymentPlan({
+            invoice: sel, otherPending: [other("o1", "2026-08-01", 5000)],
+            received: 7000, mode: "cash", now: NOW,
+        });
+        expect(plan.ledgerRows.map(r => r.type)).toEqual(["payment", "partial-payment"]);
+        expect(plan.invoicePatches[1].patch).toEqual({ amountPaid: 2000 });
+        expect(plan.ledgerRows[1].balance).toBe(-3000);
+        expectInvariantHolds(plan);
+    });
+
+    it("records the whole excess as an advance when nothing else is pending", () => {
+        const plan = buildCollectionPaymentPlan({
+            invoice: sel, otherPending: [], received: 8000, mode: "cash", now: NOW,
+        });
+        expect(plan.ledgerRows.map(r => [r.type, r.amountPaid])).toEqual([["payment", 5000], ["credit", 3000]]);
+        expect(plan.dailyLedgerRow!.data.amount).toBe(8000);
     });
 });

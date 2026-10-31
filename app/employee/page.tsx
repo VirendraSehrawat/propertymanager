@@ -660,7 +660,7 @@ export default function EmployeeDashboard() {
 
                 {/* METER READING TAB */}
                 {activeTab === "meter" && (
-                    <MeterTab occupiedUnits={occupiedUnits} allInvoices={allInvoices} electricityRate={electricityRate} />
+                    <MeterTab occupiedUnits={occupiedUnits} allInvoices={allInvoices} electricityRate={electricityRate} buildings={buildings} />
                 )}
 
                 {/* LEDGER TAB */}
@@ -670,7 +670,7 @@ export default function EmployeeDashboard() {
 
                 {/* DAILY LEDGER TAB */}
                 {activeTab === "daily" && (
-                    <DailyLedgerTab entries={dailyLedgerEntries} buildings={buildings} allUnits={allUnits} allInvoices={allInvoices} currentUserEmail={user?.email || ""} />
+                    <DailyLedgerTab entries={dailyLedgerEntries} buildings={buildings} allUnits={allUnits} currentUserEmail={user?.email || ""} onGoToCollections={() => setActiveTab("collections")} />
                 )}
 
                 {/* MONTHLY OVERVIEW TAB */}

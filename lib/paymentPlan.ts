@@ -62,6 +62,12 @@ export interface LedgerRowDraft {
     paymentReference?: string | null;
     paymentNote?: string | null;
     category?: string | null;
+    /**
+     * True when this row is one of several from a single payment that share ONE
+     * consolidated `dailyLedger` inflow row. The backfill skips these, because
+     * their per-row dedupe keys can't match the consolidated row.
+     */
+    dailyLedgerConsolidated?: boolean;
     /** Present for master-child rows so they roll up correctly. */
     masterInvoiceId?: string;
     /** Which logical collection the row belongs to. */
@@ -234,6 +240,97 @@ export function buildSettlePlan(input: SettlePlanInput): PaymentPlan {
         invoiceCreates: [],
         invoicePatches: [{ invoiceId: inv.id, patch }],
         ledgerRows: [ledgerRow],
+        dailyLedgerRow,
+    };
+    assertPlanInvariant(plan);
+    return plan;
+}
+
+// ---------------------------------------------------------------------------
+// 1b. Collections → Record Payment, when the tenant hands over MORE than the
+//     selected invoice's balance
+// ---------------------------------------------------------------------------
+
+export interface CollectionPaymentPlanInput extends SettlePlanInput {
+    /** The unit's OTHER pending invoices (not the selected one, not grouped under a master). */
+    otherPending: InflowInvoice[];
+}
+
+/**
+ * Build the plan for a Collections "Record Payment".
+ *
+ * Up to the selected invoice's balance this is exactly {@link buildSettlePlan}.
+ * Anything beyond it clears the selected invoice first, then waterfalls across
+ * the unit's other pending invoices oldest-first, and any remainder is kept as
+ * a tenant advance (`credit` row). The cash is mirrored to the Daily Ledger as
+ * ONE inflow row for the full amount handed over.
+ */
+export function buildCollectionPaymentPlan(input: CollectionPaymentPlanInput): PaymentPlan {
+    const { invoice: inv, received, mode } = input;
+    const remaining = Math.max(0, Number(inv.totalAmount || 0) - Number(inv.amountPaid || 0));
+    if (received <= remaining) return buildSettlePlan(input);
+
+    const now = input.now || new Date().toISOString();
+    const reference = (input.reference || "").trim();
+    const note = (input.note || "").trim();
+    const settledBy = input.settledBy || "employee";
+    const category = input.category || "rent";
+    const txnId = buildTransactionId(mode, reference);
+
+    // 1. Clear the selected invoice in full.
+    const head = remaining > 0
+        ? buildSettlePlan({ ...input, received: remaining, now, settledBy, category })
+        : { invoiceCreates: [], invoicePatches: [], ledgerRows: [] } as PaymentPlan;
+
+    // 2. Waterfall the excess across the unit's other pending invoices; any
+    //    leftover becomes a credit row.
+    const tail = buildInflowPlan({
+        amount: received - remaining,
+        pool: input.otherPending.filter((i) => i.id !== inv.id),
+        unitId: inv.unitId,
+        category,
+        transactionId: txnId,
+        mode,
+        reference,
+        settledBy,
+        now,
+        tenantEmail: inv.tenantEmail || "",
+        unitNumber: inv.unitNumber || "",
+    });
+
+    const ledgerRows = [...head.ledgerRows, ...tail.ledgerRows].map((r) => ({
+        ...r,
+        paymentNote: note || null,
+        dailyLedgerConsolidated: true,
+    }));
+
+    const periods = ledgerRows.filter((r) => r.type !== "credit").map((r) => r.billingPeriod);
+    const advance = ledgerRows.filter((r) => r.type === "credit").reduce((s, r) => s + r.amountPaid, 0);
+    const dailyLedgerRow: DailyLedgerRowDraft = {
+        data: {
+            date: now.slice(0, 10),
+            direction: "inflow",
+            category,
+            amount: received,
+            description: `${inv.unitNumber || "Unit"} · ${periods.join(", ") || "Advance"}${periods.length && advance > 0 ? ` + ₹${advance.toLocaleString()} advance` : ""}`,
+            unitId: inv.unitId || "",
+            unitNumber: inv.unitNumber || "",
+            tenantEmail: inv.tenantEmail || "",
+            invoiceId: inv.id,
+            invoiceIds: ledgerRows.map((r) => r.invoiceId).filter(Boolean),
+            paymentMode: mode,
+            paymentReference: reference || null,
+            note: note || null,
+            recordedBy: settledBy,
+            createdBy: settledBy,
+            createdAt: now,
+        },
+    };
+
+    const plan: PaymentPlan = {
+        invoiceCreates: [],
+        invoicePatches: [...head.invoicePatches, ...tail.invoicePatches],
+        ledgerRows,
         dailyLedgerRow,
     };
     assertPlanInvariant(plan);

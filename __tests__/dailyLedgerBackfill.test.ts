@@ -62,6 +62,12 @@ describe("planLedgerBackfill", () => {
         expect(plan).toHaveLength(0);
     });
 
+    it("skips rows that share a consolidated daily-ledger row (Collections overpayment)", () => {
+        const consolidated = { ...baseRow, id: "l5", dailyLedgerConsolidated: true };
+        const plan = planLedgerBackfill([consolidated], new Set(), NOW);
+        expect(plan).toHaveLength(0);
+    });
+
     it("skips credit rows (not an invoice settlement)", () => {
         const credit = { ...baseRow, id: "l4", type: "credit", invoiceId: "" };
         const plan = planLedgerBackfill([credit], new Set(), NOW);

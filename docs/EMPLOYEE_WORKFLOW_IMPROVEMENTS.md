@@ -36,6 +36,8 @@ where in the code it applies. Effort is marked **S** (under a day), **M** (a few
 ## 1. Collecting money
 
 ### 1.1 Capture payment mode on Daily Ledger inflows — S
+> ✅ **Done (31 Oct 2026).** Daily totals now split inflows into Cash in hand and UPI / Bank. With 1.3, all inflows (and their mode) come from Collections.
+
 **Problem.** The Collections settle modal records `paymentMode` (Cash/UPI/Bank) and a reference,
 but the **📓 Daily → ➕ Inflow** form does not (`components/employee/DailyLedgerTab.tsx`,
 `handleSubmit`). `MANAGER_ACTIONS.md` §8 tells the manager to "match the Inflow total with the
@@ -47,6 +49,8 @@ cash you actually have in hand". If UPI and cash are mixed into one inflow total
 - In the Daily view, split the Inflow total into **Cash in hand** and **Digital**.
 
 ### 1.2 Fix the "Collected Today" KPI — S
+> ✅ **Done (31 Oct 2026).** Computed from `ledger` + today's `ledgerEntries` rows by local date.
+
 **Problem.** In `HomeTab.tsx`, today's collections are computed from invoices whose `status === "paid"`
 and `paidAt` is today, summing `totalAmount`. That means:
 - partial payments received today are **not counted**;
@@ -57,6 +61,8 @@ and `paidAt` is today, summing `totalAmount`. That means:
 (IST) date, and reuse the same helper in the Daily tab totals so the two screens always agree.
 
 ### 1.3 One clear path for recording a tenant payment — M
+> ✅ **Done (31 Oct 2026), Collections only.** Daily ➕ Inflow was removed. Collections' Record Payment now accepts more than the invoice balance: it waterfalls across the unit's other pending invoices and keeps any remainder as an advance. Auto-creating a missing invoice was deliberately dropped — generate it from Meter first.
+
 **Problem.** A tenant payment can be recorded in two places that behave differently:
 
 | | 📓 Daily → Inflow | Collections → Settle |
@@ -100,6 +106,8 @@ or they can be looked up via `unitId`).
 ## 2. Meter readings and invoicing
 
 ### 2.1 "Meter round" mode — M
+> ✅ **Done (31 Oct 2026)**, except draft readings (not built). The Meter tab opens on the first pending unit, ordered by building then unit number, shows *"N of M done · Building"*, and **Save & next** / **Skip** move through the pending units with a toast instead of an alert.
+
 **Problem.** Monthly meter entry is one dropdown → one form → a blocking `alert()` → pick the next unit
 from the dropdown again. The dropdown lists **all** occupied units, including ones already billed this
 month, so the employee has to remember where they are.

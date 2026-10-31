@@ -1,14 +1,12 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { collection, doc, updateDoc, setDoc, writeBatch } from "firebase/firestore";
+import { collection, doc, updateDoc, writeBatch } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { COL } from "@/lib/collections";
 import { Modal } from "@/components/ui";
 import { useUploadWithProgress, UploadProgressBar } from "@/lib/useUpload";
-import { allocateLumpSum, splitInflowByMode, PAYMENT_MODES, type PaymentMode } from "@/lib/payments";
-import { buildInflowPlan, type InflowInvoice } from "@/lib/paymentPlan";
-import { commitPaymentPlan } from "@/lib/commitPaymentPlan";
+import { splitInflowByMode } from "@/lib/payments";
 
 interface DailyLedgerEntry {
     id: string;
@@ -33,35 +31,40 @@ interface DailyLedgerEntry {
     expenseId?: string;
     paymentMode?: string;
     paymentReference?: string | null;
+    /** Set on inflows written by a Collections payment. */
+    invoiceId?: string;
 }
 
 interface Building { id: string; name: string; }
 interface Unit { id: string; unitNumber: string; buildingId?: string; status?: string; tenantName?: string; tenantEmail?: string; baseRent?: number; lastMeterReading?: number; electricityRate?: number; }
-interface Invoice { id: string; unitId: string; unitNumber?: string; tenantEmail?: string; totalAmount?: number; amountPaid?: number; billingPeriod?: string; status?: string; }
 
 interface Props {
     entries: DailyLedgerEntry[];
     buildings: Building[];
     allUnits: Unit[];
-    allInvoices?: Invoice[];
     currentUserEmail?: string;
+    /** Opens the Collections tab — the only place tenant payments are recorded. */
+    onGoToCollections?: () => void;
 }
 
-const INFLOW_CATEGORIES = ["rent", "electricity", "maintenance", "deposit", "other"];
 const OUTFLOW_CATEGORIES = ["labour", "material", "utilities", "repair", "other"];
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const currentMonthISO = () => new Date().toISOString().slice(0, 7);
 
-export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [], currentUserEmail }: Props) {
+/**
+ * Daily cash book. Outflows (labour, material, …) are entered here and mirrored
+ * to Expenses. Inflows are NOT entered here: tenant payments are recorded in
+ * Collections, which writes the matching inflow row to this ledger.
+ */
+export function DailyLedgerTab({ entries, buildings, allUnits, currentUserEmail, onGoToCollections }: Props) {
     const [viewMode, setViewMode] = useState<"daily" | "monthly">("daily");
     const [selectedDate, setSelectedDate] = useState(todayISO());
     const [selectedMonth, setSelectedMonth] = useState(currentMonthISO());
     const [buildingFilter, setBuildingFilter] = useState("");
 
     const [isModalOpen, setIsModalOpen] = useState(false);
-    const [direction, setDirection] = useState<"inflow" | "outflow">("inflow");
-    const [category, setCategory] = useState("rent");
+    const [category, setCategory] = useState(OUTFLOW_CATEGORIES[0]);
     const [buildingId, setBuildingId] = useState("");
     const [unitId, setUnitId] = useState("");
     const [amount, setAmount] = useState("");
@@ -72,23 +75,18 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
     const [quantity, setQuantity] = useState("");
     const [vendor, setVendor] = useState("");
     const [receiptFile, setReceiptFile] = useState<File | null>(null);
-    const [paymentMode, setPaymentMode] = useState<PaymentMode>("cash");
-    const [paymentReference, setPaymentReference] = useState("");
     const [isSaving, setIsSaving] = useState(false);
     const { uploadFile, uploadProgress, isUploading, resetProgress } = useUploadWithProgress();
 
     const resetForm = () => {
-        setDirection("inflow"); setCategory("rent"); setBuildingId(""); setUnitId("");
+        setCategory(OUTFLOW_CATEGORIES[0]); setBuildingId(""); setUnitId("");
         setAmount(""); setDescription(""); setEntryDate(todayISO());
         setWorkerName(""); setHoursWorked(""); setQuantity(""); setVendor("");
         setReceiptFile(null); resetProgress();
-        setPaymentMode("cash"); setPaymentReference("");
     };
 
-    const openModal = (dir: "inflow" | "outflow") => {
+    const openModal = () => {
         resetForm();
-        setDirection(dir);
-        setCategory(dir === "inflow" ? INFLOW_CATEGORIES[0] : OUTFLOW_CATEGORIES[0]);
         setIsModalOpen(true);
     };
 
@@ -97,13 +95,6 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
         [allUnits, buildingId]
     );
 
-    // Find pending invoices for the selected unit
-    const pendingInvoicesForUnit = useMemo(() => {
-        if (!unitId) return [];
-        return allInvoices
-            .filter(inv => inv.unitId === unitId && (inv.status === "unpaid" || inv.status === "pending"))
-            .sort((a, b) => new Date(a.billingPeriod || "").getTime() - new Date(b.billingPeriod || "").getTime());
-    }, [unitId, allInvoices]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -124,7 +115,7 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
             const unit = allUnits.find(u => u.id === unitId);
             const payload: Record<string, unknown> = {
                 date: entryDate || todayISO(),
-                direction,
+                direction: "outflow",
                 category,
                 buildingId: buildingId || "",
                 buildingName: bldg?.name || "General",
@@ -137,143 +128,39 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
                 createdBy: currentUserEmail || "",
                 createdAt: new Date().toISOString(),
             };
-            if (direction === "outflow" && category === "labour") {
+            if (category === "labour") {
                 payload.workerName = workerName || "";
                 payload.hoursWorked = hoursWorked ? Number(hoursWorked) : 0;
             }
-            if (direction === "outflow" && category === "material") {
+            if (category === "material") {
                 payload.quantity = quantity ? Number(quantity) : 0;
                 payload.vendor = vendor || "";
             }
-            if (direction === "inflow") {
-                payload.paymentMode = paymentMode;
-                payload.paymentReference = paymentMode !== "cash" ? paymentReference.trim() || null : null;
-            }
-            const ledgerRef = doc(collection(db, COL.dailyLedger));
 
-            // Merge: an "outflow" in the Daily Ledger is the same thing as an
-            // Expense. Mirror it to the `expenses` collection so it appears in
-            // the Expenses tab, fund summary and reports. Both docs are linked
+            // An outflow in the Daily Ledger is the same thing as an Expense.
+            // Mirror it to the `expenses` collection so it appears in the
+            // Expenses tab, fund summary and reports. Both docs are linked
             // via `expenseId` / `dailyLedgerId` so soft-delete cascades.
             // Pre-minted ids let the dailyLedger row, the expense mirror, and
             // the back-link commit in ONE atomic batch (Phase 4, Unit A).
-            if (direction === "outflow") {
-                const expenseRef = doc(collection(db, COL.expenses));
-                const batch = writeBatch(db);
-                batch.set(ledgerRef, { ...payload, expenseId: expenseRef.id });
-                batch.set(expenseRef, {
-                    amount: Number(amount),
-                    category,
-                    description: description || category,
-                    date: entryDate || todayISO(),
-                    buildingId: buildingId || "",
-                    buildingName: bldg?.name || "General",
-                    dailyLedgerId: ledgerRef.id,
-                    source: "dailyLedger",
-                    ...(receiptUrl ? { receiptUrl } : {}),
-                    createdBy: currentUserEmail || "",
-                    createdAt: new Date().toISOString(),
-                });
-                await batch.commit();
-            } else {
-                await setDoc(ledgerRef, payload);
-            }
-
-            // Auto-settle matching invoice(s): inflow + specific unit + settlement-eligible category.
-            // A single lump-sum inflow can clear MULTIPLE pending invoices
-            // oldest-first via `allocateLumpSum` (see lib/payments). If no
-            // invoice exists yet (manager collected before the monthly bill was
-            // generated), we auto-create one for the current month first. Any
-            // cash left after every invoice is cleared is recorded as a tenant
-            // credit so it is never lost.
-            const settleCategories = ["rent", "electricity", "maintenance"];
-            if (
-                direction === "inflow" &&
-                unitId &&
-                settleCategories.includes(category)
-            ) {
-                const paying = Number(amount);
-
-                // Build the pool to waterfall across. When nothing is pending,
-                // prepare an auto-created invoice draft (with a pre-minted id)
-                // so it can be created AND settled inside the same atomic batch.
-                const pool: InflowInvoice[] = pendingInvoicesForUnit;
-                let autoInvoice: Parameters<typeof buildInflowPlan>[0]["autoInvoice"];
-                if (pool.length === 0) {
-                    const baseRent = Number(unit?.baseRent || 0);
-                    const inferredElectricity = category === "electricity" ? paying : 0;
-                    const totalAmount = category === "rent"
-                        ? Math.max(baseRent, paying)
-                        : category === "electricity"
-                            ? baseRent + inferredElectricity
-                            : paying; // maintenance → treat whole amount as base
-                    const monthName = new Date((entryDate || todayISO()) + "T00:00:00").toLocaleString("default", { month: "long", year: "numeric" });
-                    // Mint the invoice id client-side so the create + settle +
-                    // ledger row all land in one batch.
-                    const newInvId = doc(collection(db, COL.invoices)).id;
-                    autoInvoice = {
-                        invoiceId: newInvId,
-                        totalAmount,
-                        billingPeriod: monthName,
-                        data: {
-                            unitId,
-                            unitNumber: unit?.unitNumber || "",
-                            tenantEmail: unit?.tenantEmail || "",
-                            baseRent,
-                            electricityCharge: inferredElectricity,
-                            totalAmount,
-                            billingPeriod: monthName,
-                            status: "unpaid",
-                            isCustom: false,
-                            autoCreated: true,
-                            autoCreatedReason: `Auto-created from Daily Ledger inflow (${category})`,
-                            transactionId: "",
-                            createdBy: currentUserEmail || "",
-                            createdAt: new Date().toISOString(),
-                        },
-                    };
-                }
-
-                // Build the full write-set (optional invoice create + per-invoice
-                // patches + per-invoice ledger rows + leftover credit) and commit
-                // it atomically. See docs/ATOMIC_TRANSACTIONS_PLAN.md (Phase 4).
-                const nowIso = new Date().toISOString();
-                const plan = buildInflowPlan({
-                    amount: paying,
-                    pool,
-                    unitId,
-                    category,
-                    mode: paymentMode,
-                    reference: paymentReference,
-                    now: nowIso,
-                    tenantEmail: unit?.tenantEmail || "",
-                    unitNumber: unit?.unitNumber || "",
-                    autoInvoice,
-                });
-                await commitPaymentPlan(db, plan);
-
-                // Summarise what happened for the user (derived from the plan's
-                // ledger rows so UI and persistence share one source of truth).
-                const settledLabels: string[] = [];
-                const partialLabels: string[] = [];
-                let creditAmount = 0;
-                for (const row of plan.ledgerRows) {
-                    if (row.type === "payment") {
-                        settledLabels.push(`${row.billingPeriod}`);
-                    } else if (row.type === "partial-payment") {
-                        const remaining = Math.max(0, -Number(row.balance || 0));
-                        partialLabels.push(`${row.billingPeriod} (₹${remaining.toLocaleString()} left)`);
-                    } else if (row.type === "credit") {
-                        creditAmount += Number(row.amountPaid || 0);
-                    }
-                }
-
-                const parts: string[] = [];
-                if (settledLabels.length) parts.push(`✅ Settled: ${settledLabels.join(", ")}`);
-                if (partialLabels.length) parts.push(`💵 Partial: ${partialLabels.join(", ")}`);
-                if (creditAmount > 0) parts.push(`🪙 Credit ₹${creditAmount.toLocaleString()} recorded as advance`);
-                if (parts.length) alert(parts.join("\n"));
-            }
+            const ledgerRef = doc(collection(db, COL.dailyLedger));
+            const expenseRef = doc(collection(db, COL.expenses));
+            const batch = writeBatch(db);
+            batch.set(ledgerRef, { ...payload, expenseId: expenseRef.id });
+            batch.set(expenseRef, {
+                amount: Number(amount),
+                category,
+                description: description || category,
+                date: entryDate || todayISO(),
+                buildingId: buildingId || "",
+                buildingName: bldg?.name || "General",
+                dailyLedgerId: ledgerRef.id,
+                source: "dailyLedger",
+                ...(receiptUrl ? { receiptUrl } : {}),
+                createdBy: currentUserEmail || "",
+                createdAt: new Date().toISOString(),
+            });
+            await batch.commit();
 
             setIsModalOpen(false);
             resetForm();
@@ -336,11 +223,13 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
                 <div className="bg-teal-50 px-5 py-4 border-b border-teal-200 flex justify-between items-center flex-wrap gap-2">
                     <div>
                         <h2 className="text-lg font-bold text-teal-800">📓 Daily Ledger</h2>
-                        <p className="text-xs text-teal-600 mt-0.5">Log inflows (rent, electricity, maintenance) & outflows (labour, material)</p>
+                        <p className="text-xs text-teal-600 mt-0.5">Log outflows (labour, material). Inflows appear here when payments are recorded in Collections.</p>
                     </div>
                     <div className="flex gap-2">
-                        <button onClick={() => openModal("inflow")} className="text-sm bg-green-600 text-white px-3 py-2 rounded-lg font-bold hover:bg-green-700">+ Inflow</button>
-                        <button onClick={() => openModal("outflow")} className="text-sm bg-red-600 text-white px-3 py-2 rounded-lg font-bold hover:bg-red-700">− Outflow</button>
+                        {onGoToCollections && (
+                            <button onClick={onGoToCollections} className="text-sm bg-white text-green-700 border border-green-300 px-3 py-2 rounded-lg font-bold hover:bg-green-50">💳 Collect →</button>
+                        )}
+                        <button onClick={openModal} className="text-sm bg-red-600 text-white px-3 py-2 rounded-lg font-bold hover:bg-red-700">− Outflow</button>
                     </div>
                 </div>
 
@@ -430,7 +319,7 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
 
             {/* Entry Modal */}
             <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)}>
-                <h3 className="text-lg font-bold text-gray-800">{direction === "inflow" ? "➕ Inflow Entry" : "➖ Outflow Entry"}</h3>
+                <h3 className="text-lg font-bold text-gray-800">➖ Outflow Entry</h3>
                 <form onSubmit={handleSubmit} className="space-y-3 mt-4">
                     <div className="grid grid-cols-2 gap-3">
                         <div>
@@ -446,38 +335,12 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
                     <div>
                         <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Type</label>
                         <select value={category} onChange={(e) => setCategory(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm capitalize">
-                            {(direction === "inflow" ? INFLOW_CATEGORIES : OUTFLOW_CATEGORIES).map(c => (
+                            {OUTFLOW_CATEGORIES.map(c => (
                                 <option key={c} value={c} className="capitalize">{c}</option>
                             ))}
                         </select>
                     </div>
 
-                    {direction === "inflow" && (
-                        <div>
-                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Payment Mode</label>
-                            <div className="grid grid-cols-5 gap-1">
-                                {PAYMENT_MODES.map((m) => (
-                                    <button
-                                        key={m}
-                                        type="button"
-                                        onClick={() => setPaymentMode(m)}
-                                        className={`px-2 py-2 rounded-md text-xs font-bold border transition ${paymentMode === m ? "bg-green-600 text-white border-green-700" : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50"}`}
-                                    >
-                                        {m.toUpperCase()}
-                                    </button>
-                                ))}
-                            </div>
-                            {paymentMode !== "cash" && (
-                                <input
-                                    type="text"
-                                    value={paymentReference}
-                                    onChange={(e) => setPaymentReference(e.target.value)}
-                                    placeholder={paymentMode === "upi" ? "UPI Txn ID (optional)" : paymentMode === "bank" ? "Bank Ref No. (optional)" : paymentMode === "cheque" ? "Cheque No. (optional)" : "Reference (optional)"}
-                                    className="mt-2 w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
-                                />
-                            )}
-                        </div>
-                    )}
 
                     <div>
                         <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Building</label>
@@ -499,78 +362,8 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
                         </div>
                     )}
 
-                    {/* Pending invoice hint for auto-settle */}
-                    {direction === "inflow" && unitId && ["rent", "electricity", "maintenance"].includes(category) && pendingInvoicesForUnit.length > 0 && (
-                        <div className="bg-teal-50 border border-teal-200 rounded-lg p-3 text-xs">
-                            <p className="font-bold text-teal-800 mb-1">💡 Auto-settle preview</p>
-                            {(() => {
-                                const paying = Number(amount) || 0;
-                                if (paying <= 0) {
-                                    return (
-                                        <>
-                                            <p className="text-teal-700">Enter an amount to see how it clears pending invoices (oldest-first):</p>
-                                            <p className="mt-1 text-teal-900 font-medium">{pendingInvoicesForUnit[0].billingPeriod} — ₹{Math.max(0, Number(pendingInvoicesForUnit[0].totalAmount || 0) - Number(pendingInvoicesForUnit[0].amountPaid || 0)).toLocaleString()} due</p>
-                                            {pendingInvoicesForUnit.length > 1 && (
-                                                <p className="mt-0.5 text-[10px] text-teal-600">({pendingInvoicesForUnit.length - 1} more pending)</p>
-                                            )}
-                                        </>
-                                    );
-                                }
-                                const preview = allocateLumpSum(paying, pendingInvoicesForUnit, unitId, category);
-                                return (
-                                    <>
-                                        <p className="text-teal-700">₹{paying.toLocaleString()} will be applied oldest-first:</p>
-                                        <ul className="mt-1 space-y-0.5">
-                                            {preview.lines.map(line => {
-                                                const inv = pendingInvoicesForUnit.find(i => i.id === line.invoiceId);
-                                                return (
-                                                    <li key={line.invoiceId} className="flex justify-between text-teal-900">
-                                                        <span>{inv?.billingPeriod || line.invoiceId}</span>
-                                                        <span className="font-medium">
-                                                            +₹{line.applied.toLocaleString()}{" "}
-                                                            {line.fullySettled
-                                                                ? <span className="text-green-700">✓ paid</span>
-                                                                : <span className="text-amber-700">· ₹{line.remaining.toLocaleString()} left</span>}
-                                                        </span>
-                                                    </li>
-                                                );
-                                            })}
-                                        </ul>
-                                        {preview.leftover > 0 && (
-                                            <p className="mt-1 text-[11px] text-teal-700">🪙 ₹{preview.leftover.toLocaleString()} extra will be recorded as a tenant credit.</p>
-                                        )}
-                                        {preview.lines.length === 0 && (
-                                            <p className="mt-1 text-[11px] text-teal-600">No eligible pending invoice for this category.</p>
-                                        )}
-                                    </>
-                                );
-                            })()}
-                        </div>
-                    )}
 
-                    {/* No pending invoice — will be auto-created */}
-                    {direction === "inflow" && unitId && ["rent", "electricity", "maintenance"].includes(category) && pendingInvoicesForUnit.length === 0 && (
-                        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs">
-                            <p className="font-bold text-amber-800 mb-1">🧾 Auto-invoice preview</p>
-                            <p className="text-amber-700">
-                                No invoice found for this unit. On save, a new invoice for{" "}
-                                <span className="font-semibold">
-                                    {new Date((entryDate || todayISO()) + "T00:00:00").toLocaleString("default", { month: "long", year: "numeric" })}
-                                </span>{" "}
-                                will be created and settled with this payment.
-                            </p>
-                            {(() => {
-                                const u = allUnits.find(x => x.id === unitId);
-                                const rent = Number(u?.baseRent || 0);
-                                if (rent > 0) {
-                                    return <p className="mt-1 text-[10px] text-amber-600">Base rent on file: ₹{rent.toLocaleString()}</p>;
-                                }
-                                return <p className="mt-1 text-[10px] text-amber-600">No base rent on file — invoice total will match the amount paid.</p>;
-                            })()}
-                        </div>
-                    )}
-
-                    {direction === "outflow" && category === "labour" && (
+                    {category === "labour" && (
                         <div className="grid grid-cols-2 gap-3">
                             <div>
                                 <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Worker Name</label>
@@ -583,7 +376,7 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
                         </div>
                     )}
 
-                    {direction === "outflow" && category === "material" && (
+                    {category === "material" && (
                         <div className="grid grid-cols-2 gap-3">
                             <div>
                                 <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Qty</label>
@@ -596,25 +389,23 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
                         </div>
                     )}
 
-                    {direction === "outflow" && (
-                        <div>
-                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">📷 Receipt / Bill Image (optional)</label>
-                            <input
-                                type="file"
-                                accept="image/*"
-                                capture="environment"
-                                onChange={(e) => setReceiptFile(e.target.files?.[0] || null)}
-                                className="w-full text-xs file:mr-2 file:py-1.5 file:px-3 file:rounded file:border-0 file:text-xs file:font-bold file:bg-red-50 file:text-red-700 hover:file:bg-red-100"
-                            />
-                            {receiptFile && (
-                                <div className="mt-2 flex items-center gap-2 bg-gray-50 border border-gray-200 rounded p-2">
-                                    <span className="text-[10px] text-gray-600 truncate flex-1">📎 {receiptFile.name}</span>
-                                    <button type="button" onClick={() => setReceiptFile(null)} className="text-[10px] text-red-600 hover:text-red-800 font-bold">✕ Remove</button>
-                                </div>
-                            )}
-                            <UploadProgressBar progress={uploadProgress} />
-                        </div>
-                    )}
+                    <div>
+                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">📷 Receipt / Bill Image (optional)</label>
+                        <input
+                            type="file"
+                            accept="image/*"
+                            capture="environment"
+                            onChange={(e) => setReceiptFile(e.target.files?.[0] || null)}
+                            className="w-full text-xs file:mr-2 file:py-1.5 file:px-3 file:rounded file:border-0 file:text-xs file:font-bold file:bg-red-50 file:text-red-700 hover:file:bg-red-100"
+                        />
+                        {receiptFile && (
+                            <div className="mt-2 flex items-center gap-2 bg-gray-50 border border-gray-200 rounded p-2">
+                                <span className="text-[10px] text-gray-600 truncate flex-1">📎 {receiptFile.name}</span>
+                                <button type="button" onClick={() => setReceiptFile(null)} className="text-[10px] text-red-600 hover:text-red-800 font-bold">✕ Remove</button>
+                            </div>
+                        )}
+                        <UploadProgressBar progress={uploadProgress} />
+                    </div>
 
                     <div>
                         <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Description</label>
@@ -623,7 +414,7 @@ export function DailyLedgerTab({ entries, buildings, allUnits, allInvoices = [],
 
                     <div className="flex gap-2 pt-2">
                         <button type="button" onClick={() => setIsModalOpen(false)} className="flex-1 py-2 border border-gray-300 rounded-md text-sm text-gray-600">Cancel</button>
-                        <button type="submit" disabled={isSaving || isUploading} className={`flex-1 py-2 rounded-md text-sm font-medium text-white ${direction === "inflow" ? "bg-green-600 hover:bg-green-700 disabled:bg-green-400" : "bg-red-600 hover:bg-red-700 disabled:bg-red-400"}`}>
+                        <button type="submit" disabled={isSaving || isUploading} className="flex-1 py-2 rounded-md text-sm font-medium text-white bg-red-600 hover:bg-red-700 disabled:bg-red-400">
                             {isUploading ? "Uploading..." : isSaving ? "Saving..." : "Save Entry"}
                         </button>
                     </div>
@@ -666,7 +457,12 @@ function EntryRow({ entry, onDelete, compact }: { entry: DailyLedgerEntry; onDel
                         <img src={entry.receiptUrl} alt="receipt" className="w-10 h-10 object-cover rounded border border-gray-200 hover:border-red-400" />
                     </a>
                 )}
-                <button onClick={() => onDelete(entry)} className="text-[10px] text-gray-400 hover:text-red-600">Delete</button>
+                {isInflow && entry.invoiceId ? (
+                    // Owned by a Collections payment — deleting only this row would leave the invoice marked paid.
+                    <span className="text-[10px] text-gray-400" title="Recorded from Collections">via Collections</span>
+                ) : (
+                    <button onClick={() => onDelete(entry)} className="text-[10px] text-gray-400 hover:text-red-600">Delete</button>
+                )}
             </div>
         </div>
     );

@@ -156,9 +156,9 @@ describe("CollectionsTab — settle flow", () => {
         await user.click(screen.getByRole("button", { name: /Settle/ }));
         await screen.findByText("✓ Record Payment");
 
-        // Switch to Partial and enter 2000 (covers rent-first portion only).
-        await user.click(screen.getByRole("button", { name: /Partial/ }));
-        const amountInput = screen.getByPlaceholderText(/Up to/i);
+        // Switch to "Other amount" and enter 2000 (covers rent-first portion only).
+        await user.click(screen.getByRole("button", { name: /Other amount/ }));
+        const amountInput = screen.getByPlaceholderText(/Amount the tenant handed over/i);
         await user.clear(amountInput);
         await user.type(amountInput, "2000");
 
@@ -175,6 +175,48 @@ describe("CollectionsTab — settle flow", () => {
         expect(dailyLedgerRow.direction).toBe("inflow");
         expect(dailyLedgerRow.amount).toBe(2000);
         expect(notifyPaymentRecorded.mock.calls[0][0]).toMatchObject({ amount: 2000, fully: false });
+    });
+
+    it("applies an amount above the balance to the unit's other pending invoices, then keeps the rest as an advance", async () => {
+        const user = userEvent.setup();
+        // An older unpaid invoice for the SAME unit (101) as invoiceCurrent.
+        const older: Invoice = {
+            ...invoiceCurrent, id: "inv-older", totalAmount: 5000, billingPeriod: previousMonth,
+            createdAt: prevMonthDate.toISOString(),
+        };
+        renderTab([invoiceCurrent, older]);
+
+        // Settle the current-month card (6,000 due) with 12,000 in hand.
+        const settleButtons = screen.getAllByRole("button", { name: /Settle/ });
+        await user.click(settleButtons[settleButtons.length - 1]);
+        await screen.findByText("✓ Record Payment");
+        expect(screen.getByText("101 — " + currentMonth)).toBeInTheDocument();
+
+        await user.click(screen.getByRole("button", { name: /Other amount/ }));
+        const amountInput = screen.getByPlaceholderText(/Amount the tenant handed over/i);
+        await user.clear(amountInput);
+        await user.type(amountInput, "12000");
+
+        // Preview shows the waterfall and the advance before saving.
+        expect(screen.getByText(/Extra ₹6,000 will be applied oldest-first/)).toBeInTheDocument();
+        expect(screen.getByText(/₹1,000 kept as advance/)).toBeInTheDocument();
+
+        await user.click(screen.getByRole("button", { name: /Save ₹12,000/ }));
+
+        // Selected invoice cleared first, then the older one.
+        const patches = batchUpdate.mock.calls.map(c => c[1]);
+        expect(patches).toHaveLength(2);
+        expect(patches[0]).toMatchObject({ status: "paid", amountPaid: 6000 });
+        expect(patches[1]).toMatchObject({ status: "paid", amountPaid: 5000 });
+
+        // 3 ledger rows (2 payments + advance) and ONE consolidated daily-ledger inflow.
+        const sets = batchSet.mock.calls.map(c => c[1]);
+        expect(sets.slice(0, 3).map(r => r.type)).toEqual(["payment", "payment", "credit"]);
+        expect(sets[2].amountPaid).toBe(1000);
+        expect(sets[3]).toMatchObject({ direction: "inflow", amount: 12000 });
+
+        // One notification per invoice paid, none for the advance.
+        expect(notifyPaymentRecorded).toHaveBeenCalledTimes(2);
     });
 });
 

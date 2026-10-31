@@ -99,11 +99,12 @@ export default function EmployeeHelpPage() {
                         <div>
                             <h3 className="font-bold text-gray-800 mb-1">3a. Normal flow</h3>
                             <ol className="list-decimal pl-5 space-y-1">
-                                <li>Open <strong>Meter</strong> tab → pick unit.</li>
+                                <li>Open <strong>Meter</strong> tab. The first unit still needing a reading this month is already picked (ordered by building, then unit number).</li>
                                 <li>App auto-fills <strong>Previous Reading</strong> from last month.</li>
                                 <li>Enter <strong>Current Reading</strong>.</li>
                                 <li>Units consumed = current − previous.</li>
                                 <li>Electricity = units × rate (per-tenant rate wins).</li>
+                                <li>Tap <strong>Save &amp; next →</strong> to move straight to the next pending unit, or <strong>Skip →</strong> if the tenant isn&apos;t home.</li>
                             </ol>
                         </div>
                         <div>
@@ -232,8 +233,8 @@ export default function EmployeeHelpPage() {
                         <div className="bg-green-50 border border-green-200 rounded-lg p-3">
                             <p className="font-bold text-green-800">📥 Inflow — money received</p>
                             <ul className="list-disc pl-5 text-xs mt-1 space-y-0.5 text-green-800">
-                                <li>Against an unpaid invoice? The app <strong>auto-settles</strong> it (<code>DAILY_LEDGER_AUTOSETTLE</code>).</li>
-                                <li>No invoice for this unit this month? The app <strong>auto-creates one</strong> and settles it.</li>
+                                <li>Inflows are <strong>not entered here</strong>. Record tenant payments in <strong>Collections</strong> — each one adds its inflow row here automatically.</li>
+                                <li>The totals split inflows into <strong>💵 Cash in hand</strong> and <strong>📱 UPI / Bank</strong> for end-of-day matching.</li>
                             </ul>
                         </div>
                         <div className="bg-red-50 border border-red-200 rounded-lg p-3">
@@ -334,7 +335,11 @@ export default function EmployeeHelpPage() {
                             },
                             {
                                 q: "Tenant paid, but there's no invoice yet.",
-                                a: "Open Daily Ledger → + Inflow. Pick unit + amount. The app auto-creates the current month's invoice and settles it.",
+                                a: "Generate the invoice first from the Meter tab, then record the payment in Collections.",
+                            },
+                            {
+                                q: "Tenant paid for several months at once, or paid extra.",
+                                a: "Collections → ✓ Settle on any of their invoices → Other amount… → enter the whole amount. It clears that invoice, then their other pending invoices oldest-first; anything left is kept as an advance.",
                             },
                             {
                                 q: "It's month-end — how do I bill everyone?",
@@ -382,7 +387,7 @@ export default function EmployeeHelpPage() {
                         <ol className="list-decimal pl-5 space-y-1.5">
                             <li><strong>Never fake a meter reading.</strong> Previous vs current are stored — any discrepancy is auditable.</li>
                             <li><strong>Always include a reason</strong> when overriding units consumed or deleting an entry.</li>
-                            <li><strong>Cash collected today must appear in Daily Ledger today</strong> — even if deposited tomorrow.</li>
+                            <li><strong>Record every payment in Collections the day you receive it</strong> — that is what puts it in today&apos;s Daily Ledger, even if deposited tomorrow.</li>
                             <li><strong>Every rupee out has a receipt.</strong> Upload the photo.</li>
                             <li><strong>The tenant portal is a mirror.</strong> Anything you mark paid, they see. Be accurate; don&apos;t guess.</li>
                         </ol>

@@ -143,11 +143,11 @@ Optional free-text note stored on the invoice — use it for things like
 The Daily Ledger is the source of truth for **cash movement day by day**.
 Two directions:
 
-- **Inflow** — money received (rent, deposit, misc).
-  - If the inflow is against an unpaid invoice for that unit, the app
-    **auto-settles** the invoice (transaction ID `DAILY_LEDGER_AUTOSETTLE`).
-  - If no invoice exists for that unit for the current month, the app
-    **auto-creates one** and settles it.
+- **Inflow** — money received. Inflows are **not entered in the Daily tab**:
+  every tenant payment is recorded in **Collections**, which writes the
+  matching `dailyLedger` inflow row (with payment mode) in the same atomic
+  batch. Older rows with transaction ID `DAILY_LEDGER_AUTOSETTLE` come from
+  the retired Daily ➕ Inflow form.
 - **Outflow** — money spent (maintenance, salary, supplies).
   - Outflow entries are **mirrored to the Expenses collection** — the two
     views stay in sync via `expenseId` / `dailyLedgerId` back-links.
@@ -230,9 +230,13 @@ run maintenance tickets, and manage the tenant directory.
 3. Tap **✓ Settle** → pick mode → enter reference (if not cash) → Save.
 
 **"Tenant paid, but there's no invoice yet — what do I do?"**
-1. Open **Daily Ledger** → **+ Inflow**.
-2. Pick the unit and amount. The app will auto-create the current month's
-   invoice and settle it.
+1. Generate the invoice from the **Meter** tab.
+2. Record the payment in **Collections** as usual.
+
+**"Tenant paid for several months at once (or paid extra)."**
+1. In **Collections**, tap **✓ Settle** on any of their invoices → **Other amount…**.
+2. Enter the whole amount. It clears that invoice, then their other pending
+   invoices oldest-first; any remainder is kept as an advance (credit).
 
 **"It's month-end — how do I bill everyone?"**
 1. Open **Meter** tab.
