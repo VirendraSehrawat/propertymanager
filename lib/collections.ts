@@ -25,6 +25,8 @@ export const COL = {
     /** Per-invoice payment history rows written by the master-invoice flow. */
     ledgerEntries: "ledgerEntries",
     dailyLedger: "dailyLedger",
+    /** End-of-day cash closes, one per local date (`YYYY-MM-DD`). */
+    dayCloses: "dayCloses",
     allocations: "allocations",
     inventory: "inventory",
     checklists: "checklists",

@@ -6,7 +6,9 @@ import { db } from "@/lib/firebase";
 import { COL } from "@/lib/collections";
 import { Modal } from "@/components/ui";
 import { useUploadWithProgress, UploadProgressBar } from "@/lib/useUpload";
-import { splitInflowByMode } from "@/lib/payments";
+import { localDateKey, splitInflowByMode } from "@/lib/payments";
+import { isDayClosed, type DayClose } from "@/lib/dayClose";
+import { DayClosePanel } from "./DayClosePanel";
 
 interface DailyLedgerEntry {
     id: string;
@@ -45,19 +47,25 @@ interface Props {
     currentUserEmail?: string;
     /** Opens the Collections tab — the only place tenant payments are recorded. */
     onGoToCollections?: () => void;
+    /** End-of-day closes (`dayCloses`). A closed day is read-only here. */
+    dayCloses?: DayClose[];
+    /** Admin: may reopen closed days and review cash differences. */
+    canReopenDays?: boolean;
 }
 
 const OUTFLOW_CATEGORIES = ["labour", "material", "utilities", "repair", "other"];
 
-const todayISO = () => new Date().toISOString().slice(0, 10);
-const currentMonthISO = () => new Date().toISOString().slice(0, 7);
+// Local dates (IST for staff), not UTC — so entries made after midnight land on the right day.
+const todayISO = () => localDateKey(new Date());
+const currentMonthISO = () => todayISO().slice(0, 7);
+const NON_CASH_MODES = ["upi", "bank", "cheque", "other"] as const;
 
 /**
  * Daily cash book. Outflows (labour, material, …) are entered here and mirrored
  * to Expenses. Inflows are NOT entered here: tenant payments are recorded in
  * Collections, which writes the matching inflow row to this ledger.
  */
-export function DailyLedgerTab({ entries, buildings, allUnits, currentUserEmail, onGoToCollections }: Props) {
+export function DailyLedgerTab({ entries, buildings, allUnits, currentUserEmail, onGoToCollections, dayCloses = [], canReopenDays = false }: Props) {
     const [viewMode, setViewMode] = useState<"daily" | "monthly">("daily");
     const [selectedDate, setSelectedDate] = useState(todayISO());
     const [selectedMonth, setSelectedMonth] = useState(currentMonthISO());
@@ -99,6 +107,7 @@ export function DailyLedgerTab({ entries, buildings, allUnits, currentUserEmail,
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!amount || Number(amount) <= 0) { alert("Enter a valid amount."); return; }
+        if (isDayClosed(dayCloses, entryDate || todayISO())) { alert("That day is closed. Ask the admin to reopen it, or pick another date."); return; }
         setIsSaving(true);
         try {
             // Upload receipt image first (if any). Fail-safe: entry still saves without it if upload fails.
@@ -192,6 +201,18 @@ export function DailyLedgerTab({ entries, buildings, allUnits, currentUserEmail,
         catch (err) { console.error(err); alert("Failed to delete."); }
     };
 
+    // Give a mode to an older inflow saved without one, so the day can be closed.
+    const handleSetMode = async (entry: DailyLedgerEntry, paymentMode: string) => {
+        try {
+            await updateDoc(doc(db, COL.dailyLedger, entry.id), {
+                paymentMode,
+                modeSetBy: currentUserEmail || "",
+                modeSetAt: new Date().toISOString(),
+            });
+        } catch (err) { console.error(err); alert("Failed to save the payment mode."); }
+    };
+    const isLocked = (entry: DailyLedgerEntry) => isDayClosed(dayCloses, entry.date);
+
     // Filtering by view mode
     const scopedEntries = useMemo(() => {
         return entries.filter(e => {
@@ -280,13 +301,26 @@ export function DailyLedgerTab({ entries, buildings, allUnits, currentUserEmail,
                         </div>
                     )}
 
+                    {/* End-of-day close (whole day, every building) */}
+                    {viewMode === "daily" && (
+                        <DayClosePanel
+                            date={selectedDate}
+                            today={todayISO()}
+                            entries={entries}
+                            closes={dayCloses}
+                            currentUserEmail={currentUserEmail || ""}
+                            canReopen={canReopenDays}
+                            onSelectDate={setSelectedDate}
+                        />
+                    )}
+
                     {/* Entry List */}
                     {scopedEntries.length === 0 ? (
                         <p className="text-sm text-gray-500 text-center py-8">No entries for this {viewMode === "daily" ? "day" : "month"}.</p>
                     ) : viewMode === "daily" ? (
                         <div className="divide-y divide-gray-100">
                             {scopedEntries.slice().sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || "")).map(entry => (
-                                <EntryRow key={entry.id} entry={entry} onDelete={handleDelete} />
+                                <EntryRow key={entry.id} entry={entry} onDelete={handleDelete} onSetMode={handleSetMode} locked={isLocked(entry)} />
                             ))}
                         </div>
                     ) : (
@@ -307,7 +341,7 @@ export function DailyLedgerTab({ entries, buildings, allUnits, currentUserEmail,
                                             </div>
                                         </div>
                                         <div className="divide-y divide-gray-100">
-                                            {list.map(entry => <EntryRow key={entry.id} entry={entry} onDelete={handleDelete} compact />)}
+                                            {list.map(entry => <EntryRow key={entry.id} entry={entry} onDelete={handleDelete} onSetMode={handleSetMode} locked={isLocked(entry)} compact />)}
                                         </div>
                                     </div>
                                 );
@@ -424,7 +458,14 @@ export function DailyLedgerTab({ entries, buildings, allUnits, currentUserEmail,
     );
 }
 
-function EntryRow({ entry, onDelete, compact }: { entry: DailyLedgerEntry; onDelete: (e: DailyLedgerEntry) => void; compact?: boolean }) {
+function EntryRow({ entry, onDelete, onSetMode, locked, compact }: {
+    entry: DailyLedgerEntry;
+    onDelete: (e: DailyLedgerEntry) => void;
+    onSetMode: (e: DailyLedgerEntry, mode: string) => void;
+    /** The day is closed: no deletes or edits. */
+    locked?: boolean;
+    compact?: boolean;
+}) {
     const isInflow = entry.direction === "inflow";
     return (
         <div className={`flex justify-between items-start gap-3 ${compact ? "px-3 py-2" : "py-3"}`}>
@@ -437,6 +478,18 @@ function EntryRow({ entry, onDelete, compact }: { entry: DailyLedgerEntry; onDel
                         <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-gray-100 text-gray-600" title={entry.paymentReference || undefined}>
                             {entry.paymentMode}{entry.paymentReference ? ` · ${entry.paymentReference}` : ""}
                         </span>
+                    )}
+                    {isInflow && !entry.paymentMode && !locked && (
+                        <select
+                            aria-label="Set payment mode"
+                            value=""
+                            onChange={(e) => e.target.value && onSetMode(entry, e.target.value)}
+                            className="text-[10px] font-bold border border-red-300 text-red-700 bg-red-50 rounded px-1 py-0.5"
+                        >
+                            <option value="">❔ Set mode…</option>
+                            <option value="cash">Cash</option>
+                            {NON_CASH_MODES.map(m => <option key={m} value={m}>{m.toUpperCase()}</option>)}
+                        </select>
                     )}
                     {entry.unitNumber && <span className="text-[10px] font-medium text-gray-500">{entry.buildingName} / {entry.unitNumber}</span>}
                     {!entry.unitNumber && entry.buildingName && <span className="text-[10px] font-medium text-gray-500">{entry.buildingName}</span>}
@@ -457,7 +510,9 @@ function EntryRow({ entry, onDelete, compact }: { entry: DailyLedgerEntry; onDel
                         <img src={entry.receiptUrl} alt="receipt" className="w-10 h-10 object-cover rounded border border-gray-200 hover:border-red-400" />
                     </a>
                 )}
-                {isInflow && entry.invoiceId ? (
+                {locked ? (
+                    <span className="text-[10px] text-gray-400" title="This day is closed">🔒</span>
+                ) : isInflow && entry.invoiceId ? (
                     // Owned by a Collections payment — deleting only this row would leave the invoice marked paid.
                     <span className="text-[10px] text-gray-400" title="Recorded from Collections">via Collections</span>
                 ) : (

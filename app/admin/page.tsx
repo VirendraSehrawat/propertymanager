@@ -14,6 +14,8 @@ import {
 } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
 import { mapSnapshot } from "@/lib/firestore";
+import { COL } from "@/lib/collections";
+import { closesNeedingReview, type DayClose } from "@/lib/dayClose";
 import { useAuth } from "@/context/AuthContext";
 import type {
     Building,
@@ -84,6 +86,7 @@ export default function AdminDashboard() {
     const [allLedgerEntries, setAllLedgerEntries] = useState<LedgerEntry[]>([]);
     const [allUsers, setAllUsers] = useState<AppUser[]>([]);
     const [dailyLedgerEntries, setDailyLedgerEntries] = useState<DailyLedgerEntry[]>([]);
+    const [dayCloses, setDayCloses] = useState<(DayClose & { id: string })[]>([]);
     const [masterInvoices, setMasterInvoices] = useState<MasterInvoice[]>([]);
 
     // Settings States
@@ -255,6 +258,10 @@ export default function AdminDashboard() {
             setDailyLedgerEntries(mapSnapshot<DailyLedgerEntry>(snapshot).sort((a, b) => (b.date || "").localeCompare(a.date || "")));
         });
 
+        const unsubDayCloses = onSnapshot(collection(db, COL.dayCloses), (snapshot) => {
+            setDayCloses(mapSnapshot<DayClose>(snapshot).map(c => ({ ...c, date: c.date || c.id })));
+        });
+
         const unsubMasterInvoices = onSnapshot(collection(db, "masterInvoices"), (snapshot) => {
             setMasterInvoices(mapSnapshot<MasterInvoice>(snapshot));
         });
@@ -267,6 +274,7 @@ export default function AdminDashboard() {
             unsubBldgs();
             unsubApps();
             unsubAllInvoices();
+            unsubDayCloses();
             unsubTickets();
             unsubContacts();
             unsubOccupied();
@@ -324,7 +332,7 @@ export default function AdminDashboard() {
                         <TabButton isActive={activeTab === "expenses"} onClick={() => setActiveTab("expenses")} label="💸 Expenses" />
                         <TabButton isActive={activeTab === "ledger"} onClick={() => setActiveTab("ledger")} label="📑 Ledger" />
                         <TabButton isActive={activeTab === "payments"} onClick={() => setActiveTab("payments")} label="🔎 Find Payments" />
-                        <TabButton isActive={activeTab === "daily"} onClick={() => setActiveTab("daily")} label="📅 Daily Ledger" />
+                        <TabButton isActive={activeTab === "daily"} onClick={() => setActiveTab("daily")} label="📅 Daily Ledger" count={closesNeedingReview(dayCloses).length || undefined} />
                         <TabButton isActive={activeTab === "users"} onClick={() => setActiveTab("users")} label="👤 Users" count={allUsers.length} />
                         <TabButton isActive={activeTab === "maintenance"} onClick={() => setActiveTab("maintenance")} label="🛠️ Repairs" count={maintenanceTickets.filter(t => t.status !== "resolved").length} />
                         <TabButton isActive={activeTab === "applications"} onClick={() => setActiveTab("applications")} label="📝 Applications" count={applications.length} />
@@ -401,6 +409,8 @@ export default function AdminDashboard() {
                         allUnits={allUnits}
                         currentUserEmail={user?.email || "admin"}
                         onGoToCollections={() => setActiveTab("invoices")}
+                        dayCloses={dayCloses}
+                        canReopenDays
                     />
                 )}
 

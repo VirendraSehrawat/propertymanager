@@ -20,7 +20,7 @@ where in the code it applies. Effort is marked **S** (under a day), **M** (a few
 
 *Updated: 31 Oct 2026*
 
-**Done (11):** 1.1, 1.2, 1.3, 1.4, 1.6 · 2.1, 2.2, 2.3, 2.4, 2.5 · 3.1. Each is marked ✅ in its section with what shipped.
+**Done (13):** 1.1, 1.2, 1.3, 1.4, 1.6 · 2.1, 2.2, 2.3, 2.4, 2.5 · 3.1, 3.2, 3.3. Each is marked ✅ in its section with what shipped.
 Sections 1 (Collecting money) and 2 (Meter readings and invoicing) are complete except **1.5 Receipts**.
 
 **Next up (open quick wins):** 3.5, 3.8, 6.3, 7.3.
@@ -184,7 +184,7 @@ the move-in date, opening meter reading captured at the same time).
 > **Updated 31 Oct 2026** to match what is now built: tenant payments go through Collections only (1.3),
 > the Daily tab splits **💵 Cash in hand / 📱 UPI-Bank / ❔ Mode not recorded** (1.1), Home's Overdue list
 > shows remaining balances and opens Record Payment (1.4), and the Meter tab has rounds, drafts, checks
-> and move-in invoices (2.1–2.5). Nothing in this section is built yet.
+> and move-in invoices (2.1–2.5). Since then 3.1, 3.2 and 3.3 are built (marked ✅ below).
 
 The items are ordered around the employee's day. Item numbers are unchanged so the rollout table still
 matches.
@@ -213,6 +213,15 @@ list can now open Record Payment directly (1.4); the Monthly overview can't.
   *"Draft saved — generate invoice"* instead.
 
 ### 3.2 Today list on Home — M
+> ✅ **Done (31 Oct 2026), with the data that exists today.** Home opens with a **📋 Today** card (`components/employee/TodayCard.tsx`, rules in `lib/todayList.ts`):
+> - **Rent due** — once the unit's payment day this month is reached (no payment day → once the billing month is over), one row per unit + tenant totalling all open invoices, with 💳 Record payment (on the oldest; the waterfall settles the rest) · 📞 Call · 💬 WhatsApp. Corporate-grouped dues go to Collections; an old tenant's dues don't pick up the new occupant's name or payment day.
+> - **Meter round** (*"N of M done · K to read"*) and **draft readings** (*Generate N invoices*), both opening the Meter tab.
+> - **Tickets** open 3+ days (there is no ticket priority field yet, so "urgent" isn't used) and **leases ending** within 7 days (📋 Checklist).
+> - Unit items are grouped by building (sorted by name), round-wide items on top.
+>
+> KPIs and Quick Actions stay visible; the other cards moved into a collapsed **📊 More** section. **Meters Pending** now uses `buildMeterRound`, so drafted and move-in units aren't counted (drafts are shown as *"+ N read, waiting to be invoiced"*).
+> **Not yet in the list** (their features don't exist): promises (3.5), routine chores (3.7), notice periods (3.8) and day close (3.3).
+
 **Problem.** Home shows many separate cards (KPIs, month card, previous balance, quick actions, overdue,
 meters pending, tasks, activity) and leaves it to the employee to work out what to do first. The
 **Meters Pending** card also doesn't know about draft readings, so units read and saved as drafts
@@ -235,6 +244,15 @@ Lay it out by building (3.6). The other cards collapse below the list. Fix Meter
 `buildMeterRound` so drafted and move-in units aren't counted as pending.
 
 ### 3.3 End-of-day close — M
+> ✅ **Done (31 Oct 2026).** **🔒 Close day** in the Daily tab (`components/employee/DayClosePanel.tsx`, rules in `lib/dayClose.ts`), for the whole day across buildings:
+> - Expected cash = opening (the previous close's carried-forward cash; typed in on the first close) + cash inflows − outflows (all outflows are treated as cash). UPI / bank / cheque is shown separately.
+> - Inflows without a mode get a **❔ Set mode…** picker on the row and block the close. Earlier unclosed days with entries must be closed first.
+> - The employee enters cash counted and handed to the owner; a difference needs a note. Saved as `dayCloses/{YYYY-MM-DD}`; *counted − handed* is the next opening.
+> - A closed day is read-only in the Daily tab (no outflows dated that day, no deletes, no mode changes); entries added later (e.g. a Collections payment) show a *changed after close* warning. Admins (same tab in `/admin`) **🔓 Reopen** with a reason (the old figures go to `history`) and **✓ Review** differences, counted on the admin tab badge. Firestore rules only let staff change a close after an admin reopens it.
+> - Also fixed: Collections inflows and the Daily tab's "today" now use the local date, not UTC, so a payment after midnight IST lands on the right day.
+>
+> Not done: a Telegram alert to the admin for a difference (it shows on the admin tab instead), and Collections itself doesn't refuse payments on a closed day — they're flagged on the close.
+
 **Problem.** The end-of-day check (`EMPLOYEE_WORKFLOW.md` §6, `MANAGER_ACTIONS.md` §9) is a mental
 checklist with no record. The Daily tab now shows *Cash in hand* and *UPI / Bank* separately, but nothing
 saves the reconciliation.
@@ -271,6 +289,8 @@ set of outcomes: *No answer*, *Promised on <date>*, *Will pay partly*, *Disputed
 - recording a payment in Collections closes any open promise for that tenant.
 
 ### 3.6 Plan the walk by building — S
+> ◐ **Partly done by 3.2:** Today items are grouped under a building header with an item count. Still open: per-kind counts in the header (*dues · meters · tickets*) and listing each building's meter-round units alongside its dues.
+
 **Problem.** Overdue tenants, pending meters and open tickets are separate lists, so the employee may
 visit the same building several times a day.
 
@@ -444,7 +464,7 @@ double tap or retry can't record the same cash twice.
 |---|---|---|
 | **Quick wins (1 week)** | ✅ 1.1, ✅ 1.2, ✅ 1.4, ✅ 1.6, ✅ 2.2, ✅ 2.4, ✅ 3.1, 3.5, 3.8, 6.3, 7.3 | Correct numbers, fewer data errors, faster daily use |
 | **Workflow (2–3 weeks)** | ✅ 1.3, 1.5, ✅ 2.1, ✅ 2.3, 4.1, 6.2 | One payment path, fast meter rounds, receipts |
-| **Structure (3–4 weeks)** | 3.2, 3.3, 3.6, 3.9, 6.1, 7.1 | Today list grouped by building, tracked day close with owner digest, simpler navigation, faster load |
+| **Structure (3–4 weeks)** | ✅ 3.2, ✅ 3.3, 3.6, 3.9, 6.1, 7.1 | Today list grouped by building, tracked day close with owner digest, simpler navigation, faster load |
 | **Later** | ✅ 2.5, 3.4, 3.7, 3.10, 4.3, 5.x, 7.2 | Routine calendar, ageing review, automation and offline support |
 
 ✅ = done. 2.5 was brought forward and shipped with the other meter/invoicing items.

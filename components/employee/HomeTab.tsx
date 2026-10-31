@@ -3,6 +3,9 @@
 import type { Invoice, Unit, MaintenanceTicket, Expense, LedgerEntry } from "@/types";
 import { MonthCollectionsCard } from "./MonthCollectionsCard";
 import { pendingSplit } from "@/lib/allocation";
+import { buildMeterRound } from "@/lib/meterRound";
+import { buildTodayList } from "@/lib/todayList";
+import { TodayCard } from "./TodayCard";
 
 export type HomeTabNavTarget =
     | "home"
@@ -37,12 +40,15 @@ interface HomeTabProps {
     /** Opens Collections' Record Payment modal for one invoice. */
     onRecordPayment?: (invoiceId: string) => void;
     openTenantProfile: (unit: Unit) => void;
+    /** Building names for grouping the Today list and the meter round order. */
+    buildings?: { id: string; name: string }[];
 }
 
 /**
- * Home / Daily Summary tab — greeting, KPI tiles, monthly collections card,
- * previous-month balance list, quick actions, overdue invoices, meters pending,
- * active tasks preview, and recent activity feed.
+ * Home / Daily Summary tab — greeting, the "Today" list, KPI tiles and quick
+ * actions; the monthly collections card, previous-month balance, overdue
+ * invoices, meters pending, active tasks and recent activity sit in a
+ * collapsible "More" section below.
  *
  * Extracted from `app/employee/page.tsx` as part of Section 3 step 3 of
  * `docs/REFACTOR_PLAN.md`. Pure presentation — the parent owns all Firestore
@@ -64,6 +70,7 @@ export function HomeTab({
     onOpenTodayCollections,
     onRecordPayment,
     openTenantProfile,
+    buildings = [],
 }: HomeTabProps) {
     const pendingInvoices = allInvoices.filter(inv => inv.status === "unpaid" || inv.status === "pending");
     // Sum only the *outstanding* balance so partial payments (amountPaid) are
@@ -95,10 +102,14 @@ export function HomeTab({
         );
     const totalOverdue = overdueInvoices.reduce((s, x) => s + x.remaining, 0);
 
-    // Units without invoices for current month
+    // Units still to be read this month — same rules as the Meter tab's round,
+    // so drafts and move-in invoices don't count as pending.
     const currentMonthName = now.toLocaleString("default", { month: "long", year: "numeric" });
-    const unitsWithInvoice = new Set(allInvoices.filter(inv => inv.billingPeriod === currentMonthName).map(inv => inv.unitId));
-    const unitsPendingMeter = occupiedUnits.filter(u => !unitsWithInvoice.has(u.id));
+    const buildingNames = Object.fromEntries(buildings.map(b => [b.id, b.name]));
+    const meterRound = buildMeterRound(occupiedUnits, allInvoices, `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`, buildingNames);
+    const unitsPendingMeter = meterRound.stops.filter(s => !s.done && !s.drafted).map(s => s.unit);
+
+    const today = buildTodayList({ units: allUnits, invoices: allInvoices, activeTickets, buildingNames, now });
 
     // Today's collections — every instalment received today, at the amount
     // actually handed over (partials included, closing balances not inflated).
@@ -142,6 +153,9 @@ export function HomeTab({
                 <p className="text-sm text-orange-100 mt-1">{now.toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</p>
             </div>
 
+            {/* TODAY — what to do now, by building */}
+            <TodayCard today={today} onNavigate={onNavigate} onRecordPayment={onRecordPayment} />
+
             {/* Key Metrics */}
             <div className="grid grid-cols-2 gap-3">
                 <button onClick={() => onNavigate("collections")} className="bg-white border border-red-200 rounded-xl p-4 text-left hover:shadow-md transition">
@@ -165,55 +179,6 @@ export function HomeTab({
                     <p className="text-xs text-gray-500 mt-0.5">{vacantUnits.length} vacant</p>
                 </button>
             </div>
-
-            {/* MONTHLY COLLECTIONS & PENDING (picker) */}
-            <MonthCollectionsCard
-                homeMonth={homeMonth}
-                setHomeMonth={setHomeMonth}
-                allInvoices={allInvoices}
-            />
-
-            {/* PREVIOUS MONTH BALANCE */}
-            {outstanding.length > 0 && (
-                <div className="bg-white rounded-xl shadow-sm border border-amber-200 overflow-hidden">
-                    <div className="bg-amber-50 px-4 py-3 border-b border-amber-200 flex justify-between items-center">
-                        <div>
-                            <h3 className="text-sm font-bold text-amber-800">⚠️ Previous Month Balance — {prevLabel}</h3>
-                            <p className="text-[10px] text-amber-600 mt-0.5">{outstanding.length} tenant{outstanding.length !== 1 ? "s" : ""} carrying dues</p>
-                        </div>
-                        <span className="text-base font-bold text-amber-800">₹{totalOutstanding.toLocaleString()}</span>
-                    </div>
-                    <div className="divide-y divide-gray-100 max-h-80 overflow-y-auto">
-                        {outstanding.map(({ inv, total, paid, remaining, isPartial }) => {
-                            const rent = Number(inv.baseRent || 0);
-                            const elec = Number(inv.electricityCharge || 0);
-                            const rRent = Math.max(0, rent - Math.min(paid, rent));
-                            const rElec = Math.max(0, elec - Math.max(0, paid - rent));
-                            const u = occupiedUnits.find(x => x.id === inv.unitId);
-                            return (
-                                <button key={inv.id} onClick={() => { if (u) openTenantProfile(u); }} disabled={!u} className="w-full text-left px-4 py-3 hover:bg-amber-50 transition disabled:cursor-default flex justify-between items-start gap-3">
-                                    <div className="min-w-0">
-                                        <div className="flex items-center gap-2 flex-wrap">
-                                            <span className="font-bold text-gray-900 text-sm">{inv.unitNumber}</span>
-                                            <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ${isPartial ? "bg-amber-100 text-amber-800" : "bg-red-100 text-red-800"}`}>{isPartial ? "Partial" : "Unpaid"}</span>
-                                        </div>
-                                        <p className="text-[11px] text-gray-600 mt-0.5 truncate">{inv.tenantEmail || "—"}</p>
-                                        <p className="text-[10px] text-gray-500 mt-0.5">🏠 Rent ₹{rRent.toLocaleString()} · ⚡ Elec ₹{rElec.toLocaleString()}</p>
-                                        {isPartial && <p className="text-[10px] text-amber-700 mt-0.5">Paid ₹{paid.toLocaleString()} of ₹{total.toLocaleString()}</p>}
-                                    </div>
-                                    <div className="text-right shrink-0">
-                                        <p className="font-bold text-amber-800 text-base">₹{remaining.toLocaleString()}</p>
-                                        <p className="text-[10px] text-gray-400">due</p>
-                                    </div>
-                                </button>
-                            );
-                        })}
-                    </div>
-                    <button onClick={() => onNavigate("collections")} className="w-full text-center text-xs font-bold text-amber-700 py-2 bg-amber-100 hover:bg-amber-200 transition border-t border-amber-200">
-                        Open Collections →
-                    </button>
-                </div>
-            )}
 
             {/* Quick Actions */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
@@ -246,113 +211,175 @@ export function HomeTab({
                 </div>
             </div>
 
-            {/* Overdue Invoices Alert */}
-            {overdueInvoices.length > 0 && (
-                <div className="bg-red-50 border border-red-200 rounded-xl overflow-hidden">
-                    <div className="bg-red-100 px-4 py-2.5 border-b border-red-200 flex justify-between items-center">
-                        <div>
-                            <h3 className="text-sm font-bold text-red-800">⚠️ Overdue Invoices</h3>
-                            <p className="text-[10px] text-red-600 mt-0.5">{overdueInvoices.length} invoice{overdueInvoices.length !== 1 ? "s" : ""} · tap one to record a payment</p>
-                        </div>
-                        <span className="text-base font-bold text-red-800">₹{totalOverdue.toLocaleString()}</span>
-                    </div>
-                    <div className="divide-y divide-red-100 max-h-48 overflow-y-auto">
-                        {overdueInvoices.map(({ inv, total, paid, remaining, isPartial }) => (
-                            <button
-                                key={inv.id}
-                                type="button"
-                                // Grouped (corporate) invoices are settled from their master card, not one by one.
-                                onClick={() => (inv.masterInvoiceId || !onRecordPayment ? onNavigate("collections") : onRecordPayment(inv.id))}
-                                className="w-full text-left px-4 py-2.5 flex justify-between items-center gap-3 hover:bg-red-100 transition"
-                            >
-                                <div className="min-w-0">
-                                    <div className="flex items-center gap-2 flex-wrap">
-                                        <span className="font-bold text-gray-900 text-sm">{inv.unitNumber}</span>
-                                        {isPartial && <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">Partial</span>}
-                                        {inv.masterInvoiceId && <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700">Corporate</span>}
-                                    </div>
-                                    <p className="text-[10px] text-gray-500">{inv.billingPeriod}</p>
-                                    {isPartial && <p className="text-[10px] text-amber-700">Paid ₹{paid.toLocaleString()} of ₹{total.toLocaleString()}</p>}
+            {/* Everything else collapses below the Today list. */}
+            <details className="group">
+                <summary className="cursor-pointer select-none list-none bg-white rounded-xl border border-gray-200 shadow-sm px-4 py-3 text-sm font-bold text-gray-700 flex justify-between items-center">
+                    <span>📊 More — month summary, overdue, meters, tasks, activity</span>
+                    <span className="text-gray-400 group-open:rotate-180 transition">▾</span>
+                </summary>
+                <div className="space-y-4 mt-4">
+
+                    {/* MONTHLY COLLECTIONS & PENDING (picker) */}
+                    <MonthCollectionsCard
+                        homeMonth={homeMonth}
+                        setHomeMonth={setHomeMonth}
+                        allInvoices={allInvoices}
+                    />
+
+                    {/* PREVIOUS MONTH BALANCE */}
+                    {outstanding.length > 0 && (
+                        <div className="bg-white rounded-xl shadow-sm border border-amber-200 overflow-hidden">
+                            <div className="bg-amber-50 px-4 py-3 border-b border-amber-200 flex justify-between items-center">
+                                <div>
+                                    <h3 className="text-sm font-bold text-amber-800">⚠️ Previous Month Balance — {prevLabel}</h3>
+                                    <p className="text-[10px] text-amber-600 mt-0.5">{outstanding.length} tenant{outstanding.length !== 1 ? "s" : ""} carrying dues</p>
                                 </div>
-                                <div className="text-right shrink-0">
-                                    <p className="font-bold text-red-700 text-sm">₹{remaining.toLocaleString()}</p>
-                                    <p className="text-[10px] text-gray-400">due</p>
-                                </div>
+                                <span className="text-base font-bold text-amber-800">₹{totalOutstanding.toLocaleString()}</span>
+                            </div>
+                            <div className="divide-y divide-gray-100 max-h-80 overflow-y-auto">
+                                {outstanding.map(({ inv, total, paid, remaining, isPartial }) => {
+                                    const rent = Number(inv.baseRent || 0);
+                                    const elec = Number(inv.electricityCharge || 0);
+                                    const rRent = Math.max(0, rent - Math.min(paid, rent));
+                                    const rElec = Math.max(0, elec - Math.max(0, paid - rent));
+                                    const u = occupiedUnits.find(x => x.id === inv.unitId);
+                                    return (
+                                        <button key={inv.id} onClick={() => { if (u) openTenantProfile(u); }} disabled={!u} className="w-full text-left px-4 py-3 hover:bg-amber-50 transition disabled:cursor-default flex justify-between items-start gap-3">
+                                            <div className="min-w-0">
+                                                <div className="flex items-center gap-2 flex-wrap">
+                                                    <span className="font-bold text-gray-900 text-sm">{inv.unitNumber}</span>
+                                                    <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ${isPartial ? "bg-amber-100 text-amber-800" : "bg-red-100 text-red-800"}`}>{isPartial ? "Partial" : "Unpaid"}</span>
+                                                </div>
+                                                <p className="text-[11px] text-gray-600 mt-0.5 truncate">{inv.tenantEmail || "—"}</p>
+                                                <p className="text-[10px] text-gray-500 mt-0.5">🏠 Rent ₹{rRent.toLocaleString()} · ⚡ Elec ₹{rElec.toLocaleString()}</p>
+                                                {isPartial && <p className="text-[10px] text-amber-700 mt-0.5">Paid ₹{paid.toLocaleString()} of ₹{total.toLocaleString()}</p>}
+                                            </div>
+                                            <div className="text-right shrink-0">
+                                                <p className="font-bold text-amber-800 text-base">₹{remaining.toLocaleString()}</p>
+                                                <p className="text-[10px] text-gray-400">due</p>
+                                            </div>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                            <button onClick={() => onNavigate("collections")} className="w-full text-center text-xs font-bold text-amber-700 py-2 bg-amber-100 hover:bg-amber-200 transition border-t border-amber-200">
+                                Open Collections →
                             </button>
-                        ))}
-                    </div>
-                    <button onClick={() => onNavigate("collections")} className="w-full text-center text-xs font-bold text-red-700 py-2 bg-red-100 hover:bg-red-200 transition border-t border-red-200">
-                        View All Collections →
-                    </button>
-                </div>
-            )}
+                        </div>
+                    )}
 
-            {/* Meters Pending for Current Month */}
-            {unitsPendingMeter.length > 0 && (
-                <div className="bg-purple-50 border border-purple-200 rounded-xl overflow-hidden">
-                    <div className="bg-purple-100 px-4 py-2.5 border-b border-purple-200 flex justify-between items-center">
-                        <h3 className="text-sm font-bold text-purple-800">⚡ Meters Pending — {currentMonthName}</h3>
-                        <span className="text-xs font-bold bg-purple-200 text-purple-800 px-2 py-0.5 rounded-full">{unitsPendingMeter.length}</span>
-                    </div>
-                    <div className="divide-y divide-purple-100 max-h-48 overflow-y-auto">
-                        {unitsPendingMeter.map(u => (
-                            <div key={u.id} className="px-4 py-2.5 flex justify-between items-center">
+                    {/* Overdue Invoices Alert */}
+                    {overdueInvoices.length > 0 && (
+                        <div className="bg-red-50 border border-red-200 rounded-xl overflow-hidden">
+                            <div className="bg-red-100 px-4 py-2.5 border-b border-red-200 flex justify-between items-center">
                                 <div>
-                                    <p className="font-bold text-gray-900 text-sm">{u.unitNumber}</p>
-                                    <p className="text-[10px] text-gray-500">{u.tenantName || u.tenantEmail || "—"}</p>
+                                    <h3 className="text-sm font-bold text-red-800">⚠️ Overdue Invoices</h3>
+                                    <p className="text-[10px] text-red-600 mt-0.5">{overdueInvoices.length} invoice{overdueInvoices.length !== 1 ? "s" : ""} · tap one to record a payment</p>
                                 </div>
-                                <p className="text-xs text-purple-600">Last: {u.lastMeterReading || 0}</p>
+                                <span className="text-base font-bold text-red-800">₹{totalOverdue.toLocaleString()}</span>
                             </div>
-                        ))}
-                    </div>
-                    <button onClick={() => onNavigate("meter")} className="w-full text-center text-xs font-bold text-purple-700 py-2 bg-purple-100 hover:bg-purple-200 transition border-t border-purple-200">
-                        Record Meter Readings →
-                    </button>
-                </div>
-            )}
+                            <div className="divide-y divide-red-100 max-h-48 overflow-y-auto">
+                                {overdueInvoices.map(({ inv, total, paid, remaining, isPartial }) => (
+                                    <button
+                                        key={inv.id}
+                                        type="button"
+                                        // Grouped (corporate) invoices are settled from their master card, not one by one.
+                                        onClick={() => (inv.masterInvoiceId || !onRecordPayment ? onNavigate("collections") : onRecordPayment(inv.id))}
+                                        className="w-full text-left px-4 py-2.5 flex justify-between items-center gap-3 hover:bg-red-100 transition"
+                                    >
+                                        <div className="min-w-0">
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                                <span className="font-bold text-gray-900 text-sm">{inv.unitNumber}</span>
+                                                {isPartial && <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">Partial</span>}
+                                                {inv.masterInvoiceId && <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700">Corporate</span>}
+                                            </div>
+                                            <p className="text-[10px] text-gray-500">{inv.billingPeriod}</p>
+                                            {isPartial && <p className="text-[10px] text-amber-700">Paid ₹{paid.toLocaleString()} of ₹{total.toLocaleString()}</p>}
+                                        </div>
+                                        <div className="text-right shrink-0">
+                                            <p className="font-bold text-red-700 text-sm">₹{remaining.toLocaleString()}</p>
+                                            <p className="text-[10px] text-gray-400">due</p>
+                                        </div>
+                                    </button>
+                                ))}
+                            </div>
+                            <button onClick={() => onNavigate("collections")} className="w-full text-center text-xs font-bold text-red-700 py-2 bg-red-100 hover:bg-red-200 transition border-t border-red-200">
+                                View All Collections →
+                            </button>
+                        </div>
+                    )}
 
-            {/* Active Tasks Preview */}
-            {activeTickets.length > 0 && (
-                <div className="bg-orange-50 border border-orange-200 rounded-xl overflow-hidden">
-                    <div className="bg-orange-100 px-4 py-2.5 border-b border-orange-200 flex justify-between items-center">
-                        <h3 className="text-sm font-bold text-orange-800">🔧 Active Tasks</h3>
-                        <span className="text-xs font-bold bg-orange-200 text-orange-800 px-2 py-0.5 rounded-full">{activeTickets.length}</span>
-                    </div>
-                    <div className="divide-y divide-orange-100 max-h-48 overflow-y-auto">
-                        {activeTickets.slice(0, 5).map(t => (
-                            <div key={t.id} className="px-4 py-2.5 flex justify-between items-center">
+                    {/* Meters Pending for Current Month */}
+                    {unitsPendingMeter.length > 0 && (
+                        <div className="bg-purple-50 border border-purple-200 rounded-xl overflow-hidden">
+                            <div className="bg-purple-100 px-4 py-2.5 border-b border-purple-200 flex justify-between items-center">
                                 <div>
-                                    <p className="font-bold text-gray-900 text-sm">{t.unitNumber}</p>
-                                    <p className="text-[10px] text-gray-500 line-clamp-1">{t.description}</p>
+                                    <h3 className="text-sm font-bold text-purple-800">⚡ Meters Pending — {currentMonthName}</h3>
+                                    {meterRound.draftCount > 0 && <p className="text-[10px] text-purple-600 mt-0.5">+ {meterRound.draftCount} read, waiting to be invoiced</p>}
                                 </div>
-                                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${t.status === "in-progress" ? "bg-blue-100 text-blue-700" : "bg-orange-100 text-orange-700"}`}>{t.status}</span>
+                                <span className="text-xs font-bold bg-purple-200 text-purple-800 px-2 py-0.5 rounded-full">{unitsPendingMeter.length}</span>
                             </div>
-                        ))}
-                    </div>
-                    <button onClick={() => onNavigate("active")} className="w-full text-center text-xs font-bold text-orange-700 py-2 bg-orange-100 hover:bg-orange-200 transition border-t border-orange-200">
-                        View All Tasks →
-                    </button>
-                </div>
-            )}
+                            <div className="divide-y divide-purple-100 max-h-48 overflow-y-auto">
+                                {unitsPendingMeter.map(u => (
+                                    <div key={u.id} className="px-4 py-2.5 flex justify-between items-center">
+                                        <div>
+                                            <p className="font-bold text-gray-900 text-sm">{u.unitNumber}</p>
+                                            <p className="text-[10px] text-gray-500">{u.tenantName || u.tenantEmail || "—"}</p>
+                                        </div>
+                                        <p className="text-xs text-purple-600">Last: {u.lastMeterReading || 0}</p>
+                                    </div>
+                                ))}
+                            </div>
+                            <button onClick={() => onNavigate("meter")} className="w-full text-center text-xs font-bold text-purple-700 py-2 bg-purple-100 hover:bg-purple-200 transition border-t border-purple-200">
+                                Record Meter Readings →
+                            </button>
+                        </div>
+                    )}
 
-            {/* Recent Activity Feed */}
-            {recent.length > 0 && (
-                <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                    <div className="px-4 py-3 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
-                        <h3 className="text-sm font-bold text-gray-800">🕐 Recent Activity</h3>
-                        <span className="text-[10px] text-gray-400">Last {recent.length} actions</span>
-                    </div>
-                    <div className="divide-y divide-gray-100 max-h-56 overflow-y-auto">
-                        {recent.map((a, i) => (
-                            <div key={i} className="px-4 py-2.5 flex items-center gap-2">
-                                <span className="text-base">{a.icon}</span>
-                                <p className="text-xs text-gray-700 flex-1 line-clamp-1">{a.text}</p>
-                                <span className="text-[10px] text-gray-400 whitespace-nowrap">{new Date(a.time).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}</span>
+                    {/* Active Tasks Preview */}
+                    {activeTickets.length > 0 && (
+                        <div className="bg-orange-50 border border-orange-200 rounded-xl overflow-hidden">
+                            <div className="bg-orange-100 px-4 py-2.5 border-b border-orange-200 flex justify-between items-center">
+                                <h3 className="text-sm font-bold text-orange-800">🔧 Active Tasks</h3>
+                                <span className="text-xs font-bold bg-orange-200 text-orange-800 px-2 py-0.5 rounded-full">{activeTickets.length}</span>
                             </div>
-                        ))}
-                    </div>
+                            <div className="divide-y divide-orange-100 max-h-48 overflow-y-auto">
+                                {activeTickets.slice(0, 5).map(t => (
+                                    <div key={t.id} className="px-4 py-2.5 flex justify-between items-center">
+                                        <div>
+                                            <p className="font-bold text-gray-900 text-sm">{t.unitNumber}</p>
+                                            <p className="text-[10px] text-gray-500 line-clamp-1">{t.description}</p>
+                                        </div>
+                                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${t.status === "in-progress" ? "bg-blue-100 text-blue-700" : "bg-orange-100 text-orange-700"}`}>{t.status}</span>
+                                    </div>
+                                ))}
+                            </div>
+                            <button onClick={() => onNavigate("active")} className="w-full text-center text-xs font-bold text-orange-700 py-2 bg-orange-100 hover:bg-orange-200 transition border-t border-orange-200">
+                                View All Tasks →
+                            </button>
+                        </div>
+                    )}
+
+                    {/* Recent Activity Feed */}
+                    {recent.length > 0 && (
+                        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                            <div className="px-4 py-3 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+                                <h3 className="text-sm font-bold text-gray-800">🕐 Recent Activity</h3>
+                                <span className="text-[10px] text-gray-400">Last {recent.length} actions</span>
+                            </div>
+                            <div className="divide-y divide-gray-100 max-h-56 overflow-y-auto">
+                                {recent.map((a, i) => (
+                                    <div key={i} className="px-4 py-2.5 flex items-center gap-2">
+                                        <span className="text-base">{a.icon}</span>
+                                        <p className="text-xs text-gray-700 flex-1 line-clamp-1">{a.text}</p>
+                                        <span className="text-[10px] text-gray-400 whitespace-nowrap">{new Date(a.time).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
                 </div>
-            )}
+            </details>
         </div>
     );
 }

@@ -138,10 +138,11 @@ Money going OUT (labour / material / vendor)?
 ## 9. End-of-Day Checklist for the Manager
 
 1. Open **📓 Daily** in **Daily view** → today.
-2. Match **💵 Cash in hand** with the cash you actually have.
+2. Set the mode on any inflow showing **❔ Set mode…**.
 3. Match **📱 UPI / Bank** with the payments received on your phone / bank statement.
 4. Match the **Outflow total** with the receipts you paid out.
-5. Confirm **Net** is what you'll deposit / carry over.
+5. Tap **🔒 Close day**, count the cash, enter it and what you **handed to the owner**. If it doesn't
+   match the expected cash, write why. The day is then locked; the admin can reopen it.
 6. Open **🏘 Monthly** → check anyone still marked **⏳ Rent Pending** or **⚡ Electricity Pending**, and send a **💬 WhatsApp** reminder (pre-filled with the balance) or plan a call for tomorrow.
 7. Logout.
 

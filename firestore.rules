@@ -67,7 +67,7 @@ rules_version = '2';
 //   - tenantEmail: string (optional)
 //   - createdBy: string (optional)
 //
-// Collections: expenses, ledger, dailyLedger, allocations, inventory, documents
+// Collections: expenses, ledger, dailyLedger, dayCloses, allocations, inventory, documents
 // Managed exclusively by Staff (Admin / Employee)
 //
 // Collection: settings
@@ -361,6 +361,23 @@ service cloud.firestore {
       allow read: if isStaff();
       allow create: if isStaff() && softDeleteAudited();
       allow update: if financialUpdateOk();
+      allow delete: if isAdmin();
+    }
+
+    match /dayCloses/{date} {
+      // End-of-day cash close, one per local date. Staff create it; once
+      // closed only an admin can change it (reopen / mark reviewed). Staff
+      // may close a day again only after an admin has reopened it.
+      allow read: if isStaff();
+      allow create: if isStaff() &&
+        request.resource.data.status == 'closed' &&
+        request.resource.data.date == date;
+      allow update: if isAdmin() || (
+        isStaff() &&
+        resource.data.status == 'reopened' &&
+        request.resource.data.status == 'closed' &&
+        request.resource.data.date == date
+      );
       allow delete: if isAdmin();
     }
 

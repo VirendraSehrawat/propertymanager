@@ -23,7 +23,7 @@ Key tabs used in this workflow:
 
 | Tab | Purpose |
 |-----|---------|
-| **🏠 Home** | Daily summary, overdue invoices, tasks, recent activity |
+| **🏠 Home** | **📋 Today** list (what to do now, by building), KPIs, quick actions; month summary, overdue, meters pending, tasks and activity under **📊 More** |
 | **📓 Daily** | The core ledger screen — add deposit/expense entries |
 | **Collections** | See pending invoices; manually mark as paid |
 | **Meter** | Enter monthly meter reading + auto-generate invoice |
@@ -36,6 +36,18 @@ Key tabs used in this workflow:
 ## 3. Core Daily Workflow
 
 Below is the standard sequence an employee follows each day.
+
+**Start with Home → 📋 Today.** It lists, grouped by building in walking order:
+
+| Item | Shows when | Action |
+|---|---|---|
+| 💰 Rent due | the unit's payment day this month has come (no payment day → once the month is over) and a balance is still owed; one row per tenant, totalling all their open invoices | 💳 Record payment · 📞 Call · 💬 WhatsApp |
+| ⚡ Meter round | units still have no reading for this month | Continue round (*"12 of 30 done"*) |
+| 📝 Draft readings | readings were saved without an invoice | 🧾 Generate N invoices |
+| 🔧 Old tickets | a maintenance ticket has been open 3 days or more | Open ticket |
+| 📦 Lease ending | a lease ends within 7 days (or has ended and the unit is still occupied) | 📋 Checklist |
+
+Items disappear on their own once the money is recorded, the reading saved or the ticket resolved.
 
 ### Step A — Record tenant payments in Collections
 
@@ -290,12 +302,22 @@ creates the **first invoice** straight away:
 At the end of each day the employee typically:
 
 1. Opens **📓 Daily** in **Daily view** for today's date.
-2. Confirms:
-   - **💵 Cash in hand** matches the cash collected, and **📱 UPI / Bank** matches payments received digitally.
-   - Total **Outflow** matches receipts / paid labour.
-   - **Net** equals what should be handed over / retained.
-3. Opens **🏘 Monthly** briefly to see if any units still need collection.
-4. Logs out.
+2. Gives a payment mode to any inflow showing **❔ Set mode…** (older rows saved without one).
+3. Taps **🔒 Close day** (covers every building):
+   - **Expected cash** = opening cash + 💵 cash received − outflows. Opening cash is carried from the
+     previous close; on the very first close the employee types it in. All outflows count as cash spent.
+   - **📱 UPI / Bank** is shown separately to match against the phone or bank statement.
+   - Enters the **cash counted** and anything **handed to the owner**. A difference needs a note.
+   - The rest (*counted − handed over*) carries forward as tomorrow's opening cash.
+   - If an earlier day with entries was never closed, it must be closed first.
+4. Opens **🏘 Monthly** briefly to see if any units still need collection.
+5. Logs out.
+
+A closed day is **read-only** in the Daily tab (no new outflows dated that day, no deletes, no mode
+changes). If a payment is recorded in Collections after the close, the close shows *"Entries changed
+after it was closed"*; the admin reopens the day (with a reason) and the employee closes it again. The
+earlier figures are kept in the close's `history`. Closes are stored in `dayCloses/{YYYY-MM-DD}`; admins
+see unreviewed cash differences on their **📅 Daily Ledger** tab and mark them **✓ Reviewed**.
 
 ---
 

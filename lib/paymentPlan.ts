@@ -20,7 +20,7 @@
  */
 
 import { allocatePartialPayment } from "@/lib/allocation";
-import { allocateLumpSum, buildTransactionId, type InvoiceLike, type PaymentMode } from "@/lib/payments";
+import { allocateLumpSum, buildTransactionId, localDateKey, type InvoiceLike, type PaymentMode } from "@/lib/payments";
 import { allocateMasterPayment, type MasterAllocationResult } from "@/lib/masterAllocation";
 import type { Invoice, MasterInvoice } from "@/types";
 
@@ -218,7 +218,8 @@ export function buildSettlePlan(input: SettlePlanInput): PaymentPlan {
     // `outflow` row. Linked back to the invoice via `invoiceId` for traceability.
     const dailyLedgerRow: DailyLedgerRowDraft = {
         data: {
-            date: now.slice(0, 10),
+            // Local (IST) day, matching the Daily tab and its end-of-day close.
+            date: localDateKey(new Date(now)),
             direction: "inflow",
             category,
             amount: Math.max(0, Number(received) || 0),
@@ -308,7 +309,8 @@ export function buildCollectionPaymentPlan(input: CollectionPaymentPlanInput): P
     const advance = ledgerRows.filter((r) => r.type === "credit").reduce((s, r) => s + r.amountPaid, 0);
     const dailyLedgerRow: DailyLedgerRowDraft = {
         data: {
-            date: now.slice(0, 10),
+            // Local (IST) day, matching the Daily tab and its end-of-day close.
+            date: localDateKey(new Date(now)),
             direction: "inflow",
             category,
             amount: received,
@@ -548,7 +550,8 @@ export function buildMasterSettlePlan(input: MasterSettlePlanInput): PaymentPlan
 
     const dailyLedgerRow: DailyLedgerRowDraft = {
         data: {
-            date: now.slice(0, 10),
+            // Local (IST) day, matching the Daily tab and its end-of-day close.
+            date: localDateKey(new Date(now)),
             direction: "inflow",
             category: "Rent (Master)",
             amount: result.appliedTotal,

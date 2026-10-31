@@ -9,6 +9,8 @@ import { auth, db } from "@/lib/firebase";
 import { collection, onSnapshot, doc, updateDoc, arrayUnion, query, where, writeBatch, getDocs, deleteField } from "firebase/firestore";
 import { useUploadWithProgress, UploadProgressBar } from "@/lib/useUpload";
 import { mapSnapshot } from "@/lib/firestore";
+import type { DayClose } from "@/lib/dayClose";
+import { COL } from "@/lib/collections";
 import { buildTransferPlan } from "@/lib/transfer";
 import { collectedOn, localDateKey } from "@/lib/payments";
 import { buildMoveInInvoice, moveInRent } from "@/lib/meterInvoice";
@@ -146,6 +148,7 @@ export default function EmployeeDashboard() {
 
     // Daily Ledger States
     const [dailyLedgerEntries, setDailyLedgerEntries] = useState<DailyLedgerEntry[]>([]);
+    const [dayCloses, setDayCloses] = useState<(DayClose & { id: string })[]>([]);
 
     // Inventory States
     const [allInventory, setAllInventory] = useState<InventoryItem[]>([]);
@@ -218,6 +221,10 @@ export default function EmployeeDashboard() {
             setDailyLedgerEntries(mapSnapshot<DailyLedgerEntry>(snapshot).filter(e => !e.deleted).sort((a, b) => (b.date || "").localeCompare(a.date || "")));
         });
 
+        const unsubDayCloses = onSnapshot(collection(db, COL.dayCloses), (snapshot) => {
+            setDayCloses(mapSnapshot<DayClose>(snapshot).map(c => ({ ...c, date: c.date || c.id })));
+        });
+
         // Rows created since local midnight. If the page stays open past
         // midnight the bound goes stale, but `collectedOn` still filters by day.
         const startOfToday = new Date();
@@ -226,7 +233,7 @@ export default function EmployeeDashboard() {
             setRecentMasterLedgerEntries(mapSnapshot<LedgerEntry>(snapshot));
         });
 
-        return () => { unsubTickets(); unsubUnits(); unsubInvoices(); unsubMasterInvoices(); unsubLedger(); unsubAllUnits(); unsubBuildings(); unsubChecklists(); unsubExpenses(); unsubInventory(); unsubAllocations(); unsubDailyLedger(); unsubMasterLedger(); };
+        return () => { unsubTickets(); unsubUnits(); unsubInvoices(); unsubMasterInvoices(); unsubLedger(); unsubAllUnits(); unsubBuildings(); unsubChecklists(); unsubExpenses(); unsubInventory(); unsubAllocations(); unsubDailyLedger(); unsubDayCloses(); unsubMasterLedger(); };
     }, [role]);
 
     const handleLogout = async () => {
@@ -681,6 +688,7 @@ export default function EmployeeDashboard() {
                         onOpenTodayCollections={() => setIsTodayCollectionsOpen(true)}
                         onRecordPayment={(invoiceId) => { setJumpToInvoiceId(invoiceId); setActiveTab("collections"); }}
                         openTenantProfile={openTenantProfile}
+                        buildings={buildings}
                     />
                 )}
 
@@ -709,7 +717,7 @@ export default function EmployeeDashboard() {
 
                 {/* DAILY LEDGER TAB */}
                 {activeTab === "daily" && (
-                    <DailyLedgerTab entries={dailyLedgerEntries} buildings={buildings} allUnits={allUnits} currentUserEmail={user?.email || ""} onGoToCollections={() => setActiveTab("collections")} />
+                    <DailyLedgerTab entries={dailyLedgerEntries} buildings={buildings} allUnits={allUnits} currentUserEmail={user?.email || ""} onGoToCollections={() => setActiveTab("collections")} dayCloses={dayCloses} />
                 )}
 
                 {/* MONTHLY OVERVIEW TAB */}

@@ -248,6 +248,15 @@ export default function EmployeeHelpPage() {
                                 <li>Attach a <strong>receipt photo</strong> when you can (Cloudinary upload).</li>
                             </ul>
                         </div>
+                        <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                            <p className="font-bold text-gray-800">🔒 Close the day — every evening</p>
+                            <ul className="list-disc pl-5 text-xs mt-1 space-y-0.5 text-gray-700">
+                                <li>Tap <strong>🔒 Close day</strong>. Expected cash = opening cash (carried from the last close) + cash received − outflows.</li>
+                                <li>Count the cash, enter it and anything <strong>handed to the owner</strong>. If it doesn&apos;t match, add a note — the admin sees the difference.</li>
+                                <li>Any inflow showing <strong>❔ Set mode…</strong> must be given a mode first. Earlier unclosed days must be closed first.</li>
+                                <li>A closed day is <strong>read-only</strong>. If something changes later, ask the admin to <strong>reopen</strong> it.</li>
+                            </ul>
+                        </div>
                     </div>
                 </section>
 

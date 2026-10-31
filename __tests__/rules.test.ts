@@ -2,7 +2,7 @@
  * Firestore security-rules tests for financial/audit-integrity hardening.
  *
  * Covers the soft-delete + provenance guards on `dailyLedger`, `expenses`,
- * `ledger` and `ledgerEntries`:
+ * `ledger` and `ledgerEntries`, and the end-of-day close lock on `dayCloses`:
  *   • provenance fields (createdAt/createdBy) are immutable on update
  *   • a soft-delete MUST carry a who/when audit trail
  *   • already-deleted rows are frozen for staff (admin may override)
@@ -162,5 +162,26 @@ describe("expenses — soft-delete audit", () => {
                 deleted: true, deletedBy: "e@x.com", deletedAt: now(),
             }),
         );
+    });
+});
+
+describe("dayCloses — end-of-day close", () => {
+    const close = { date: "2026-10-30", status: "closed", actualCash: 1000, closedBy: "e@x.com", closedAt: now() };
+
+    it("employee CAN close a day, but CANNOT change it once closed", async () => {
+        await assertSucceeds(setDoc(doc(employee(), "dayCloses", "2026-10-30"), close));
+        await assertFails(updateDoc(doc(employee(), "dayCloses", "2026-10-30"), { actualCash: 2000 }));
+        await assertFails(deleteDoc(doc(employee(), "dayCloses", "2026-10-30")));
+    });
+
+    it("the document id must be the closed date", async () => {
+        await assertFails(setDoc(doc(employee(), "dayCloses", "2026-10-31"), close));
+    });
+
+    it("admin CAN reopen; employee CAN close again only after a reopen", async () => {
+        await seed(["dayCloses", "2026-10-30"], close);
+        await assertSucceeds(updateDoc(doc(admin(), "dayCloses", "2026-10-30"), { status: "reopened", reopenedBy: "a@x.com" }));
+        await assertSucceeds(setDoc(doc(employee(), "dayCloses", "2026-10-30"), { ...close, actualCash: 1200 }));
+        await assertFails(updateDoc(doc(employee(), "dayCloses", "2026-10-30"), { status: "reopened" }));
     });
 });
