@@ -268,3 +268,27 @@ describe("CollectionsTab — payment-day order", () => {
         expect(order()).toEqual(["101", "102"]);
     });
 });
+
+describe("CollectionsTab — no double payments (§7.3)", () => {
+    it("a retry after a failed save reuses the same plan and document ids", async () => {
+        const user = userEvent.setup();
+        const { doc } = await import("firebase/firestore");
+        vi.spyOn(window, "alert").mockImplementation(() => {});
+        batchCommit.mockImplementationOnce(() => Promise.reject(new Error("network")));
+        renderTab([invoiceCurrent]);
+        await user.click(screen.getByRole("button", { name: /Settle/ }));
+        await user.click(screen.getByRole("button", { name: /Save ₹6,000/ }));
+        // The first attempt failed; the modal stays open and the user taps Save again.
+        await user.click(screen.getByRole("button", { name: /Save ₹6,000/ }));
+
+        expect(batchCommit).toHaveBeenCalledTimes(2);
+        const keyed = (doc as unknown as { mock: { calls: unknown[][] } }).mock.calls
+            .filter(c => c.length === 3 && (c[1] === "ledger" || c[1] === "dailyLedger"))
+            .map(c => `${c[1]}/${c[2]}`);
+        expect(keyed).toHaveLength(4);
+        expect(keyed.slice(0, 2)).toEqual(keyed.slice(2)); // same ids both times
+        expect(keyed[0]).toMatch(/^ledger\/pay_[a-z0-9]+_[a-z0-9]+_l0$/);
+        // Both attempts wrote the same absolute invoice patch (amountPaid 6,000, not 12,000).
+        expect(batchUpdate.mock.calls.map(c => (c[1] as { amountPaid: number }).amountPaid)).toEqual([6000, 6000]);
+    });
+});

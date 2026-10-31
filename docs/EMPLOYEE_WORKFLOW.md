@@ -32,6 +32,14 @@ Red counts show pending invoices (Collect), open tickets (Tasks) and units still
 (More → Meter). The app reopens on the screen used last on that phone, and a link such as
 `/employee?tab=meter` opens a screen directly — handy for sending a colleague straight to it.
 
+**Poor signal.** Entries (payments, outflows, expenses, meter readings, follow-ups, day close) are saved
+on the phone first and sent when the connection returns. A badge under the header shows **📴 Offline**
+and **⏳ N waiting to sync**; don't clear the browser data until it disappears. Saving twice by accident
+(double tap, or retrying after an error) never records a payment twice. Open the app once while online
+each day; it can be installed to the home screen (browser menu → *Install app* / *Add to Home screen*).
+Older history (more than about 3 months back) loads when you pick an older month or tap **Load all
+history**.
+
 Confirmations, delete reasons and messages appear inside the app (not as browser pop-ups). Deleting an
 entry asks for a reason with one-tap choices (*Duplicate entry*, *Wrong amount*, …). Settling an expense
 happens straight away with an **Undo** button for a few seconds.

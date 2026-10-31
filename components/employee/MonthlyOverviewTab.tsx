@@ -55,6 +55,8 @@ interface Props {
     allLedgerEntries?: FollowUpPayment[];
     /** Staff email; enables 📝 Log follow-up when set. */
     currentUserEmail?: string;
+    /** Called with "YYYY-MM" when an older month is picked, so the page can load it (§7.1). */
+    onNeedHistory?: (ym: string) => void;
 }
 
 const currentMonthISO = () => new Date().toISOString().slice(0, 7);
@@ -74,7 +76,7 @@ const GROUP_META: Record<Group, { label: string; emoji: string; color: string; b
     noInvoice: { label: "No Invoice Yet", emoji: "📭", color: "text-gray-700", bg: "bg-gray-50", border: "border-gray-200" },
 };
 
-export function MonthlyOverviewTab({ allUnits, buildings, allInvoices, allExpenses = [], onRecordPayment, onOpenCollections, onEnterMeter, allLedgerEntries = [], currentUserEmail }: Props) {
+export function MonthlyOverviewTab({ allUnits, buildings, allInvoices, allExpenses = [], onRecordPayment, onOpenCollections, onEnterMeter, allLedgerEntries = [], currentUserEmail, onNeedHistory }: Props) {
     const [followUpFor, setFollowUpFor] = useState<{ unit: Unit; remaining: number } | null>(null);
     const [selectedMonth, setSelectedMonth] = useState<string>(currentMonthISO());
     const [buildingFilter, setBuildingFilter] = useState<string>("");
@@ -298,7 +300,7 @@ export function MonthlyOverviewTab({ allUnits, buildings, allInvoices, allExpens
                 <div className="p-4 space-y-4">
                     {/* Month & Building selectors */}
                     <div className="grid grid-cols-2 gap-2">
-                        <input type="month" value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)} className="px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+                        <input type="month" value={selectedMonth} onChange={(e) => { setSelectedMonth(e.target.value); onNeedHistory?.(e.target.value); }} className="px-3 py-2 border border-gray-300 rounded-lg text-sm" />
                         <select value={buildingFilter} onChange={(e) => setBuildingFilter(e.target.value)} className="px-3 py-2 border border-gray-300 rounded-lg text-sm">
                             <option value="">All Buildings</option>
                             {buildings.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}

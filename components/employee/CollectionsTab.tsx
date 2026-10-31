@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { doc, updateDoc, deleteField } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { COL } from "@/lib/collections";
@@ -13,6 +13,9 @@ import {
 } from "@/lib/allocation";
 import { buildCollectionPaymentPlan, buildMasterSettlePlan } from "@/lib/paymentPlan";
 import { commitPaymentPlan } from "@/lib/commitPaymentPlan";
+import { reuseOrStart, type PendingPayment } from "@/lib/idempotency";
+import { useSubmitGuard } from "@/lib/useSubmitGuard";
+import type { PaymentPlan } from "@/lib/paymentPlan";
 import { invoiceContact, matchesInvoiceSearch, unitsById } from "@/lib/invoiceSearch";
 import { dueInfo, dueLabel, isSameTenant, sortByDue } from "@/lib/paymentDue";
 import { followUpStatus } from "@/lib/followUp";
@@ -21,6 +24,7 @@ import { notifyPaymentRecorded } from "@/lib/notify";
 import { askReason, confirmAction, toast } from "@/components/ui";
 import { SettlePaymentModal, type SettlePaymentSubmit } from "./modals/SettlePaymentModal";
 import { SettleMasterInvoiceModal, type SettleMasterSubmit } from "./modals/SettleMasterInvoiceModal";
+import { savedMessage } from "@/lib/offlineQueue";
 
 interface CollectionsTabProps {
     allInvoices: Invoice[];
@@ -259,7 +263,13 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
         !i.masterInvoiceId,
     );
 
-    const handleConfirmSettle = async (payload: SettlePaymentSubmit) => {
+    // §7.3: a double tap is ignored, and a retry of the same payment (after an
+    // error or timeout) reuses the same plan and idempotency key, so the cash is
+    // never recorded twice. Cleared once the payment is saved.
+    const submitGuard = useSubmitGuard();
+    const pendingPayment = useRef<PendingPayment<PaymentPlan> | null>(null);
+
+    const handleConfirmSettle = (payload: SettlePaymentSubmit) => submitGuard(async () => {
         if (!settleInvoice) return;
         const inv = settleInvoice;
         const { received, mode, reference, note } = payload;
@@ -272,16 +282,20 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
             // Amounts above this invoice's balance clear the unit's other
             // pending invoices oldest-first; any remainder becomes an advance.
             // See docs/ATOMIC_TRANSACTIONS_PLAN.md (Phase 3).
-            const plan = buildCollectionPaymentPlan({
-                invoice: inv,
-                otherPending: otherPendingFor(inv),
-                received,
-                mode,
-                reference,
-                note,
-                settledBy: userEmail,
-            });
-            const { ledgerIds } = await commitPaymentPlan(db, plan);
+            const pending = reuseOrStart(pendingPayment.current, `${inv.id}|${received}|${mode}|${reference.trim()}|${note.trim()}`, () =>
+                buildCollectionPaymentPlan({
+                    invoice: inv,
+                    otherPending: otherPendingFor(inv),
+                    received,
+                    mode,
+                    reference,
+                    note,
+                    settledBy: userEmail,
+                }));
+            pendingPayment.current = pending;
+            const { plan } = pending;
+            const { ledgerIds, outcome } = await commitPaymentPlan(db, plan, { idempotencyKey: pending.key });
+            pendingPayment.current = null;
             // Fire-and-forget Telegram notification per invoice paid (outside the atomic unit).
             plan.ledgerRows.forEach((row, i) => {
                 if (!row.invoiceId) return; // advance/credit — not tied to an invoice
@@ -295,16 +309,16 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                 });
             });
             const credit = plan.ledgerRows.find(r => r.type === "credit");
-            if (credit) toast.info(`🪙 ₹${credit.amountPaid.toLocaleString()} recorded as an advance for ${inv.unitNumber}.`);
-            else toast.success(`Payment of ₹${received.toLocaleString()} recorded for ${inv.unitNumber}.`);
+            if (credit) toast.info(savedMessage(outcome, `🪙 ₹${credit.amountPaid.toLocaleString()} recorded as an advance for ${inv.unitNumber}.`));
+            else toast.success(savedMessage(outcome, `Payment of ₹${received.toLocaleString()} recorded for ${inv.unitNumber}.`));
             setSettleInvoice(null);
         } catch (error) {
             console.error(error);
-            toast.error("Failed to settle invoice.");
+            toast.error("Failed to settle invoice. If you try again with the same amount, it won't be recorded twice.");
         } finally {
             setIsSettling("");
         }
-    };
+    });
 
     // Helper: get all open (unpaid/pending) invoices for a tenant from previous months only,
     // excluding the invoice being generated/edited and optionally excluding same-month invoices.
@@ -392,7 +406,8 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
         .slice()
         .sort((a, b) => (a.billingPeriod || "").localeCompare(b.billingPeriod || ""));
 
-    async function handleMasterSettle(m: MasterInvoice, payload: SettleMasterSubmit) {
+    const pendingMasterPayment = useRef<PendingPayment<PaymentPlan> | null>(null);
+    const handleMasterSettle = (m: MasterInvoice, payload: SettleMasterSubmit) => submitGuard(async () => {
         setIsSettlingMaster(true);
         try {
             const children = allInvoices.filter(inv => m.childInvoiceIds.includes(inv.id));
@@ -400,23 +415,27 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
             // per-child `master-payment` ledger rows, and the single
             // consolidated daily-ledger inflow — and commit it in ONE atomic
             // batch. See docs/ATOMIC_TRANSACTIONS_PLAN.md (Phase 5).
-            const plan = buildMasterSettlePlan({
-                master: m,
-                children,
-                received: payload.received,
-                mode: payload.mode,
-                reference: payload.reference,
-                note: payload.note,
-                settledBy: userEmail,
-            });
-            await commitPaymentPlan(db, plan);
+            const pending = reuseOrStart(pendingMasterPayment.current, `${m.id}|${payload.received}|${payload.mode}|${payload.reference.trim()}|${payload.note.trim()}`, () =>
+                buildMasterSettlePlan({
+                    master: m,
+                    children,
+                    received: payload.received,
+                    mode: payload.mode,
+                    reference: payload.reference,
+                    note: payload.note,
+                    settledBy: userEmail,
+                }));
+            pendingMasterPayment.current = pending;
+            const { outcome } = await commitPaymentPlan(db, pending.plan, { idempotencyKey: pending.key });
+            pendingMasterPayment.current = null;
+            toast.success(savedMessage(outcome, `Payment of ₹${payload.received.toLocaleString()} recorded for ${m.tenantName || "the corporate invoice"}.`));
             setSettleMaster(null);
         } catch (e) {
             toast.error(e instanceof Error ? e.message : String(e));
         } finally {
             setIsSettlingMaster(false);
         }
-    }
+    });
 
     return (
         <>

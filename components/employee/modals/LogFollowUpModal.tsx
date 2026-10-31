@@ -7,6 +7,8 @@ import { COL } from "@/lib/collections";
 import { Modal } from "@/components/ui";
 import { dateKey } from "@/lib/paymentDue";
 import { buildFollowUp, followUpErrors, followUpStatus, FOLLOW_UP_OUTCOMES, tenantFollowUps, type FollowUpOutcome, type FollowUpPayment, type FollowUpUnit } from "@/lib/followUp";
+import { commitOrQueue, savedMessage } from "@/lib/offlineQueue";
+import { toast } from "@/components/ui";
 
 export interface FollowUpTarget extends FollowUpUnit {
     unitNumber: string;
@@ -68,7 +70,8 @@ function FollowUpForm({ unit, onClose, currentUserEmail, remaining, payments = [
                 now: now.toISOString(),
                 id: `fu_${now.getTime()}`,
             });
-            await updateDoc(doc(db, COL.units, unit.id), { followUps: arrayUnion(entry) });
+            const outcome = await commitOrQueue(updateDoc(doc(db, COL.units, unit.id), { followUps: arrayUnion(entry) }));
+            if (outcome === "queued") toast.info(savedMessage(outcome, "Follow-up logged."));
             onClose();
         } catch (err) {
             console.error(err);

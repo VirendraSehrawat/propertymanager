@@ -16,6 +16,8 @@
 
 import { collection, doc, writeBatch, type Firestore } from "firebase/firestore";
 import { COL } from "@/lib/collections";
+import { dailyRowId, ledgerRowId } from "@/lib/idempotency";
+import { commitOrQueue, type CommitOutcome } from "@/lib/offlineQueue";
 import {
     assertPlanInvariant,
     countPlanWrites,
@@ -36,6 +38,8 @@ export interface CommitResult {
     dailyLedgerId?: string;
     /** Total number of document writes committed. */
     writes: number;
+    /** "queued" when the phone was offline / the server slow: saved locally, syncs later (§7.2). */
+    outcome: CommitOutcome;
 }
 
 /**
@@ -51,7 +55,16 @@ export interface CommitResult {
 export async function commitPaymentPlan(
     db: Firestore,
     plan: PaymentPlan,
+    opts: {
+        /**
+         * Makes the commit idempotent (§7.3): new rows get ids derived from the
+         * key, so committing the same plan again overwrites them instead of
+         * recording the payment twice. See lib/idempotency.ts.
+         */
+        idempotencyKey?: string;
+    } = {},
 ): Promise<CommitResult> {
+    const key = opts.idempotencyKey;
     // Re-check the invariant at the boundary — a hand-assembled plan must not
     // be able to write an invoice change without its ledger row.
     assertPlanInvariant(plan);
@@ -86,22 +99,22 @@ export async function commitPaymentPlan(
 
     // 4. Insert ledger rows with pre-minted ids.
     const ledgerIds: string[] = [];
-    for (const row of plan.ledgerRows) {
+    plan.ledgerRows.forEach((row, i) => {
         const { collection: col, ...data } = row;
-        const ref = doc(collection(db, COL[col]));
+        const ref = key ? doc(db, COL[col], ledgerRowId(key, i)) : doc(collection(db, COL[col]));
         batch.set(ref, data);
         ledgerIds.push(ref.id);
-    }
+    });
 
     // 5. Insert the optional daily-ledger inflow row.
     let dailyLedgerId: string | undefined;
     if (plan.dailyLedgerRow) {
-        const ref = doc(collection(db, COL.dailyLedger));
+        const ref = key ? doc(db, COL.dailyLedger, dailyRowId(key)) : doc(collection(db, COL.dailyLedger));
         batch.set(ref, plan.dailyLedgerRow.data);
         dailyLedgerId = ref.id;
     }
 
-    await batch.commit();
+    const outcome = await commitOrQueue(batch.commit());
 
-    return { ledgerIds, dailyLedgerId, writes };
+    return { ledgerIds, dailyLedgerId, writes, outcome };
 }

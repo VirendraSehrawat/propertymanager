@@ -51,6 +51,8 @@ export default function EmployeeHelpPage() {
                     <p>Use the bar at the bottom: <strong>🏠 Home</strong> · <strong>💳 Collect</strong> (Collections, Monthly) · <strong>📓 Books</strong> (Daily, Expenses, Ledger) · <strong>🔧 Tasks</strong> (Open, Done) · <strong>☰ More</strong> (Meter, Units, Occupancy, Checklist, Inventory, Help). Switch between the screens of a section with the buttons at the top.</p>
                     <p>The app reopens where you left off. To send someone straight to a screen, share a link like <code>/employee?tab=meter</code>.</p>
                     <p>Deleting asks for a reason (tap a common one or type your own). After settling an expense you can tap <strong>Undo</strong> for a few seconds.</p>
+                    <p><strong>No signal?</strong> Keep working — entries are saved on the phone and sent later. The badge at the top shows <strong>⏳ N waiting to sync</strong> until they reach the server. Open the app once while online each day, and install it from the browser menu (<em>Add to Home screen</em>).</p>
+                    <p>Lists show about the last 3 months. Pick an older month, or tap <strong>Load all history</strong>, to see more.</p>
                 </section>
 
                 {/* WHAT THE INVOICE COVERS */}

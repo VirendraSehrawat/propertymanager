@@ -1,6 +1,6 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider } from "firebase/auth";
-import { getFirestore } from "firebase/firestore";
+import { getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager, type Firestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 
 const firebaseConfig = {
@@ -15,7 +15,25 @@ const firebaseConfig = {
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 
 export const auth = getAuth(app);
-export const db = getFirestore(app);
+/**
+ * In the browser, Firestore keeps a persistent local cache (IndexedDB) so the
+ * staff app keeps working with poor signal: reads come from the cache and
+ * writes are queued and sent when the connection returns (§7.2 of
+ * docs/EMPLOYEE_WORKFLOW_IMPROVEMENTS.md, backlog G1). Several open tabs share
+ * it. On the server (API routes) and when IndexedDB is unavailable (private
+ * mode, tests) the default memory cache is used.
+ */
+function createDb(): Firestore {
+    if (typeof window === "undefined" || typeof indexedDB === "undefined") return getFirestore(app);
+    try {
+        return initializeFirestore(app, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) });
+    } catch {
+        // Already initialised (e.g. hot reload) — reuse that instance.
+        return getFirestore(app);
+    }
+}
+
+export const db = createDb();
 export const storage = getStorage(app);
 
 export const googleProvider = new GoogleAuthProvider();

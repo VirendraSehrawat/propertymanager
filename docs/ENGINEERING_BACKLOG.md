@@ -179,7 +179,7 @@ Telegram client is implemented. Scheduling/reminders are not.
 
 | ID | Title | Type | Priority | Size |
 |----|-------|------|----------|------|
-| G1 | **PWA / offline support** for employees collecting cash with poor connectivity | ✨ | P2 | L |
+| G1 | **PWA / offline support** for employees collecting cash with poor connectivity — *partly done 31 Oct 2026: persistent Firestore cache, queued saves with a sync badge, installable manifest (see EMPLOYEE_WORKFLOW_IMPROVEMENTS §7.2). Still open: service worker for offline reloads.* | ✨ | P2 | L |
 | G2 | Global **search** across tenants/units/invoices | ✨ | P3 | M |
 | G3 | **Multi-language** (Hindi/regional) toggle on tenant screens | ✨ | P3 | L |
 | G4 | Accessibility pass (focus states, aria labels, `Modal` focus-trap) + mobile responsiveness review | 🧹 | P2 | M |

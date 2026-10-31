@@ -17,7 +17,9 @@ import {
 } from "@/lib/meterInvoice";
 import { useUploadWithProgress } from "@/lib/useUpload";
 import type { Unit, Invoice, MeterDraft } from "@/types";
-import { confirmAction } from "@/components/ui";
+import { confirmAction, toast as notify } from "@/components/ui";
+import { useSubmitGuard } from "@/lib/useSubmitGuard";
+import { commitOrQueue } from "@/lib/offlineQueue";
 
 interface MeterTabProps {
     occupiedUnits: Unit[];
@@ -31,6 +33,8 @@ interface MeterTabProps {
     initialBillingMonth?: string;
     /** Called once the initial unit/month have been applied. */
     onInitialConsumed?: () => void;
+    /** Called with "YYYY-MM" when an older billing month is picked, so the page can load it (§7.1). */
+    onNeedHistory?: (ym: string) => void;
 }
 
 /** Firestore write for a built invoice: merge the fields, delete the cleared ones. */
@@ -74,7 +78,8 @@ function draftToInput(draft: MeterDraft): MeterInput {
  * automatically, and saving moves straight on to the next one. A reading can
  * also be saved as a draft on the unit and turned into invoices later in one go.
  */
-export function MeterTab({ occupiedUnits, allInvoices, electricityRate, buildings = [], initialUnitId = "", initialBillingMonth = "", onInitialConsumed }: MeterTabProps) {
+export function MeterTab({ occupiedUnits, allInvoices, electricityRate, buildings = [], initialUnitId = "", initialBillingMonth = "", onInitialConsumed, onNeedHistory }: MeterTabProps) {
+    const submitGuard = useSubmitGuard(); // ignore double taps on the generate buttons (§7.3)
     // A deep-linked unit with a draft reading for the month opens with that reading filled in.
     const [initialDraft] = useState(() => {
         const draft = occupiedUnits.find((u) => u.id === initialUnitId)?.meterDraft;
@@ -225,10 +230,28 @@ export function MeterTab({ occupiedUnits, allInvoices, electricityRate, building
 
     const uploadPhoto = async (unit: Unit): Promise<string | undefined> => {
         if (!meterPhoto) return undefined;
-        return uploadFile(meterPhotoPath(unit.id, billingMonth, meterPhoto.name), meterPhoto);
+        try {
+            return await uploadFile(meterPhotoPath(unit.id, billingMonth, meterPhoto.name), meterPhoto);
+        } catch (err) {
+            // No signal for the upload: keep the reading, drop the photo (§7.2).
+            console.warn("Meter photo upload failed, saving without it", err);
+            notify.info("The meter photo couldn't upload (no signal) — the reading is saved without it.");
+            return undefined;
+        }
     };
 
-    const handleGenerateMeterInvoice = async (e: React.FormEvent) => {
+    /** The existing invoice for this unit and month, from the server — or, offline, from the loaded list (§7.2). */
+    const readExistingInvoice = async (invoiceId: string): Promise<(ExistingInvoice & { billingPeriod?: string }) | null> => {
+        try {
+            const snap = await getDoc(doc(db, "invoices", invoiceId));
+            return snap.exists() ? (snap.data() as ExistingInvoice & { billingPeriod?: string }) : null;
+        } catch {
+            const local = allInvoices.find((i) => i.id === invoiceId);
+            return local ? (local as unknown as ExistingInvoice & { billingPeriod?: string }) : null;
+        }
+    };
+
+    const handleGenerateMeterInvoice = (e: React.FormEvent) => submitGuard(async () => {
         e.preventDefault();
         if (!validateEntry() || !selectedUnit || !input) return;
         if (!(await confirmBillingMonth())) return;
@@ -238,8 +261,7 @@ export function MeterTab({ occupiedUnits, allInvoices, electricityRate, building
         setFormError("");
         try {
             const invoiceId = meterInvoiceId(unit.id, billingMonth);
-            const existingSnap = await getDoc(doc(db, "invoices", invoiceId));
-            const existing = existingSnap.exists() ? (existingSnap.data() as ExistingInvoice & { billingPeriod?: string }) : null;
+            const existing = await readExistingInvoice(invoiceId);
             // Check the decision before uploading, so a blocked invoice doesn't leave an orphan photo.
             const dryRun = buildMeterInvoice({ unit, billingMonth, input, defaultRate: electricityRate, invoices: allInvoices, existing });
             if (dryRun.decision.kind === "blocked") {
@@ -270,7 +292,7 @@ export function MeterTab({ occupiedUnits, allInvoices, electricityRate, building
                 lastMeterReading: result.lastMeterReading,
                 ...(unit.meterDraft ? { meterDraft: deleteField() } : {}),
             });
-            await batch.commit();
+            await commitOrQueue(batch.commit());
 
             // Fire-and-forget Telegram notification (admin + tenant if linked).
             notifyInvoiceCreated(invoiceId);
@@ -291,7 +313,7 @@ export function MeterTab({ occupiedUnits, allInvoices, electricityRate, building
         } finally {
             setIsGeneratingInvoice(false);
         }
-    };
+    });
 
     /** Save the reading on the unit without an invoice; generate invoices later in one go. */
     const handleSaveDraft = async () => {
@@ -314,7 +336,7 @@ export function MeterTab({ occupiedUnits, allInvoices, electricityRate, building
             };
             const batch = writeBatch(db);
             batch.update(doc(db, "units", unit.id), { meterDraft: draft });
-            await batch.commit();
+            await commitOrQueue(batch.commit());
 
             const drafts = { ...localDrafts, [unit.id]: draft };
             setLocalDrafts(drafts);
@@ -332,7 +354,7 @@ export function MeterTab({ occupiedUnits, allInvoices, electricityRate, building
     };
 
     /** Turn every draft reading for the billing month into an invoice. */
-    const handleGenerateDrafts = async () => {
+    const handleGenerateDrafts = () => submitGuard(async () => {
         const drafted = round.stops.filter((s) => s.drafted && s.unit.meterDraft);
         if (!drafted.length) return;
         if (!(await confirmAction({
@@ -358,9 +380,8 @@ export function MeterTab({ occupiedUnits, allInvoices, electricityRate, building
                 }
                 try {
                     const invoiceId = meterInvoiceId(unit.id, billingMonth);
-                    const existingSnap = await getDoc(doc(db, "invoices", invoiceId));
                     // Never override in bulk — an existing invoice needs a person to look at it.
-                    if (existingSnap.exists()) {
+                    if (await readExistingInvoice(invoiceId)) {
                         skipped.push(`${unit.unitNumber} (invoice already exists)`);
                         continue;
                     }
@@ -368,7 +389,7 @@ export function MeterTab({ occupiedUnits, allInvoices, electricityRate, building
                     const batch = writeBatch(db);
                     batch.set(doc(db, "invoices", invoiceId), invoiceWrite(result), { merge: true });
                     batch.update(doc(db, "units", unit.id), { lastMeterReading: result.lastMeterReading, meterDraft: deleteField() });
-                    await batch.commit();
+                    await commitOrQueue(batch.commit());
                     notifyInvoiceCreated(invoiceId);
                     saved.add(unit.id);
                     drafts[unit.id] = null;
@@ -387,7 +408,7 @@ export function MeterTab({ occupiedUnits, allInvoices, electricityRate, building
             `✅ ${total} invoice${total === 1 ? "" : "s"} generated` +
             (skipped.length ? ` · Skipped: ${skipped.join(", ")}` : ""),
         );
-    };
+    });
 
     const visibleStops = round.stops.filter((s) => showAllUnits || (!s.done && !s.drafted) || s.unit.id === activeUnitId);
     const stopsByBuilding = visibleStops.reduce<Record<string, typeof visibleStops>>((acc, stop) => {
@@ -498,7 +519,7 @@ export function MeterTab({ occupiedUnits, allInvoices, electricityRate, building
 
                 <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Billing Month</label>
-                    <input type="month" required value={billingMonth} onChange={(e) => { setBillingMonth(e.target.value); setSavedUnitIds(new Set()); setSelectedMeterUnit(""); resetReadingFields(); }} className="w-full px-3 py-2.5 border border-gray-300 rounded-lg" />
+                    <input type="month" required value={billingMonth} onChange={(e) => { setBillingMonth(e.target.value); onNeedHistory?.(e.target.value); setSavedUnitIds(new Set()); setSelectedMeterUnit(""); resetReadingFields(); }} className="w-full px-3 py-2.5 border border-gray-300 rounded-lg" />
                     {billingMonth && (() => {
                         const rp = computeRentPeriod(billingMonth, Number(selectedUnit?.paymentDay) || undefined);
                         const ep = computeElectricityPeriod(billingMonth);

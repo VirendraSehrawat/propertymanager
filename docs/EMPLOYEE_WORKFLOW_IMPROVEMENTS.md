@@ -20,10 +20,10 @@ where in the code it applies. Effort is marked **S** (under a day), **M** (a few
 
 *Updated: 31 Oct 2026*
 
-**Done (21):** 1.1, 1.2, 1.3, 1.4, 1.6 · 2.1, 2.2, 2.3, 2.4, 2.5 · 3.1–3.5 · 4.4, 4.5 · 6.1–6.4. Each is marked ✅ in its section with what shipped.
+**Done (24):** 1.1, 1.2, 1.3, 1.4, 1.6 · 2.1, 2.2, 2.3, 2.4, 2.5 · 3.1–3.5 · 4.4, 4.5 · 6.1–6.4 · 7.1–7.3. Each is marked ✅ in its section with what shipped.
 Sections 1 (Collecting money) and 2 (Meter readings and invoicing) are complete except **1.5 Receipts**.
 
-**Next up (open quick wins):** 3.8, 4.2, 4.9, 4.13, 7.3.
+**Next up (open quick wins):** 3.8, 4.2, 4.9, 4.13.
 
 ---
 
@@ -600,6 +600,8 @@ of the app.
 ## 7. Reliability on the ground
 
 ### 7.1 Load only what the screen needs — M
+> ✅ **Done (31 Oct 2026).** The employee page loads invoices, the payment ledger, the Daily ledger and tickets from a **history window** — this month and the 3 before (`lib/historyWindow.ts`) — plus everything still open whatever its age (unpaid / part-paid / written-off invoices, open tickets), so balances, Overdue and Today are unaffected. Invoices paid in the window are included (`paidAt`). Picking an older month in Monthly, Meter or Home, or an older date in Daily, widens the window automatically; Ledger, Collections, Done tasks and the tenant profile show *"🕘 … since 1 Jul 2026 · Load all history"*. Only single-field filters are used, so no new Firestore indexes. Small collections (units, buildings, expenses, allocations, day closes, checklists, inventory) are still loaded in full — the expense fund needs every settled expense. The admin page is unchanged.
+
 **Problem.** The dashboard opens **12 live `onSnapshot` listeners on whole collections** (`invoices`,
 `ledger`, `dailyLedger`, `expenses`, `maintenance`, …) on page load. As history grows, the app gets
 slower to open on mobile data and uses more Firestore reads.
@@ -609,6 +611,10 @@ this month's `dailyLedger`, and open tickets. Load history on demand (Ledger tab
 older months).
 
 ### 7.2 Offline-tolerant entry — L
+> ✅ **Done (31 Oct 2026), first version.** Firestore's **persistent local cache** is on in the browser (`lib/firebase.ts`, shared across tabs), so screens work from the cache and writes queue offline. Saves go through `commitOrQueue` (`lib/offlineQueue.ts`): if the phone is offline or the server hasn't answered in 6 s, the form closes with *"Saved on this phone — it will sync when you're back online"* instead of spinning. Used for payments (Collections), Daily outflows / deletes / modes, expenses, meter invoices and drafts, follow-ups and day closes. A header badge shows **📴 Offline**, **⏳ N waiting to sync** and **⚠️ N didn't sync** (a queued write the server later rejected). The Meter tab falls back to the loaded invoices when it can't check the server, and saves the reading without the photo if the upload fails. `app/manifest.ts` makes the app installable (opens on `/employee`).
+>
+> **Replay check (`commitPaymentPlan`):** a payment is one batch with absolute invoice values and key-derived row ids (7.3), so the queued batch is applied exactly once and a retry can't double it. **Known limits:** if two people record payments on the same invoice while one is offline, the later sync wins (last-writer-wins on `amountPaid`); there is no service worker yet, so the app must be opened once online before working offline, and a full reload offline won't load the page; data cached on the phone stays there after logout (fine on staff phones, not on shared devices).
+
 **Problem.** Employees collect cash in basements and stairwells with poor signal.
 
 **Suggestion.** Turn on Firestore's persistent local cache so writes queue offline, show a
@@ -617,6 +623,8 @@ the engineering backlog. Before enabling it for payments, check that the client-
 (`commitPaymentPlan`) still behaves correctly when writes are replayed.
 
 ### 7.3 Prevent double-submits — S
+> ✅ **Done (31 Oct 2026).** Forms already disabled Save while saving; a ref-based `useSubmitGuard` now also ignores a second tap that lands before the re-render (Collections, corporate settle, Daily outflow, Expenses, Meter generate / bulk generate, Day close). Payments carry an **idempotency key** (`lib/idempotency.ts`): ledger and Daily-ledger rows get ids derived from it, and a retry of the same payment (same invoice, amount, mode, reference, note) reuses the stored plan and key, so it overwrites the same documents with the same values instead of recording the cash twice.
+
 **Suggestion.** Disable the submit button while saving everywhere (Daily already does this; check
 the Meter, Checklist and Expenses forms), and add an idempotency key on payment writes so a
 double tap or retry can't record the same cash twice.
@@ -638,9 +646,9 @@ double tap or retry can't record the same cash twice.
 
 | Phase | Items | Outcome |
 |---|---|---|
-| **Quick wins (1 week)** | ✅ 1.1, ✅ 1.2, ✅ 1.4, ✅ 1.6, ✅ 2.2, ✅ 2.4, ✅ 3.1, ✅ 3.5, 3.8, ✅ 4.4, ✅ 4.5, 4.2, 4.9, 4.13, ✅ 6.3, 7.3 | Correct numbers, fewer data errors, faster daily use |
+| **Quick wins (1 week)** | ✅ 1.1, ✅ 1.2, ✅ 1.4, ✅ 1.6, ✅ 2.2, ✅ 2.4, ✅ 3.1, ✅ 3.5, 3.8, ✅ 4.4, ✅ 4.5, 4.2, 4.9, 4.13, ✅ 6.3, ✅ 7.3 | Correct numbers, fewer data errors, faster daily use |
 | **Workflow (2–3 weeks)** | ✅ 1.3, 1.5, ✅ 2.1, ✅ 2.3, 4.1, 4.6, 4.14, ✅ 6.2 | One payment path, fast meter rounds, receipts |
-| **Structure (3–4 weeks)** | ✅ 3.2, ✅ 3.3, 3.6, 3.9, ✅ 6.1, 7.1, 4.3, 4.7, 4.12 | Today list grouped by building, tracked day close with owner digest, simpler navigation, faster load |
-| **Later** | ✅ 2.5, ✅ 3.4, 3.7, 3.10, 5.x, 7.2, 4.8, 4.10, 4.11, 4.15 | Routine calendar, ageing review, automation and offline support |
+| **Structure (3–4 weeks)** | ✅ 3.2, ✅ 3.3, 3.6, 3.9, ✅ 6.1, ✅ 7.1, 4.3, 4.7, 4.12 | Today list grouped by building, tracked day close with owner digest, simpler navigation, faster load |
+| **Later** | ✅ 2.5, ✅ 3.4, 3.7, 3.10, 5.x, ✅ 7.2, 4.8, 4.10, 4.11, 4.15 | Routine calendar, ageing review, automation and offline support |
 
 ✅ = done. 2.5 and 3.4 were brought forward.

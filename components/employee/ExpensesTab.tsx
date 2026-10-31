@@ -10,6 +10,8 @@ import { buildExpenseWrite, closedDayError, softDeletePatch, todayLocal } from "
 import type { DayClose } from "@/lib/dayClose";
 import { rememberBuilding, rememberedBuilding } from "@/lib/prefs";
 import type { Allocation, Building, Expense } from "@/types";
+import { useSubmitGuard } from "@/lib/useSubmitGuard";
+import { commitOrQueue, savedMessage } from "@/lib/offlineQueue";
 
 interface ExpensesTabProps {
     allExpenses: Expense[];
@@ -43,6 +45,7 @@ export function ExpensesTab({ allExpenses, allAllocations, buildings, userEmail,
     const [expenseBuilding, setExpenseBuilding] = useState("");
     const [expenseReceipt, setExpenseReceipt] = useState<File | null>(null);
     const [isSubmittingExpense, setIsSubmittingExpense] = useState(false);
+    const submitGuard = useSubmitGuard(); // ignore a double tap on Log Expense (§7.3)
 
     // --- Allocation modal ---
     const [isAllocationModalOpen, setIsAllocationModalOpen] = useState(false);
@@ -93,7 +96,7 @@ export function ExpensesTab({ allExpenses, allAllocations, buildings, userEmail,
     // pre-minted ids, cross-linked (`expenses.dailyLedgerId` <-> `dailyLedger.expenseId`)
     // so soft-delete cascades across both and a dropped connection never
     // leaves half an expense behind.
-    const handleAddExpense = async (e: React.FormEvent) => {
+    const handleAddExpense = (e: React.FormEvent) => submitGuard(async () => {
         e.preventDefault();
         if (!expenseAmount || !expenseDesc) return;
         const dateStr = expenseDate || todayLocal();
@@ -123,7 +126,7 @@ export function ExpensesTab({ allExpenses, allAllocations, buildings, userEmail,
             const batch = writeBatch(db);
             batch.set(expenseRef, expense);
             batch.set(ledgerRef, ledger);
-            await batch.commit();
+            const outcome = await commitOrQueue(batch.commit());
 
             setIsExpenseModalOpen(false);
             setExpenseAmount("");
@@ -132,14 +135,14 @@ export function ExpensesTab({ allExpenses, allAllocations, buildings, userEmail,
             setExpenseDate("");
             setExpenseBuilding("");
             setExpenseReceipt(null);
-            toast.success("Expense logged (also visible in Daily Ledger).");
+            toast.success(savedMessage(outcome, "Expense logged (also visible in Daily Ledger)."));
         } catch (error) {
             console.error(error);
             toast.error("Failed to log expense.");
         } finally {
             setIsSubmittingExpense(false);
         }
-    };
+    });
 
     const handleSoftDeleteExpense = async (exp: Expense) => {
         if (exp.deleted) return;
@@ -153,8 +156,7 @@ export function ExpensesTab({ allExpenses, allAllocations, buildings, userEmail,
             const batch = writeBatch(db);
             batch.update(doc(db, "expenses", exp.id), patch);
             if (exp.dailyLedgerId) batch.update(doc(db, "dailyLedger", exp.dailyLedgerId), patch);
-            await batch.commit();
-            toast.success("Expense deleted (and removed from the Daily ledger).");
+            toast.success(savedMessage(await commitOrQueue(batch.commit()), "Expense deleted (and removed from the Daily ledger)."));
         } catch (error) { console.error(error); toast.error("Failed to delete expense."); }
     };
 
@@ -209,7 +211,7 @@ export function ExpensesTab({ allExpenses, allAllocations, buildings, userEmail,
     // Settling is applied straight away with an Undo, instead of a blocking confirm.
     const handleToggleExpenseSettled = async (exp: Expense, opts: { undo?: boolean } = {}) => {
         try {
-            await updateDoc(doc(db, "expenses", exp.id), buildSettlementUpdate(exp.settled, userEmail, deleteField()) as Record<string, unknown>);
+            await commitOrQueue(updateDoc(doc(db, "expenses", exp.id), buildSettlementUpdate(exp.settled, userEmail, deleteField()) as Record<string, unknown>));
             if (!opts.undo) {
                 const settledNow = !exp.settled;
                 toast.success(

@@ -17,6 +17,9 @@ import {
     type DayClose,
     type DayCloseEntry,
 } from "@/lib/dayClose";
+import { useSubmitGuard } from "@/lib/useSubmitGuard";
+import { commitOrQueue, savedMessage } from "@/lib/offlineQueue";
+import { toast } from "@/components/ui";
 
 interface DayClosePanelProps {
     /** Day shown in the Daily tab (YYYY-MM-DD). */
@@ -48,6 +51,7 @@ export function DayClosePanel({ date, today, entries, closes, currentUserEmail, 
     const [handedInput, setHandedInput] = useState("");
     const [note, setNote] = useState("");
     const [isSaving, setIsSaving] = useState(false);
+    const submitGuard = useSubmitGuard(); // ignore a double tap on Close day (§7.3)
     const [saveError, setSaveError] = useState("");
     const [reopenReason, setReopenReason] = useState("");
     const [isReopening, setIsReopening] = useState(false);
@@ -71,7 +75,7 @@ export function DayClosePanel({ date, today, entries, closes, currentUserEmail, 
         setIsOpen(true);
     };
 
-    const handleClose = async (e: React.FormEvent) => {
+    const handleClose = (e: React.FormEvent) => submitGuard(async () => {
         e.preventDefault();
         if (errors.length > 0) return;
         setIsSaving(true);
@@ -82,7 +86,8 @@ export function DayClosePanel({ date, today, entries, closes, currentUserEmail, 
                 closedBy: currentUserEmail, now: new Date().toISOString(),
                 existing: close?.status === "reopened" ? close : null,
             });
-            await setDoc(doc(db, COL.dayCloses, date), record);
+            const outcome = await commitOrQueue(setDoc(doc(db, COL.dayCloses, date), record));
+            toast.success(savedMessage(outcome, `${date} closed.`));
             setIsOpen(false);
         } catch (err) {
             console.error(err);
@@ -90,7 +95,7 @@ export function DayClosePanel({ date, today, entries, closes, currentUserEmail, 
         } finally {
             setIsSaving(false);
         }
-    };
+    });
 
     const handleReopen = async () => {
         if (!reopenReason.trim()) return;

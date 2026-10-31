@@ -9,6 +9,9 @@ import { auth, db } from "@/lib/firebase";
 import { collection, onSnapshot, doc, updateDoc, arrayUnion, query, where, writeBatch, getDocs } from "firebase/firestore";
 import { useUploadWithProgress, UploadProgressBar } from "@/lib/useUpload";
 import { mapSnapshot } from "@/lib/firestore";
+import { extendHistory, historyStart, subscribeMerged } from "@/lib/historyWindow";
+import { HistoryNotice } from "@/components/employee/HistoryNotice";
+import { SyncStatus } from "@/components/employee/SyncStatus";
 import type { DayClose } from "@/lib/dayClose";
 import { COL } from "@/lib/collections";
 import { buildTransferPlan } from "@/lib/transfer";
@@ -75,6 +78,9 @@ export default function EmployeeDashboard() {
 
     // Ledger state
     const [allLedgerEntries, setAllLedgerEntries] = useState<LedgerEntry[]>([]);
+    // Start of the loaded history (§7.1): YYYY-MM-DD, or "" once everything is loaded.
+    const [historyFrom, setHistoryFrom] = useState(() => historyStart(new Date()));
+    const ensureHistory = useCallback((target: string) => setHistoryFrom(current => extendHistory(current, target)), []);
     // Corporate master-invoice payment rows live in `ledgerEntries`; only
     // today's are needed (for "Collected Today"), so the listener is scoped.
     const [recentMasterLedgerEntries, setRecentMasterLedgerEntries] = useState<LedgerEntry[]>([]);
@@ -178,30 +184,12 @@ export default function EmployeeDashboard() {
     useEffect(() => {
         if (role !== "employee") return;
 
-        const unsubTickets = onSnapshot(collection(db, "maintenance"), (snapshot) => {
-            const allTickets = mapSnapshot<MaintenanceTicket>(snapshot);
-
-            // Sort newest first
-            allTickets.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-
-            setActiveTickets(allTickets.filter(t => t.status !== "resolved"));
-            setResolvedTickets(allTickets.filter(t => t.status === "resolved"));
-        });
-
         const unsubUnits = onSnapshot(query(collection(db, "units"), where("status", "==", "occupied")), (snapshot) => {
             setOccupiedUnits(mapSnapshot<Unit>(snapshot).sort((a, b) => a.unitNumber.localeCompare(b.unitNumber, undefined, { numeric: true })));
         });
 
-        const unsubInvoices = onSnapshot(collection(db, "invoices"), (snapshot) => {
-            setAllInvoices(mapSnapshot<Invoice>(snapshot));
-        });
-
         const unsubMasterInvoices = onSnapshot(collection(db, "masterInvoices"), (snapshot) => {
             setMasterInvoices(mapSnapshot<MasterInvoice>(snapshot));
-        });
-
-        const unsubLedger = onSnapshot(collection(db, "ledger"), (snapshot) => {
-            setAllLedgerEntries(mapSnapshot<LedgerEntry>(snapshot).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
         });
 
         const unsubAllUnits = onSnapshot(collection(db, "units"), (snapshot) => {
@@ -228,10 +216,6 @@ export default function EmployeeDashboard() {
             setAllAllocations(mapSnapshot<Allocation>(snapshot).sort((a, b) => new Date(b.date || b.createdAt).getTime() - new Date(a.date || a.createdAt).getTime()));
         });
 
-        const unsubDailyLedger = onSnapshot(collection(db, "dailyLedger"), (snapshot) => {
-            setDailyLedgerEntries(mapSnapshot<DailyLedgerEntry>(snapshot).filter(e => !e.deleted).sort((a, b) => (b.date || "").localeCompare(a.date || "")));
-        });
-
         const unsubDayCloses = onSnapshot(collection(db, COL.dayCloses), (snapshot) => {
             setDayCloses(mapSnapshot<DayClose>(snapshot).map(c => ({ ...c, date: c.date || c.id })));
         });
@@ -249,8 +233,58 @@ export default function EmployeeDashboard() {
             setRecentMasterLedgerEntries(mapSnapshot<LedgerEntry>(snapshot));
         });
 
-        return () => { unsubTickets(); unsubUnits(); unsubInvoices(); unsubMasterInvoices(); unsubLedger(); unsubAllUnits(); unsubBuildings(); unsubChecklists(); unsubExpenses(); unsubInventory(); unsubAllocations(); unsubDailyLedger(); unsubDayCloses(); unsubReminders(); unsubMasterLedger(); };
+        return () => { unsubUnits(); unsubMasterInvoices(); unsubAllUnits(); unsubBuildings(); unsubChecklists(); unsubExpenses(); unsubInventory(); unsubAllocations(); unsubDayCloses(); unsubReminders(); unsubMasterLedger(); };
     }, [role]);
+
+    // §7.1: the large collections are loaded from a history window (default: this
+    // month and the 3 before), plus anything still open whatever its age. Screens
+    // that need older data widen the window with `ensureHistory`.
+    useEffect(() => {
+        if (role !== "employee") return;
+        const since = historyFrom; // YYYY-MM-DD, or "" for everything
+        const sinceIso = since ? new Date(`${since}T00:00:00`).toISOString() : "";
+
+        // Invoices: every open one, plus those created, paid or written off in the window.
+        const unsubInvoices = subscribeMerged<Invoice>(
+            since
+                ? [
+                    query(collection(db, COL.invoices), where("status", "in", ["unpaid", "pending", "written-off"])),
+                    query(collection(db, COL.invoices), where("createdAt", ">=", sinceIso)),
+                    query(collection(db, COL.invoices), where("paidAt", ">=", sinceIso)),
+                ]
+                : [query(collection(db, COL.invoices))],
+            setAllInvoices,
+        );
+
+        // Payment history rows created in the window.
+        const unsubLedger = subscribeMerged<LedgerEntry>(
+            [since ? query(collection(db, COL.ledger), where("createdAt", ">=", sinceIso)) : query(collection(db, COL.ledger))],
+            rows => setAllLedgerEntries(rows.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())),
+        );
+
+        // Daily ledger rows dated in the window.
+        const unsubDailyLedger = subscribeMerged<DailyLedgerEntry>(
+            [since ? query(collection(db, COL.dailyLedger), where("date", ">=", since)) : query(collection(db, COL.dailyLedger))],
+            rows => setDailyLedgerEntries(rows.filter(e => !e.deleted).sort((a, b) => (b.date || "").localeCompare(a.date || ""))),
+        );
+
+        // Tickets: every open one, plus those resolved in the window.
+        const unsubTickets = subscribeMerged<MaintenanceTicket>(
+            since
+                ? [
+                    query(collection(db, COL.maintenance), where("status", "in", ["pending", "in-progress"])),
+                    query(collection(db, COL.maintenance), where("resolvedAt", ">=", sinceIso)),
+                ]
+                : [query(collection(db, COL.maintenance))],
+            tickets => {
+                tickets.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+                setActiveTickets(tickets.filter(t => t.status !== "resolved"));
+                setResolvedTickets(tickets.filter(t => t.status === "resolved"));
+            },
+        );
+
+        return () => { unsubInvoices(); unsubLedger(); unsubDailyLedger(); unsubTickets(); };
+    }, [role, historyFrom]);
 
     const handleLogout = async () => {
         await signOut(auth);
@@ -616,6 +650,8 @@ export default function EmployeeDashboard() {
                     ❓ Help
                 </Link>
             </nav>
+            {/* Offline / waiting-to-sync badge (§7.2). */}
+            <div className="max-w-2xl mx-auto px-4 pt-2 empty:hidden"><SyncStatus /></div>
 
             <main className="p-4 max-w-2xl mx-auto space-y-6 mt-2">
 
@@ -685,7 +721,7 @@ export default function EmployeeDashboard() {
                         allLedgerEntries={allLedgerEntries}
                         todayCollected={todayCollected}
                         homeMonth={homeMonth}
-                        setHomeMonth={setHomeMonth}
+                        setHomeMonth={(m) => { setHomeMonth(m); ensureHistory(m); }}
                         onNavigate={setActiveTab}
                         onOpenTodayCollections={() => setIsTodayCollectionsOpen(true)}
                         onRecordPayment={(invoiceId) => { setJumpToInvoiceId(invoiceId); setActiveTab("collections"); }}
@@ -697,6 +733,9 @@ export default function EmployeeDashboard() {
                 )}
 
                 {/* COLLECTIONS TAB */}
+                {activeTab === "collections" && (
+                    <HistoryNotice from={historyFrom} onLoadAll={() => ensureHistory("all")} what="Paid invoices and payment history" />
+                )}
                 {activeTab === "collections" && (
                     <CollectionsTab allInvoices={allInvoices} occupiedUnits={occupiedUnits} electricityRate={electricityRate} openTenantProfile={openTenantProfile} allLedgerEntries={allLedgerEntries} masterInvoices={masterInvoices} userEmail={user?.email || "employee"} jumpToInvoiceId={jumpToInvoiceId} onJumpConsumed={() => setJumpToInvoiceId("")} />
                 )}
@@ -711,22 +750,27 @@ export default function EmployeeDashboard() {
                         initialUnitId={meterJump?.unitId}
                         initialBillingMonth={meterJump?.billingMonth}
                         onInitialConsumed={() => setMeterJump(null)}
+                        onNeedHistory={ensureHistory}
                     />
                 )}
 
                 {/* LEDGER TAB */}
                 {activeTab === "ledger" && (
-                    <LedgerTab allLedgerEntries={allLedgerEntries} occupiedUnits={occupiedUnits} />
+                    <>
+                        <HistoryNotice from={historyFrom} onLoadAll={() => ensureHistory("all")} what="Payments" />
+                        <LedgerTab allLedgerEntries={allLedgerEntries} occupiedUnits={occupiedUnits} />
+                    </>
                 )}
 
                 {/* DAILY LEDGER TAB */}
                 {activeTab === "daily" && (
-                    <DailyLedgerTab entries={dailyLedgerEntries} buildings={buildings} allUnits={allUnits} currentUserEmail={user?.email || ""} onGoToCollections={() => setActiveTab("collections")} dayCloses={dayCloses} />
+                    <DailyLedgerTab onNeedHistory={ensureHistory} entries={dailyLedgerEntries} buildings={buildings} allUnits={allUnits} currentUserEmail={user?.email || ""} onGoToCollections={() => setActiveTab("collections")} dayCloses={dayCloses} />
                 )}
 
                 {/* MONTHLY OVERVIEW TAB */}
                 {activeTab === "monthly" && (
                     <MonthlyOverviewTab
+                        onNeedHistory={ensureHistory}
                         allUnits={allUnits}
                         buildings={buildings}
                         allInvoices={allInvoices}
@@ -805,6 +849,9 @@ export default function EmployeeDashboard() {
                 )}
 
                 {/* TICKET LIST */}
+                {activeTab === "resolved" && (
+                    <HistoryNotice from={historyFrom} onLoadAll={() => ensureHistory("all")} what="Resolved tasks" />
+                )}
                 {(activeTab === "active" || activeTab === "resolved") && (
                     <TicketsTab
                         tickets={activeTab === "active" ? activeTickets : resolvedTickets}
@@ -865,6 +912,7 @@ export default function EmployeeDashboard() {
                             <details>
                                 <summary className="text-sm font-bold text-gray-800 mb-2 cursor-pointer">📜 Invoice & Payment History</summary>
                                 <div className="mt-2 max-h-56 overflow-y-auto space-y-2">
+                                    <HistoryNotice from={historyFrom} onLoadAll={() => ensureHistory("all")} what="Invoices and payments" />
                                     {(() => {
                                         const invs = allInvoices
                                             .filter(inv => inv.unitId === profileUnit.id)

@@ -11,6 +11,8 @@ import { isDayClosed, type DayClose } from "@/lib/dayClose";
 import { DayClosePanel } from "./DayClosePanel";
 import { softDeletePatch } from "@/lib/expenseWrite";
 import { rememberBuilding, rememberedBuilding } from "@/lib/prefs";
+import { useSubmitGuard } from "@/lib/useSubmitGuard";
+import { commitOrQueue, savedMessage } from "@/lib/offlineQueue";
 
 interface DailyLedgerEntry {
     id: string;
@@ -53,6 +55,8 @@ interface Props {
     dayCloses?: DayClose[];
     /** Admin: may reopen closed days and review cash differences. */
     canReopenDays?: boolean;
+    /** Called with a date or month when an older one is picked, so the page can load it (§7.1). */
+    onNeedHistory?: (dateOrMonth: string) => void;
 }
 
 const OUTFLOW_CATEGORIES = ["labour", "material", "utilities", "repair", "other"];
@@ -67,11 +71,12 @@ const NON_CASH_MODES = ["upi", "bank", "cheque", "other"] as const;
  * to Expenses. Inflows are NOT entered here: tenant payments are recorded in
  * Collections, which writes the matching inflow row to this ledger.
  */
-export function DailyLedgerTab({ entries, buildings, allUnits, currentUserEmail, onGoToCollections, dayCloses = [], canReopenDays = false }: Props) {
+export function DailyLedgerTab({ entries, buildings, allUnits, currentUserEmail, onGoToCollections, dayCloses = [], canReopenDays = false, onNeedHistory }: Props) {
     const [viewMode, setViewMode] = useState<"daily" | "monthly">("daily");
     const [selectedDate, setSelectedDate] = useState(todayISO());
     const [selectedMonth, setSelectedMonth] = useState(currentMonthISO());
     const [buildingFilter, setBuildingFilter] = useState("");
+    const selectDate = (date: string) => { setSelectedDate(date); onNeedHistory?.(date); };
 
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [category, setCategory] = useState(OUTFLOW_CATEGORIES[0]);
@@ -86,6 +91,7 @@ export function DailyLedgerTab({ entries, buildings, allUnits, currentUserEmail,
     const [vendor, setVendor] = useState("");
     const [receiptFile, setReceiptFile] = useState<File | null>(null);
     const [isSaving, setIsSaving] = useState(false);
+    const submitGuard = useSubmitGuard(); // ignore a double tap on Save (§7.3)
     const { uploadFile, uploadProgress, isUploading, resetProgress } = useUploadWithProgress();
 
     const resetForm = () => {
@@ -108,7 +114,7 @@ export function DailyLedgerTab({ entries, buildings, allUnits, currentUserEmail,
     );
 
 
-    const handleSubmit = async (e: React.FormEvent) => {
+    const handleSubmit = (e: React.FormEvent) => submitGuard(async () => {
         e.preventDefault();
         if (!amount || Number(amount) <= 0) { toast.error("Enter a valid amount."); return; }
         if (isDayClosed(dayCloses, entryDate || todayISO())) { toast.error("That day is closed. Ask the admin to reopen it, or pick another date."); return; }
@@ -173,18 +179,18 @@ export function DailyLedgerTab({ entries, buildings, allUnits, currentUserEmail,
                 createdBy: currentUserEmail || "",
                 createdAt: new Date().toISOString(),
             });
-            await batch.commit();
+            const outcome = await commitOrQueue(batch.commit());
 
             setIsModalOpen(false);
             resetForm();
-            toast.success("Outflow saved (also in Expenses).");
+            toast.success(savedMessage(outcome, "Outflow saved (also in Expenses)."));
         } catch (err) {
             console.error(err);
             toast.error("Failed to save entry.");
         } finally {
             setIsSaving(false);
         }
-    };
+    });
 
     const handleDelete = async (entry: DailyLedgerEntry) => {
         const reason = await askReason({ title: `Delete ${entry.direction} entry of ₹${Number(entry.amount).toLocaleString()}?`, message: entry.description || entry.category });
@@ -195,8 +201,7 @@ export function DailyLedgerTab({ entries, buildings, allUnits, currentUserEmail,
             const batch = writeBatch(db);
             batch.update(doc(db, COL.dailyLedger, entry.id), patch);
             if (entry.expenseId) batch.update(doc(db, COL.expenses, entry.expenseId), patch);
-            await batch.commit();
-            toast.success("Entry deleted.");
+            toast.success(savedMessage(await commitOrQueue(batch.commit()), "Entry deleted."));
         }
         catch (err) { console.error(err); toast.error("Failed to delete."); }
     };
@@ -204,11 +209,11 @@ export function DailyLedgerTab({ entries, buildings, allUnits, currentUserEmail,
     // Give a mode to an older inflow saved without one, so the day can be closed.
     const handleSetMode = async (entry: DailyLedgerEntry, paymentMode: string) => {
         try {
-            await updateDoc(doc(db, COL.dailyLedger, entry.id), {
+            await commitOrQueue(updateDoc(doc(db, COL.dailyLedger, entry.id), {
                 paymentMode,
                 modeSetBy: currentUserEmail || "",
                 modeSetAt: new Date().toISOString(),
-            });
+            }));
         } catch (err) { console.error(err); toast.error("Failed to save the payment mode."); }
     };
     const isLocked = (entry: DailyLedgerEntry) => isDayClosed(dayCloses, entry.date);
@@ -264,9 +269,9 @@ export function DailyLedgerTab({ entries, buildings, allUnits, currentUserEmail,
                     {/* Date/Month + Building filter */}
                     <div className="grid grid-cols-2 gap-2">
                         {viewMode === "daily" ? (
-                            <input type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} className="px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+                            <input type="date" value={selectedDate} onChange={(e) => selectDate(e.target.value)} className="px-3 py-2 border border-gray-300 rounded-lg text-sm" />
                         ) : (
-                            <input type="month" value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)} className="px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+                            <input type="month" value={selectedMonth} onChange={(e) => { setSelectedMonth(e.target.value); onNeedHistory?.(e.target.value); }} className="px-3 py-2 border border-gray-300 rounded-lg text-sm" />
                         )}
                         <select value={buildingFilter} onChange={(e) => setBuildingFilter(e.target.value)} className="px-3 py-2 border border-gray-300 rounded-lg text-sm">
                             <option value="">All Buildings</option>
@@ -310,7 +315,7 @@ export function DailyLedgerTab({ entries, buildings, allUnits, currentUserEmail,
                             closes={dayCloses}
                             currentUserEmail={currentUserEmail || ""}
                             canReopen={canReopenDays}
-                            onSelectDate={setSelectedDate}
+                            onSelectDate={selectDate}
                         />
                     )}
 
