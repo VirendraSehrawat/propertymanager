@@ -25,6 +25,7 @@ import { askReason, confirmAction, toast } from "@/components/ui";
 import { SettlePaymentModal, type SettlePaymentSubmit } from "./modals/SettlePaymentModal";
 import { SettleMasterInvoiceModal, type SettleMasterSubmit } from "./modals/SettleMasterInvoiceModal";
 import { savedMessage } from "@/lib/offlineQueue";
+import { FirstTimeHint } from "./FirstTimeHint";
 
 interface CollectionsTabProps {
     allInvoices: Invoice[];
@@ -440,6 +441,11 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
     return (
         <>
             <div className="space-y-4">
+                <FirstTimeHint id="collections" title="Recording a payment" helpHref="/employee/help#collect">
+                    <p>Every rupee a tenant hands over is recorded here — it also goes into today&apos;s Daily ledger.</p>
+                    <p>Tap <b>✓ Settle</b> on the invoice (<b>➕ Add Payment</b> if it is part-paid), pick the mode (cash, UPI, bank…) and add the UPI or bank reference. Got less than the full amount? Tap <b>Other amount…</b>. More than the bill? The extra clears older dues first, then is kept as an advance.</p>
+                    <p>The list is sorted by <b>due date</b>; use <b>📝 Log follow-up</b> to note what the tenant said.</p>
+                </FirstTimeHint>
                 <div className="bg-white rounded-xl shadow-sm border border-indigo-200 p-4">
                     <label className="block text-sm font-medium text-gray-700 mb-2">Billing Month</label>
                     <select value={collectionFilter} onChange={(e) => setCollectionFilter(e.target.value)} className="w-full px-3 py-2.5 border border-gray-300 rounded-lg font-medium">

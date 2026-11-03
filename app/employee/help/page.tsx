@@ -24,6 +24,8 @@ export default function EmployeeHelpPage() {
                     </div>
                     <div className="p-5 grid grid-cols-2 sm:grid-cols-3 gap-2 text-sm">
                         {[
+                            ["🧭", "Finding your way", "navigation"],
+                            ["🏠", "Home & Today", "today"],
                             ["💰", "What the invoice covers", "invoice-covers"],
                             ["📅", "Payment Day", "payment-day"],
                             ["⚡", "Meter Readings", "meter"],
@@ -32,6 +34,9 @@ export default function EmployeeHelpPage() {
                             ["🔁", "Partial Payments", "partial"],
                             ["🏦", "Daily Ledger", "ledger"],
                             ["🧹", "Expenses & Fund", "expenses"],
+                            ["🏘", "Monthly overview", "monthly"],
+                            ["🔧", "Maintenance tasks", "tasks"],
+                            ["📋", "Checklist & Inventory", "checklist"],
                             ["🏘️", "Units & Tenants", "units"],
                             ["🗑️", "Soft-Delete", "delete"],
                             ["🔒", "Manager-only", "manager"],
@@ -46,13 +51,72 @@ export default function EmployeeHelpPage() {
                 </section>
 
                 {/* FINDING YOUR WAY */}
-                <section className="bg-white rounded-xl shadow-sm border border-gray-200 p-5 text-sm text-gray-700 space-y-2">
+                <section id="navigation" className="bg-white rounded-xl shadow-sm border border-gray-200 p-5 text-sm text-gray-700 space-y-2 scroll-mt-20">
                     <h2 className="text-base font-bold text-gray-900">🧭 Finding your way</h2>
-                    <p>Use the bar at the bottom: <strong>🏠 Home</strong> · <strong>💳 Collect</strong> (Collections, Monthly) · <strong>📓 Books</strong> (Daily, Expenses, Ledger) · <strong>🔧 Tasks</strong> (Open, Done) · <strong>☰ More</strong> (Meter, Units, Occupancy, Checklist, Inventory, Help). Switch between the screens of a section with the buttons at the top.</p>
+                    <p>Use the bar at the bottom: <strong>🏠 Home</strong> · <strong>💳 Collect</strong> (Collections, Monthly) · <strong>📓 Books</strong> (Daily, Expenses, Ledger) · <strong>🔧 Tasks</strong> (Open, Done) · <strong>☰ More</strong> (Meter, Units, Occupancy, Checklist, Inventory, Help). Switch between the screens of a section with the buttons at the top. The <strong>❓</strong> next to them opens the part of this guide for the screen you are on.</p>
                     <p>The app reopens where you left off. To send someone straight to a screen, share a link like <code>/employee?tab=meter</code>.</p>
                     <p>Deleting asks for a reason (tap a common one or type your own). After settling an expense you can tap <strong>Undo</strong> for a few seconds.</p>
                     <p><strong>No signal?</strong> Keep working — entries are saved on the phone and sent later. The badge at the top shows <strong>⏳ N waiting to sync</strong> until they reach the server. Open the app once while online each day, and install it from the browser menu (<em>Add to Home screen</em>).</p>
                     <p>Lists show about the last 3 months. Pick an older month, or tap <strong>Load all history</strong>, to see more.</p>
+                </section>
+
+                <section id="today" className="bg-white rounded-xl shadow-sm border border-orange-200 overflow-hidden scroll-mt-20">
+                    <div className="bg-orange-50 px-6 py-4 border-b border-orange-200">
+                        <h2 className="text-lg font-bold text-orange-800">🏠 Home & the Today list</h2>
+                    </div>
+                    <div className="p-6 space-y-2 text-sm text-gray-700">
+                        <p>Start every day on <strong>Home → 📋 Today</strong>. It lists what needs doing, grouped by building in walking order:</p>
+                        <ul className="list-disc pl-5 space-y-1">
+                            <li><strong>💰 Rent due</strong> — the unit&apos;s payment day has come and money is still owed. Tap <strong>💳 Record payment</strong>, <strong>📞 Call</strong>, <strong>💬 WhatsApp</strong> or <strong>📝 Log follow-up</strong>.</li>
+                            <li><strong>Promised today</strong> / <strong>Broken promise</strong> — from follow-ups you logged. Tenants who promised a later date are left out until that day.</li>
+                            <li><strong>🔔 Reminded</strong> — the tenant got an automatic Telegram reminder today; chase the others first.</li>
+                            <li><strong>⚡ Meter round</strong> and <strong>📝 Draft readings</strong> — readings still to take or invoices still to generate this month.</li>
+                            <li><strong>🔧 Old tickets</strong> (open 3+ days) and <strong>📦 Lease ending</strong> (within 7 days).</li>
+                        </ul>
+                        <p>Items disappear once the payment is recorded, the reading saved or the ticket resolved. The month summary, overdue list and activity are under <strong>📊 More</strong> on Home.</p>
+                    </div>
+                </section>
+
+                <section id="monthly" className="bg-white rounded-xl shadow-sm border border-emerald-200 overflow-hidden scroll-mt-20">
+                    <div className="bg-emerald-50 px-6 py-4 border-b border-emerald-200">
+                        <h2 className="text-lg font-bold text-emerald-800">🏘 Monthly overview</h2>
+                    </div>
+                    <div className="p-6 space-y-2 text-sm text-gray-700">
+                        <p><strong>Collect → Monthly</strong> shows every occupied unit for a month, grouped as <strong>✅ Rent Paid</strong>, <strong>⏳ Rent Pending</strong>, <strong>⚡ Electricity Pending</strong> and <strong>📭 No Invoice Yet</strong>. Use it to plan the collection walk.</p>
+                        <ul className="list-disc pl-5 space-y-1">
+                            <li>Each pending row has <strong>💳 Record payment</strong>, <strong>📞 Call</strong>, <strong>💬 WhatsApp</strong> (pre-filled with the balance still owed) and <strong>📝 Log follow-up</strong>.</li>
+                            <li><strong>⚡ Enter meter</strong> on a No Invoice Yet row opens the Meter screen on that unit; <strong>📝 Draft saved</strong> means the reading is taken and only the invoice is missing.</li>
+                            <li>Picking an older month loads that month automatically.</li>
+                        </ul>
+                    </div>
+                </section>
+
+                <section id="tasks" className="bg-white rounded-xl shadow-sm border border-orange-200 overflow-hidden scroll-mt-20">
+                    <div className="bg-orange-50 px-6 py-4 border-b border-orange-200">
+                        <h2 className="text-lg font-bold text-orange-800">🔧 Maintenance tasks</h2>
+                    </div>
+                    <div className="p-6 space-y-2 text-sm text-gray-700">
+                        <p><strong>Tasks → Open</strong> lists every open ticket, newest first; <strong>Done</strong> lists resolved ones (the last few months — tap <strong>Load all history</strong> for older).</p>
+                        <ul className="list-disc pl-5 space-y-1">
+                            <li><strong>🚨 Report an Issue</strong> for a unit or a common area, with a category, a description and optional photos or videos.</li>
+                            <li>Move a ticket to <strong>in progress</strong> when you start, and add comments as you go — the tenant can follow it.</li>
+                            <li><strong>Resolve</strong> needs a <strong>proof-of-fix photo</strong>; a completion note is optional.</li>
+                            <li>A ticket open for 3 days or more appears in Home → Today.</li>
+                        </ul>
+                    </div>
+                </section>
+
+                <section id="checklist" className="bg-white rounded-xl shadow-sm border border-pink-200 overflow-hidden scroll-mt-20">
+                    <div className="bg-pink-50 px-6 py-4 border-b border-pink-200">
+                        <h2 className="text-lg font-bold text-pink-800">📋 Checklist, 📦 Inventory & 📊 Occupancy</h2>
+                    </div>
+                    <div className="p-6 space-y-2 text-sm text-gray-700">
+                        <ul className="list-disc pl-5 space-y-1">
+                            <li><strong>📋 Checklist</strong> (☰ More): pick <strong>Move-in</strong> or <strong>Move-out</strong> and the unit, then add each room with its condition, any damage and a photo. A move-out checklist can record a <strong>security-deposit deduction</strong>, which is taken off the refund when the tenant is removed.</li>
+                            <li><strong>📦 Inventory</strong>: items kept in each building (quantity, location, condition). Use <strong>−</strong> / <strong>+</strong> to update the count as things are used or bought.</li>
+                            <li><strong>📊 Occupancy</strong>: occupied and vacant units per building at a glance.</li>
+                        </ul>
+                    </div>
                 </section>
 
                 {/* WHAT THE INVOICE COVERS */}
@@ -294,7 +358,8 @@ export default function EmployeeHelpPage() {
                     <div className="p-6 space-y-4 text-sm text-gray-700">
                         <div>
                             <h3 className="font-bold text-gray-800 mb-1">9a. Assigning a tenant</h3>
-                            <p>Only vacant units accept new tenants. Fields: name, phone, email, <strong>payment day</strong>, <strong>security deposit</strong>. The unit becomes <code>occupied</code>.</p>
+                            <p>Only vacant units accept new tenants. Fields: name, phone, email, <strong>payment day</strong>, <strong>security deposit</strong>, <strong>move-in date</strong> and the <strong>opening meter reading</strong>. The unit becomes <code>occupied</code>.</p>
+                            <p className="mt-1"><strong>📄 Generate first invoice now</strong> (on by default) bills rent from the move-in date to the first payment day of next month, pro-rated per day. Electricity starts from the opening reading at the next Meter round. Payment day, deposit and electricity rate can be changed later in the tenant profile (<strong>📅 Payment &amp; Security → Save</strong>).</p>
                         </div>
                         <div>
                             <h3 className="font-bold text-gray-800 mb-1">9b. Removing a tenant</h3>
@@ -418,7 +483,7 @@ export default function EmployeeHelpPage() {
                     </div>
                 </section>
 
-                <p className="text-center text-xs text-gray-400 pt-2">Last updated 8 September 2026 · If a rule here disagrees with the app, the app is authoritative — please notify the manager.</p>
+                <p className="text-center text-xs text-gray-400 pt-2">Last updated 31 October 2026 · If a rule here disagrees with the app, the app is authoritative — please notify the manager.</p>
             </main>
         </div>
     );

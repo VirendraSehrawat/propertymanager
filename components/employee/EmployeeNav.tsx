@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { Modal } from "@/components/ui";
-import { NAV_GROUPS, TAB_LABELS, groupOf, type EmployeeTab, type NavGroupId } from "@/lib/employeeNav";
+import { NAV_GROUPS, TAB_LABELS, groupOf, helpHref, type EmployeeTab, type NavGroupId } from "@/lib/employeeNav";
 
 interface EmployeeNavProps {
     activeTab: EmployeeTab;
@@ -18,32 +18,47 @@ const Badge = ({ n, className = "" }: { n?: number; className?: string }) =>
 /**
  * Bottom navigation for the employee dashboard (§6.1): Home · Collect · Books
  * · Tasks · More, a segmented switch between the screens of the current group
- * (e.g. Collections | Monthly), and a "More" sheet for the less frequent ones.
+ * (e.g. Collections | Monthly) with a ❓ link to that screen's help, and a
+ * "More" sheet for the less frequent ones.
  */
 export function EmployeeSubTabs({ activeTab, onSelect, badges = {} }: EmployeeNavProps) {
     const group = groupOf(activeTab);
-    if (group.tabs.length < 2) return null;
+    const current = TAB_LABELS[activeTab];
+    // ❓ opens the guide at the section for this screen (§8).
+    const help = (
+        <Link href={helpHref(activeTab)} aria-label={`Help: ${current.label}`} title={`Help: ${current.label}`} className="shrink-0 min-h-11 min-w-11 inline-flex items-center justify-center rounded-lg bg-white border border-gray-200 text-base hover:bg-gray-50">
+            ❓
+        </Link>
+    );
+    if (group.tabs.length < 2) return <div className="flex justify-end">{help}</div>;
     if (group.id === "more") {
-        const t = TAB_LABELS[activeTab];
-        return <p className="text-xs font-bold text-gray-500 uppercase tracking-wide px-1">☰ More · {t.icon} {t.label}</p>;
+        return (
+            <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-bold text-gray-500 uppercase tracking-wide px-1">☰ More · {current.icon} {current.label}</p>
+                {help}
+            </div>
+        );
     }
     return (
-        <div role="tablist" aria-label={group.label} className="flex bg-gray-200 rounded-lg p-1 gap-1">
-            {group.tabs.map(tab => {
-                const t = TAB_LABELS[tab];
-                const active = tab === activeTab;
-                return (
-                    <button
-                        key={tab}
-                        role="tab"
-                        aria-selected={active}
-                        onClick={() => onSelect(tab)}
-                        className={`flex-1 min-h-11 rounded-md text-sm font-bold flex items-center justify-center gap-1.5 transition ${active ? "bg-white text-gray-900 shadow-sm" : "text-gray-600 hover:bg-gray-100"}`}
-                    >
-                        {t.icon} {t.label} <Badge n={badges[tab]} />
-                    </button>
-                );
-            })}
+        <div className="flex items-center gap-2">
+            <div role="tablist" aria-label={group.label} className="flex-1 flex bg-gray-200 rounded-lg p-1 gap-1">
+                {group.tabs.map(tab => {
+                    const t = TAB_LABELS[tab];
+                    const active = tab === activeTab;
+                    return (
+                        <button
+                            key={tab}
+                            role="tab"
+                            aria-selected={active}
+                            onClick={() => onSelect(tab)}
+                            className={`flex-1 min-h-11 rounded-md text-sm font-bold flex items-center justify-center gap-1.5 transition ${active ? "bg-white text-gray-900 shadow-sm" : "text-gray-600 hover:bg-gray-100"}`}
+                        >
+                            {t.icon} {t.label} <Badge n={badges[tab]} />
+                        </button>
+                    );
+                })}
+            </div>
+            {help}
         </div>
     );
 }

@@ -20,6 +20,7 @@ import type { Unit, Invoice, MeterDraft } from "@/types";
 import { confirmAction, toast as notify } from "@/components/ui";
 import { useSubmitGuard } from "@/lib/useSubmitGuard";
 import { commitOrQueue } from "@/lib/offlineQueue";
+import { FirstTimeHint } from "./FirstTimeHint";
 
 interface MeterTabProps {
     occupiedUnits: Unit[];
@@ -419,283 +420,290 @@ export function MeterTab({ occupiedUnits, allInvoices, electricityRate, building
     const readCount = round.doneCount + round.draftCount;
 
     return (
-        <div className="bg-white rounded-xl shadow-sm border border-purple-200 overflow-hidden">
-            <div className="bg-purple-50 px-5 py-4 border-b border-purple-100">
-                <h2 className="text-lg font-bold text-purple-800">⚡ Record Meter Reading & Generate Invoice</h2>
-                <p className="text-xs text-purple-600 mt-1">Enter readings to calculate electricity bill. Default rate ₹{electricityRate}/unit — per-tenant rate can be set in the Tenant Profile.</p>
-            </div>
-
-            <div className="mx-5 mt-4 bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-900">
-                <p className="font-bold flex items-center gap-1">📌 How this invoice works</p>
-                <ul className="mt-1 space-y-0.5 list-disc list-inside">
-                    <li><strong>🏠 Rent</strong> is for the <strong>upcoming month</strong> (from tenant&apos;s payment day).</li>
-                    <li><strong>⚡ Electricity</strong> is for the <strong>month that just ended</strong> — the units read now were consumed last month.</li>
-                </ul>
-                {billingMonth && (() => {
-                    const rp = computeRentPeriod(billingMonth, Number(selectedUnit?.paymentDay) || undefined);
-                    const ep = computeElectricityPeriod(billingMonth);
-                    return (
-                        <div className="mt-2 pt-2 border-t border-amber-200 grid grid-cols-1 sm:grid-cols-2 gap-1.5 font-medium">
-                            <p>🏠 <span className="text-amber-700">Collecting rent for:</span> {rp}</p>
-                            <p>⚡ <span className="text-amber-700">Charging electricity for:</span> {ep}</p>
-                        </div>
-                    );
-                })()}
-            </div>
-
-            <form onSubmit={handleGenerateMeterInvoice} className="p-5 space-y-4">
-                {/* Round progress */}
-                <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 space-y-2">
-                    <div className="flex justify-between items-center gap-2 text-xs">
-                        <span className="font-bold text-purple-800">
-                            🚶 Meter round · {roundLabel}
-                        </span>
-                        <span className="font-bold text-purple-700">
-                            {round.doneCount} of {round.total} done{activeStop ? ` · ${activeStop.buildingName}` : ""}
-                        </span>
-                    </div>
-                    <div className="h-2 bg-purple-100 rounded-full overflow-hidden flex">
-                        <div className="h-full bg-purple-600 transition-all" style={{ width: `${round.total ? (round.doneCount / round.total) * 100 : 0}%` }} />
-                        <div className="h-full bg-purple-300 transition-all" style={{ width: `${round.total ? (round.draftCount / round.total) * 100 : 0}%` }} />
-                    </div>
-                    {round.draftCount > 0 && (
-                        <div className="flex flex-wrap items-center justify-between gap-2 bg-white border border-purple-200 rounded-md px-2 py-1.5">
-                            <span className="text-xs text-purple-800">📝 <strong>{round.draftCount}</strong> reading{round.draftCount === 1 ? "" : "s"} saved without an invoice</span>
-                            <button type="button" onClick={handleGenerateDrafts} disabled={busy} className="px-2.5 py-1 bg-purple-600 text-white rounded text-xs font-bold hover:bg-purple-700 disabled:bg-purple-300">
-                                {draftProgress ? `Generating ${draftProgress.current} of ${draftProgress.total}…` : `Generate ${round.draftCount} invoice${round.draftCount === 1 ? "" : "s"}`}
-                            </button>
-                        </div>
-                    )}
-                    {round.total > 0 && round.doneCount === round.total && (
-                        <p className="text-xs text-green-700 font-medium">🎉 Every occupied unit has an invoice for {roundLabel}. Switch to <strong>All units</strong> to redo one.</p>
-                    )}
-                    {round.total > 0 && round.draftCount > 0 && readCount === round.total && (
-                        <p className="text-xs text-purple-700 font-medium">🚶 Every reading is taken. Generate the draft invoices when you&apos;re ready.</p>
-                    )}
+        <div className="space-y-3">
+            <FirstTimeHint id="meter" title="First time on the meter round?" helpHref="/employee/help#meter">
+                <p>Check the <b>billing month</b>, then walk unit by unit: the next unit still needing a reading is picked for you.</p>
+                <p>Type the reading and tap <b>Save &amp; next</b> to create the invoice, or <b>📝 Save reading only</b> to go faster and tap <b>Generate N invoices</b> at the end. <b>Skip</b> if nobody is home.</p>
+                <p>A reading lower than last month&apos;s is blocked — tick <b>Meter was changed</b> if it was replaced. Add a 📷 photo of the meter when you can.</p>
+            </FirstTimeHint>
+            <div className="bg-white rounded-xl shadow-sm border border-purple-200 overflow-hidden">
+                <div className="bg-purple-50 px-5 py-4 border-b border-purple-100">
+                    <h2 className="text-lg font-bold text-purple-800">⚡ Record Meter Reading & Generate Invoice</h2>
+                    <p className="text-xs text-purple-600 mt-1">Enter readings to calculate electricity bill. Default rate ₹{electricityRate}/unit — per-tenant rate can be set in the Tenant Profile.</p>
                 </div>
 
-                <div>
-                    <div className="flex justify-between items-center mb-1">
-                        <label htmlFor="meterUnit" className="block text-sm font-medium text-gray-700">Unit</label>
-                        <div className="flex text-[11px] font-bold rounded-md border border-gray-300 overflow-hidden">
-                            <button type="button" onClick={() => setShowAllUnits(false)} className={`px-2 py-1 ${!showAllUnits ? "bg-purple-600 text-white" : "bg-white text-gray-600"}`}>Pending</button>
-                            <button type="button" onClick={() => setShowAllUnits(true)} className={`px-2 py-1 ${showAllUnits ? "bg-purple-600 text-white" : "bg-white text-gray-600"}`}>All units</button>
-                        </div>
-                    </div>
-                    <div className="flex gap-2">
-                        <select id="meterUnit" required value={activeUnitId} onChange={(e) => goToUnit(e.target.value)} className="flex-1 min-w-0 px-3 py-2.5 border border-gray-300 rounded-lg">
-                            <option value="" disabled>{visibleStops.length ? "Choose a unit..." : "No units pending"}</option>
-                            {Object.entries(stopsByBuilding).map(([buildingName, stops]) => (
-                                <optgroup key={buildingName} label={buildingName}>
-                                    {stops.map(({ unit: u, done, drafted }) => (
-                                        <option key={u.id} value={u.id}>{done ? "✓ " : drafted ? "📝 " : ""}{u.unitNumber} — {u.tenantName || u.tenantEmail || "Tenant"} (Last: {u.lastMeterReading || 0})</option>
-                                    ))}
-                                </optgroup>
-                            ))}
-                        </select>
-                        {hasNextPending && (
-                            <button type="button" onClick={() => goToUnit(nextPendingUnitId(round, activeUnitId))} className="shrink-0 px-3 py-2.5 border border-gray-300 rounded-lg text-sm font-bold text-gray-600 hover:bg-gray-50" title="Tenant not home? Come back to this unit later.">
-                                Skip →
-                            </button>
-                        )}
-                    </div>
-                    {activeStop?.done && (
-                        <p className="text-[11px] text-amber-700 mt-1">⚠️ {activeStop.unit.unitNumber} already has an invoice for {roundLabel} — saving will ask before overriding it.</p>
-                    )}
-                    {activeStop?.drafted && (
-                        <p className="text-[11px] text-purple-700 mt-1">📝 Draft reading loaded for {activeStop.unit.unitNumber}. Save again to update it, or generate its invoice now.</p>
-                    )}
-                </div>
-
-                {selectedUnit && (
-                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-800 space-y-1">
-                        <p><strong>Unit:</strong> {selectedUnit.unitNumber} | <strong>Tenant:</strong> {selectedUnit.tenantEmail || selectedUnit.tenantName || "—"}</p>
-                        <p><strong>Last Meter Reading (from system):</strong> {selectedUnit.lastMeterReading || 0} | <strong>Base Rent:</strong> ₹{selectedUnit.baseRent || 0} | <strong>Rate:</strong> ₹{Number(selectedUnit.electricityRate) > 0 ? Number(selectedUnit.electricityRate) : electricityRate}/unit{Number(selectedUnit.electricityRate) > 0 ? " (custom)" : " (default)"}</p>
-                        {history.length > 0 && (
-                            <p><strong>Recent usage:</strong> {history.join(", ")} units (avg {check?.average ?? 0})</p>
-                        )}
-                    </div>
-                )}
-
-                <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Billing Month</label>
-                    <input type="month" required value={billingMonth} onChange={(e) => { setBillingMonth(e.target.value); onNeedHistory?.(e.target.value); setSavedUnitIds(new Set()); setSelectedMeterUnit(""); resetReadingFields(); }} className="w-full px-3 py-2.5 border border-gray-300 rounded-lg" />
+                <div className="mx-5 mt-4 bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-900">
+                    <p className="font-bold flex items-center gap-1">📌 How this invoice works</p>
+                    <ul className="mt-1 space-y-0.5 list-disc list-inside">
+                        <li><strong>🏠 Rent</strong> is for the <strong>upcoming month</strong> (from tenant&apos;s payment day).</li>
+                        <li><strong>⚡ Electricity</strong> is for the <strong>month that just ended</strong> — the units read now were consumed last month.</li>
+                    </ul>
                     {billingMonth && (() => {
                         const rp = computeRentPeriod(billingMonth, Number(selectedUnit?.paymentDay) || undefined);
                         const ep = computeElectricityPeriod(billingMonth);
                         return (
-                            <p className="text-[11px] text-purple-700 mt-1">
-                                → Rent: <span className="font-medium">{rp}</span> · Electricity: <span className="font-medium">{ep}</span>
-                            </p>
+                            <div className="mt-2 pt-2 border-t border-amber-200 grid grid-cols-1 sm:grid-cols-2 gap-1.5 font-medium">
+                                <p>🏠 <span className="text-amber-700">Collecting rent for:</span> {rp}</p>
+                                <p>⚡ <span className="text-amber-700">Charging electricity for:</span> {ep}</p>
+                            </div>
                         );
                     })()}
                 </div>
 
-                <div className="flex items-center gap-3 bg-yellow-50 border border-yellow-200 rounded-lg p-3">
-                    <input type="checkbox" id="meterChanged" checked={meterChanged} onChange={(e) => { setMeterChanged(e.target.checked); setFormError(""); }} className="w-4 h-4 accent-yellow-600" />
-                    <label htmlFor="meterChanged" className="text-sm text-yellow-800 font-medium cursor-pointer">⚠️ Meter was changed / replaced</label>
-                </div>
-
-                {selectedUnit && (
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Previous Month Reading</label>
-                        <input type="number" inputMode="decimal" min="0" value={previousReadingOverride !== "" ? previousReadingOverride : (selectedUnit?.lastMeterReading ?? "")} onChange={(e) => setPreviousReadingOverride(e.target.value)} className="w-full px-3 py-2.5 border border-gray-300 rounded-lg" placeholder="Auto-filled from system" />
-                        <p className="text-[10px] text-gray-500 mt-1">Auto-filled from last saved reading. Edit if incorrect.</p>
-                    </div>
-                )}
-
-                {!meterChanged ? (
-                    <>
-                        <div>
-                            <label htmlFor="currentReading" className="block text-sm font-medium text-gray-700 mb-1">Current Month Reading *</label>
-                            <input id="currentReading" ref={readingInputRef} type="number" inputMode="numeric" required min="0" value={currentReading} onChange={(e) => { setCurrentReading(e.target.value); setSpikeChecked(false); setFormError(""); }} className={`w-full px-3 py-2.5 border rounded-lg ${check?.belowPrevious ? "border-red-400 bg-red-50" : "border-gray-300"}`} placeholder="e.g. 1250" />
-                            {preview && !check?.belowPrevious && (
-                                <p className="text-xs text-gray-600 mt-1 font-mono">
-                                    = {preview.unitsConsumed} units × ₹{preview.electricityRate} = <strong>₹{preview.electricityCharge.toLocaleString()}</strong>
-                                </p>
-                            )}
+                <form onSubmit={handleGenerateMeterInvoice} className="p-5 space-y-4">
+                    {/* Round progress */}
+                    <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 space-y-2">
+                        <div className="flex justify-between items-center gap-2 text-xs">
+                            <span className="font-bold text-purple-800">
+                                🚶 Meter round · {roundLabel}
+                            </span>
+                            <span className="font-bold text-purple-700">
+                                {round.doneCount} of {round.total} done{activeStop ? ` · ${activeStop.buildingName}` : ""}
+                            </span>
                         </div>
-
-                        <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 space-y-3">
-                            <p className="text-xs text-orange-700 font-medium">📝 Optional: Override units consumed manually</p>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Manual Units Consumed</label>
-                                <input type="number" inputMode="decimal" min="0" value={manualUnitsConsumed} onChange={(e) => { setManualUnitsConsumed(e.target.value); setFormError(""); }} className="w-full px-3 py-2.5 border border-orange-300 rounded-lg" placeholder="Leave empty to auto-calculate from readings" />
+                        <div className="h-2 bg-purple-100 rounded-full overflow-hidden flex">
+                            <div className="h-full bg-purple-600 transition-all" style={{ width: `${round.total ? (round.doneCount / round.total) * 100 : 0}%` }} />
+                            <div className="h-full bg-purple-300 transition-all" style={{ width: `${round.total ? (round.draftCount / round.total) * 100 : 0}%` }} />
+                        </div>
+                        {round.draftCount > 0 && (
+                            <div className="flex flex-wrap items-center justify-between gap-2 bg-white border border-purple-200 rounded-md px-2 py-1.5">
+                                <span className="text-xs text-purple-800">📝 <strong>{round.draftCount}</strong> reading{round.draftCount === 1 ? "" : "s"} saved without an invoice</span>
+                                <button type="button" onClick={handleGenerateDrafts} disabled={busy} className="px-2.5 py-1 bg-purple-600 text-white rounded text-xs font-bold hover:bg-purple-700 disabled:bg-purple-300">
+                                    {draftProgress ? `Generating ${draftProgress.current} of ${draftProgress.total}…` : `Generate ${round.draftCount} invoice${round.draftCount === 1 ? "" : "s"}`}
+                                </button>
                             </div>
-                            {manualUnitsConsumed && Number(manualUnitsConsumed) > 0 && (
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">Reason for manual entry *</label>
-                                    <input type="text" required value={manualUnitsReason} onChange={(e) => setManualUnitsReason(e.target.value)} className="w-full px-3 py-2.5 border border-orange-300 rounded-lg" placeholder="e.g. Shared meter, faulty reading, estimated" />
-                                </div>
-                            )}
-                        </div>
-                    </>
-                ) : (
-                    <div className="space-y-3 bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-                        <p className="text-xs text-yellow-700 font-medium">Enter units consumed manually (from old + new meter final readings)</p>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Units Consumed *</label>
-                            <input type="number" inputMode="decimal" required min="0" value={manualUnitsConsumed} onChange={(e) => { setManualUnitsConsumed(e.target.value); setSpikeChecked(false); }} className="w-full px-3 py-2.5 border border-gray-300 rounded-lg" placeholder="e.g. 120" />
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">New Meter Reading (starting reading of new meter)</label>
-                            <input type="number" inputMode="decimal" min="0" value={newMeterReading} onChange={(e) => setNewMeterReading(e.target.value)} className="w-full px-3 py-2.5 border border-gray-300 rounded-lg" placeholder="e.g. 0 or starting value" />
-                            <p className="text-xs text-gray-500 mt-1">This will be saved as the last reading for next month</p>
-                        </div>
+                        )}
+                        {round.total > 0 && round.doneCount === round.total && (
+                            <p className="text-xs text-green-700 font-medium">🎉 Every occupied unit has an invoice for {roundLabel}. Switch to <strong>All units</strong> to redo one.</p>
+                        )}
+                        {round.total > 0 && round.draftCount > 0 && readCount === round.total && (
+                            <p className="text-xs text-purple-700 font-medium">🚶 Every reading is taken. Generate the draft invoices when you&apos;re ready.</p>
+                        )}
                     </div>
-                )}
 
-                {/* Reading sanity checks */}
-                {check?.belowPrevious && (
-                    <div role="alert" className="bg-red-50 border border-red-300 rounded-lg p-3 text-xs text-red-800">
-                        <p className="font-bold">⛔ Reading {input?.currentReading} is lower than the previous reading {input?.previousReading}.</p>
-                        <p className="mt-0.5">Check for a typo. If the meter was replaced or rolled over, tick <strong>⚠️ Meter was changed</strong>, or enter <strong>Manual Units Consumed</strong> with a reason.</p>
-                    </div>
-                )}
-                {check?.isSpike && hasEntry && (
-                    <div role="alert" className="bg-amber-50 border border-amber-300 rounded-lg p-3 text-xs text-amber-900 space-y-2">
-                        <p><strong>⚠️ {check.unitsConsumed} units is more than {SPIKE_FACTOR}× this unit&apos;s usual {check.average} units</strong> (average of the last {history.length} month{history.length === 1 ? "" : "s"}).</p>
-                        <label className="flex items-center gap-2 font-medium cursor-pointer">
-                            <input type="checkbox" checked={spikeChecked} onChange={(e) => { setSpikeChecked(e.target.checked); setFormError(""); }} className="w-4 h-4 accent-amber-600" />
-                            I&apos;ve re-checked the meter — the reading is correct
-                        </label>
-                    </div>
-                )}
-
-                {/* Meter photo */}
-                {selectedUnit && (
                     <div>
-                        <label htmlFor="meterPhoto" className="block text-sm font-medium text-gray-700 mb-1">📷 Meter photo <span className="text-gray-400 font-normal">(optional)</span></label>
-                        <input id="meterPhoto" ref={photoInputRef} type="file" accept="image/*" capture="environment" onChange={(e) => setMeterPhoto(e.target.files?.[0] || null)} className="w-full text-sm text-gray-600 file:mr-3 file:px-3 file:py-2 file:rounded-lg file:border-0 file:bg-purple-100 file:text-purple-700 file:font-bold" />
-                        <p className="text-[10px] text-gray-500 mt-1">
-                            {meterPhoto
-                                ? `✓ ${meterPhoto.name} will be attached to the invoice.`
-                                : selectedUnit.meterDraft?.meterPhotoUrl && activeStop?.drafted
-                                    ? "✓ Photo from the draft will be attached."
-                                    : "Saved with the invoice as evidence if the bill is disputed."}
-                        </p>
-                    </div>
-                )}
-
-                {preview && selectedUnit && input && (
-                    <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 space-y-2 text-sm">
-                        <p className="font-bold text-gray-800 text-base">Invoice Preview</p>
-                        <div className="bg-blue-50 border border-blue-200 rounded p-2 text-[11px] text-blue-900 space-y-0.5">
-                            <p>🏠 <strong>Rent period:</strong> {computeRentPeriod(billingMonth, Number(selectedUnit.paymentDay) || undefined)}</p>
-                            <p>⚡ <strong>Electricity for:</strong> {computeElectricityPeriod(billingMonth)}</p>
+                        <div className="flex justify-between items-center mb-1">
+                            <label htmlFor="meterUnit" className="block text-sm font-medium text-gray-700">Unit</label>
+                            <div className="flex text-[11px] font-bold rounded-md border border-gray-300 overflow-hidden">
+                                <button type="button" onClick={() => setShowAllUnits(false)} className={`px-2 py-1 ${!showAllUnits ? "bg-purple-600 text-white" : "bg-white text-gray-600"}`}>Pending</button>
+                                <button type="button" onClick={() => setShowAllUnits(true)} className={`px-2 py-1 ${showAllUnits ? "bg-purple-600 text-white" : "bg-white text-gray-600"}`}>All units</button>
+                            </div>
                         </div>
-                        {meterChanged ? (
-                            <div className="bg-yellow-50 border border-yellow-200 rounded p-2 text-xs text-yellow-800 mb-2">⚠️ Meter changed — units entered manually</div>
-                        ) : (
-                            <>
-                                <div className="flex justify-between"><span className="text-gray-600">Previous Reading:</span><span className="font-mono">{input.previousReading}</span></div>
-                                <div className="flex justify-between"><span className="text-gray-600">Current Reading:</span><span className="font-mono">{Number(currentReading)}</span></div>
-                                <div className="flex justify-between"><span className="text-gray-600">Calculated Units:</span><span className="font-mono">{Math.max(0, Number(currentReading) - input.previousReading)}</span></div>
-                            </>
-                        )}
-                        {!meterChanged && Number(manualUnitsConsumed) > 0 && (
-                            <div className="bg-orange-50 border border-orange-200 rounded p-2 text-xs text-orange-800">📝 Manual override: {manualUnitsConsumed} units — {manualUnitsReason || "No reason"}</div>
-                        )}
-                        <div className="flex justify-between"><span className="text-gray-600">Units Consumed:</span><span className="font-mono font-bold">{preview.unitsConsumed}</span></div>
-                        <div className="border-t border-gray-200 pt-2 mt-2 space-y-1">
-                            <div className="flex justify-between"><span className="text-gray-600">🏠 Base Rent:</span><span className="font-mono">₹{Number(selectedUnit.baseRent || 0).toLocaleString()}</span></div>
-                            <div className="flex justify-between"><span className="text-gray-600">⚡ Electricity (×₹{preview.electricityRate}):</span><span className="font-mono">₹{preview.electricityCharge.toLocaleString()}</span></div>
-                            {preview.carryForward !== 0 ? (
-                                <div className={`flex justify-between ${preview.carryForward > 0 ? "text-amber-800" : "text-emerald-700"}`}>
-                                    <span className="font-medium">{preview.carryForward > 0 ? "⚠️ Previous Balance Due:" : "✓ Advance / Credit:"}</span>
-                                    <span className="font-mono font-bold">{preview.carryForward > 0 ? "+" : "−"}₹{Math.abs(preview.carryForward).toLocaleString()}</span>
-                                </div>
-                            ) : (
-                                <div className="flex justify-between text-gray-400 text-xs"><span>Previous Balance:</span><span className="font-mono">—</span></div>
-                            )}
-                        </div>
-                        <div className="flex justify-between border-t border-gray-300 pt-2 mt-2"><span className="font-bold text-gray-900">Total Invoice:</span><span className="font-bold text-lg text-green-700">₹{preview.totalAmount.toLocaleString()}</span></div>
-                        {preview.carryForward > 0 && (
-                            <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 space-y-0.5">
-                                <p className="font-medium">Includes ₹{preview.carryForward.toLocaleString()} carried forward from unpaid previous invoices:</p>
-                                {preview.carryForwardSources.map((s) => (
-                                    <div key={s.invoiceId} className="flex justify-between">
-                                        <span>• {s.billingPeriod}</span>
-                                        <span className="font-mono">+₹{s.amount.toLocaleString()}</span>
-                                    </div>
+                        <div className="flex gap-2">
+                            <select id="meterUnit" required value={activeUnitId} onChange={(e) => goToUnit(e.target.value)} className="flex-1 min-w-0 px-3 py-2.5 border border-gray-300 rounded-lg">
+                                <option value="" disabled>{visibleStops.length ? "Choose a unit..." : "No units pending"}</option>
+                                {Object.entries(stopsByBuilding).map(([buildingName, stops]) => (
+                                    <optgroup key={buildingName} label={buildingName}>
+                                        {stops.map(({ unit: u, done, drafted }) => (
+                                            <option key={u.id} value={u.id}>{done ? "✓ " : drafted ? "📝 " : ""}{u.unitNumber} — {u.tenantName || u.tenantEmail || "Tenant"} (Last: {u.lastMeterReading || 0})</option>
+                                        ))}
+                                    </optgroup>
                                 ))}
-                            </div>
+                            </select>
+                            {hasNextPending && (
+                                <button type="button" onClick={() => goToUnit(nextPendingUnitId(round, activeUnitId))} className="shrink-0 px-3 py-2.5 border border-gray-300 rounded-lg text-sm font-bold text-gray-600 hover:bg-gray-50" title="Tenant not home? Come back to this unit later.">
+                                    Skip →
+                                </button>
+                            )}
+                        </div>
+                        {activeStop?.done && (
+                            <p className="text-[11px] text-amber-700 mt-1">⚠️ {activeStop.unit.unitNumber} already has an invoice for {roundLabel} — saving will ask before overriding it.</p>
                         )}
-                        {preview.decision.kind === "override" && preview.decision.amountPaid > 0 && (
-                            <div className="text-[11px] text-emerald-800 bg-emerald-50 border border-emerald-200 rounded px-2 py-1">
-                                💰 ₹{preview.decision.amountPaid.toLocaleString()} already paid stays on this invoice → it will be <strong>{preview.decision.status === "paid" ? "PAID" : "PARTIAL"}</strong>.
-                            </div>
-                        )}
-                        {preview.decision.kind === "blocked" && (
-                            <div role="alert" className="text-[11px] text-red-800 bg-red-50 border border-red-200 rounded px-2 py-1">
-                                ⛔ The existing {preview.billingPeriod} invoice can&apos;t be replaced here. {preview.decision.reason}
-                            </div>
+                        {activeStop?.drafted && (
+                            <p className="text-[11px] text-purple-700 mt-1">📝 Draft reading loaded for {activeStop.unit.unitNumber}. Save again to update it, or generate its invoice now.</p>
                         )}
                     </div>
-                )}
 
-                {formError && (
-                    <p role="alert" className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{formError}</p>
-                )}
-
-                <div className="flex flex-col sm:flex-row gap-2">
-                    <button type="submit" disabled={busy || !selectedUnit || readingBlocked} className="flex-1 py-3 bg-purple-600 text-white rounded-lg font-bold hover:bg-purple-700 transition shadow-sm disabled:bg-purple-300">
-                        {isUploading ? "Uploading photo..." : isGeneratingInvoice ? "Saving..." : hasNextPending && !activeStop?.done ? "Save & next →" : "Generate Invoice"}
-                    </button>
-                    {!activeStop?.done && (
-                        <button type="button" onClick={handleSaveDraft} disabled={busy || !selectedUnit || !hasEntry || Boolean(check?.belowPrevious)} className="sm:w-auto py-3 px-4 border border-purple-300 text-purple-700 rounded-lg font-bold hover:bg-purple-50 disabled:opacity-50" title="Save the reading now and generate the invoice later">
-                            📝 Save reading only
-                        </button>
+                    {selectedUnit && (
+                        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-800 space-y-1">
+                            <p><strong>Unit:</strong> {selectedUnit.unitNumber} | <strong>Tenant:</strong> {selectedUnit.tenantEmail || selectedUnit.tenantName || "—"}</p>
+                            <p><strong>Last Meter Reading (from system):</strong> {selectedUnit.lastMeterReading || 0} | <strong>Base Rent:</strong> ₹{selectedUnit.baseRent || 0} | <strong>Rate:</strong> ₹{Number(selectedUnit.electricityRate) > 0 ? Number(selectedUnit.electricityRate) : electricityRate}/unit{Number(selectedUnit.electricityRate) > 0 ? " (custom)" : " (default)"}</p>
+                            {history.length > 0 && (
+                                <p><strong>Recent usage:</strong> {history.join(", ")} units (avg {check?.average ?? 0})</p>
+                            )}
+                        </div>
                     )}
-                </div>
-            </form>
 
-            {toast && (
-                <div role="status" className="fixed bottom-4 left-4 right-4 sm:left-auto sm:right-4 sm:max-w-sm z-50 bg-gray-900 text-white text-sm rounded-lg shadow-lg px-4 py-3 flex items-start gap-3">
-                    <span className="flex-1">{toast}</span>
-                    <button type="button" onClick={() => setToast(null)} className="text-gray-400 hover:text-white" aria-label="Dismiss">✕</button>
-                </div>
-            )}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Billing Month</label>
+                        <input type="month" required value={billingMonth} onChange={(e) => { setBillingMonth(e.target.value); onNeedHistory?.(e.target.value); setSavedUnitIds(new Set()); setSelectedMeterUnit(""); resetReadingFields(); }} className="w-full px-3 py-2.5 border border-gray-300 rounded-lg" />
+                        {billingMonth && (() => {
+                            const rp = computeRentPeriod(billingMonth, Number(selectedUnit?.paymentDay) || undefined);
+                            const ep = computeElectricityPeriod(billingMonth);
+                            return (
+                                <p className="text-[11px] text-purple-700 mt-1">
+                                    → Rent: <span className="font-medium">{rp}</span> · Electricity: <span className="font-medium">{ep}</span>
+                                </p>
+                            );
+                        })()}
+                    </div>
+
+                    <div className="flex items-center gap-3 bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                        <input type="checkbox" id="meterChanged" checked={meterChanged} onChange={(e) => { setMeterChanged(e.target.checked); setFormError(""); }} className="w-4 h-4 accent-yellow-600" />
+                        <label htmlFor="meterChanged" className="text-sm text-yellow-800 font-medium cursor-pointer">⚠️ Meter was changed / replaced</label>
+                    </div>
+
+                    {selectedUnit && (
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Previous Month Reading</label>
+                            <input type="number" inputMode="decimal" min="0" value={previousReadingOverride !== "" ? previousReadingOverride : (selectedUnit?.lastMeterReading ?? "")} onChange={(e) => setPreviousReadingOverride(e.target.value)} className="w-full px-3 py-2.5 border border-gray-300 rounded-lg" placeholder="Auto-filled from system" />
+                            <p className="text-[10px] text-gray-500 mt-1">Auto-filled from last saved reading. Edit if incorrect.</p>
+                        </div>
+                    )}
+
+                    {!meterChanged ? (
+                        <>
+                            <div>
+                                <label htmlFor="currentReading" className="block text-sm font-medium text-gray-700 mb-1">Current Month Reading *</label>
+                                <input id="currentReading" ref={readingInputRef} type="number" inputMode="numeric" required min="0" value={currentReading} onChange={(e) => { setCurrentReading(e.target.value); setSpikeChecked(false); setFormError(""); }} className={`w-full px-3 py-2.5 border rounded-lg ${check?.belowPrevious ? "border-red-400 bg-red-50" : "border-gray-300"}`} placeholder="e.g. 1250" />
+                                {preview && !check?.belowPrevious && (
+                                    <p className="text-xs text-gray-600 mt-1 font-mono">
+                                        = {preview.unitsConsumed} units × ₹{preview.electricityRate} = <strong>₹{preview.electricityCharge.toLocaleString()}</strong>
+                                    </p>
+                                )}
+                            </div>
+
+                            <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 space-y-3">
+                                <p className="text-xs text-orange-700 font-medium">📝 Optional: Override units consumed manually</p>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Manual Units Consumed</label>
+                                    <input type="number" inputMode="decimal" min="0" value={manualUnitsConsumed} onChange={(e) => { setManualUnitsConsumed(e.target.value); setFormError(""); }} className="w-full px-3 py-2.5 border border-orange-300 rounded-lg" placeholder="Leave empty to auto-calculate from readings" />
+                                </div>
+                                {manualUnitsConsumed && Number(manualUnitsConsumed) > 0 && (
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Reason for manual entry *</label>
+                                        <input type="text" required value={manualUnitsReason} onChange={(e) => setManualUnitsReason(e.target.value)} className="w-full px-3 py-2.5 border border-orange-300 rounded-lg" placeholder="e.g. Shared meter, faulty reading, estimated" />
+                                    </div>
+                                )}
+                            </div>
+                        </>
+                    ) : (
+                        <div className="space-y-3 bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                            <p className="text-xs text-yellow-700 font-medium">Enter units consumed manually (from old + new meter final readings)</p>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Units Consumed *</label>
+                                <input type="number" inputMode="decimal" required min="0" value={manualUnitsConsumed} onChange={(e) => { setManualUnitsConsumed(e.target.value); setSpikeChecked(false); }} className="w-full px-3 py-2.5 border border-gray-300 rounded-lg" placeholder="e.g. 120" />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">New Meter Reading (starting reading of new meter)</label>
+                                <input type="number" inputMode="decimal" min="0" value={newMeterReading} onChange={(e) => setNewMeterReading(e.target.value)} className="w-full px-3 py-2.5 border border-gray-300 rounded-lg" placeholder="e.g. 0 or starting value" />
+                                <p className="text-xs text-gray-500 mt-1">This will be saved as the last reading for next month</p>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Reading sanity checks */}
+                    {check?.belowPrevious && (
+                        <div role="alert" className="bg-red-50 border border-red-300 rounded-lg p-3 text-xs text-red-800">
+                            <p className="font-bold">⛔ Reading {input?.currentReading} is lower than the previous reading {input?.previousReading}.</p>
+                            <p className="mt-0.5">Check for a typo. If the meter was replaced or rolled over, tick <strong>⚠️ Meter was changed</strong>, or enter <strong>Manual Units Consumed</strong> with a reason.</p>
+                        </div>
+                    )}
+                    {check?.isSpike && hasEntry && (
+                        <div role="alert" className="bg-amber-50 border border-amber-300 rounded-lg p-3 text-xs text-amber-900 space-y-2">
+                            <p><strong>⚠️ {check.unitsConsumed} units is more than {SPIKE_FACTOR}× this unit&apos;s usual {check.average} units</strong> (average of the last {history.length} month{history.length === 1 ? "" : "s"}).</p>
+                            <label className="flex items-center gap-2 font-medium cursor-pointer">
+                                <input type="checkbox" checked={spikeChecked} onChange={(e) => { setSpikeChecked(e.target.checked); setFormError(""); }} className="w-4 h-4 accent-amber-600" />
+                                I&apos;ve re-checked the meter — the reading is correct
+                            </label>
+                        </div>
+                    )}
+
+                    {/* Meter photo */}
+                    {selectedUnit && (
+                        <div>
+                            <label htmlFor="meterPhoto" className="block text-sm font-medium text-gray-700 mb-1">📷 Meter photo <span className="text-gray-400 font-normal">(optional)</span></label>
+                            <input id="meterPhoto" ref={photoInputRef} type="file" accept="image/*" capture="environment" onChange={(e) => setMeterPhoto(e.target.files?.[0] || null)} className="w-full text-sm text-gray-600 file:mr-3 file:px-3 file:py-2 file:rounded-lg file:border-0 file:bg-purple-100 file:text-purple-700 file:font-bold" />
+                            <p className="text-[10px] text-gray-500 mt-1">
+                                {meterPhoto
+                                    ? `✓ ${meterPhoto.name} will be attached to the invoice.`
+                                    : selectedUnit.meterDraft?.meterPhotoUrl && activeStop?.drafted
+                                        ? "✓ Photo from the draft will be attached."
+                                        : "Saved with the invoice as evidence if the bill is disputed."}
+                            </p>
+                        </div>
+                    )}
+
+                    {preview && selectedUnit && input && (
+                        <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 space-y-2 text-sm">
+                            <p className="font-bold text-gray-800 text-base">Invoice Preview</p>
+                            <div className="bg-blue-50 border border-blue-200 rounded p-2 text-[11px] text-blue-900 space-y-0.5">
+                                <p>🏠 <strong>Rent period:</strong> {computeRentPeriod(billingMonth, Number(selectedUnit.paymentDay) || undefined)}</p>
+                                <p>⚡ <strong>Electricity for:</strong> {computeElectricityPeriod(billingMonth)}</p>
+                            </div>
+                            {meterChanged ? (
+                                <div className="bg-yellow-50 border border-yellow-200 rounded p-2 text-xs text-yellow-800 mb-2">⚠️ Meter changed — units entered manually</div>
+                            ) : (
+                                <>
+                                    <div className="flex justify-between"><span className="text-gray-600">Previous Reading:</span><span className="font-mono">{input.previousReading}</span></div>
+                                    <div className="flex justify-between"><span className="text-gray-600">Current Reading:</span><span className="font-mono">{Number(currentReading)}</span></div>
+                                    <div className="flex justify-between"><span className="text-gray-600">Calculated Units:</span><span className="font-mono">{Math.max(0, Number(currentReading) - input.previousReading)}</span></div>
+                                </>
+                            )}
+                            {!meterChanged && Number(manualUnitsConsumed) > 0 && (
+                                <div className="bg-orange-50 border border-orange-200 rounded p-2 text-xs text-orange-800">📝 Manual override: {manualUnitsConsumed} units — {manualUnitsReason || "No reason"}</div>
+                            )}
+                            <div className="flex justify-between"><span className="text-gray-600">Units Consumed:</span><span className="font-mono font-bold">{preview.unitsConsumed}</span></div>
+                            <div className="border-t border-gray-200 pt-2 mt-2 space-y-1">
+                                <div className="flex justify-between"><span className="text-gray-600">🏠 Base Rent:</span><span className="font-mono">₹{Number(selectedUnit.baseRent || 0).toLocaleString()}</span></div>
+                                <div className="flex justify-between"><span className="text-gray-600">⚡ Electricity (×₹{preview.electricityRate}):</span><span className="font-mono">₹{preview.electricityCharge.toLocaleString()}</span></div>
+                                {preview.carryForward !== 0 ? (
+                                    <div className={`flex justify-between ${preview.carryForward > 0 ? "text-amber-800" : "text-emerald-700"}`}>
+                                        <span className="font-medium">{preview.carryForward > 0 ? "⚠️ Previous Balance Due:" : "✓ Advance / Credit:"}</span>
+                                        <span className="font-mono font-bold">{preview.carryForward > 0 ? "+" : "−"}₹{Math.abs(preview.carryForward).toLocaleString()}</span>
+                                    </div>
+                                ) : (
+                                    <div className="flex justify-between text-gray-400 text-xs"><span>Previous Balance:</span><span className="font-mono">—</span></div>
+                                )}
+                            </div>
+                            <div className="flex justify-between border-t border-gray-300 pt-2 mt-2"><span className="font-bold text-gray-900">Total Invoice:</span><span className="font-bold text-lg text-green-700">₹{preview.totalAmount.toLocaleString()}</span></div>
+                            {preview.carryForward > 0 && (
+                                <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 space-y-0.5">
+                                    <p className="font-medium">Includes ₹{preview.carryForward.toLocaleString()} carried forward from unpaid previous invoices:</p>
+                                    {preview.carryForwardSources.map((s) => (
+                                        <div key={s.invoiceId} className="flex justify-between">
+                                            <span>• {s.billingPeriod}</span>
+                                            <span className="font-mono">+₹{s.amount.toLocaleString()}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                            {preview.decision.kind === "override" && preview.decision.amountPaid > 0 && (
+                                <div className="text-[11px] text-emerald-800 bg-emerald-50 border border-emerald-200 rounded px-2 py-1">
+                                    💰 ₹{preview.decision.amountPaid.toLocaleString()} already paid stays on this invoice → it will be <strong>{preview.decision.status === "paid" ? "PAID" : "PARTIAL"}</strong>.
+                                </div>
+                            )}
+                            {preview.decision.kind === "blocked" && (
+                                <div role="alert" className="text-[11px] text-red-800 bg-red-50 border border-red-200 rounded px-2 py-1">
+                                    ⛔ The existing {preview.billingPeriod} invoice can&apos;t be replaced here. {preview.decision.reason}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {formError && (
+                        <p role="alert" className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{formError}</p>
+                    )}
+
+                    <div className="flex flex-col sm:flex-row gap-2">
+                        <button type="submit" disabled={busy || !selectedUnit || readingBlocked} className="flex-1 py-3 bg-purple-600 text-white rounded-lg font-bold hover:bg-purple-700 transition shadow-sm disabled:bg-purple-300">
+                            {isUploading ? "Uploading photo..." : isGeneratingInvoice ? "Saving..." : hasNextPending && !activeStop?.done ? "Save & next →" : "Generate Invoice"}
+                        </button>
+                        {!activeStop?.done && (
+                            <button type="button" onClick={handleSaveDraft} disabled={busy || !selectedUnit || !hasEntry || Boolean(check?.belowPrevious)} className="sm:w-auto py-3 px-4 border border-purple-300 text-purple-700 rounded-lg font-bold hover:bg-purple-50 disabled:opacity-50" title="Save the reading now and generate the invoice later">
+                                📝 Save reading only
+                            </button>
+                        )}
+                    </div>
+                </form>
+
+                {toast && (
+                    <div role="status" className="fixed bottom-4 left-4 right-4 sm:left-auto sm:right-4 sm:max-w-sm z-50 bg-gray-900 text-white text-sm rounded-lg shadow-lg px-4 py-3 flex items-start gap-3">
+                        <span className="flex-1">{toast}</span>
+                        <button type="button" onClick={() => setToast(null)} className="text-gray-400 hover:text-white" aria-label="Dismiss">✕</button>
+                    </div>
+                )}
+            </div>
         </div>
     );
 }

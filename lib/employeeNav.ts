@@ -30,6 +30,25 @@ export const TAB_LABELS: Record<EmployeeTab, { icon: string; label: string }> = 
     inventory: { icon: "📦", label: "Inventory" },
 };
 
+/** Section of the in-app guide (`/employee/help#…`) for each screen (§8). */
+export const HELP_SECTIONS: Record<EmployeeTab, string> = {
+    home: "today",
+    collections: "collect",
+    monthly: "monthly",
+    daily: "ledger",
+    expenses: "expenses",
+    ledger: "partial",
+    active: "tasks",
+    resolved: "tasks",
+    meter: "meter",
+    units: "units",
+    occupancy: "checklist",
+    checklist: "checklist",
+    inventory: "checklist",
+};
+
+export const helpHref = (tab: EmployeeTab) => `/employee/help#${HELP_SECTIONS[tab]}`;
+
 export type NavGroupId = "home" | "collect" | "books" | "tasks" | "more";
 
 export interface NavGroup {
