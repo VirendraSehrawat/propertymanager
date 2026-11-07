@@ -162,8 +162,9 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
         .filter(inv => !inv.masterInvoiceId)
         .slice()
         .sort((a, b) => String(a.unitNumber || "").localeCompare(String(b.unitNumber || ""), undefined, { numeric: true, sensitivity: "base" }));
-    // Settled collections stream: only fully paid invoices.
-    // Partials render in the Pending / Unpaid section (amber row + Add Payment).
+    // Settled collections stream: one row per payment taken (complete or partial),
+    // so a day's total is what was actually collected that day. Paid invoices with
+    // no ledger payments fall back to a single row for the full amount.
     const lastLedgerAtByInvoice = new Map<string, string>();
     for (const le of allLedgerEntries) {
         if (!le.invoiceId) continue;
@@ -172,15 +173,48 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
             lastLedgerAtByInvoice.set(le.invoiceId, le.createdAt || "");
         }
     }
-    type SettledRow = Invoice & { _effectiveDate: string; _isPartial: boolean };
-    const settledInvoices: SettledRow[] = allInvoices
-        .filter(inv => inv.status === "paid")
-        .map(inv => {
-            const ledgerAt = lastLedgerAtByInvoice.get(inv.id);
-            const _effectiveDate = inv.paidAt || ledgerAt || inv.createdAt || "";
-            return { ...inv, _effectiveDate, _isPartial: false };
-        })
-        .sort((a, b) => b._effectiveDate.localeCompare(a._effectiveDate));
+    type SettledRow = Invoice & {
+        _rowKey: string;
+        _effectiveDate: string;
+        _isPartial: boolean;
+        /** Amount collected in this payment. */
+        _amount: number;
+        /** Balance left on the invoice right after this payment. */
+        _balanceAfter: number;
+        _mode?: string;
+        _ref?: string;
+    };
+    const invoiceById = new Map(allInvoices.map(inv => [inv.id, inv]));
+    const settledRows: SettledRow[] = [];
+    const invoicesWithPayments = new Set<string>();
+    for (const le of allLedgerEntries) {
+        if (le.deleted || (le.type !== "payment" && le.type !== "partial-payment")) continue;
+        const inv = invoiceById.get(le.invoiceId);
+        if (!inv || inv.masterInvoiceId || !(Number(le.amountPaid) > 0)) continue;
+        invoicesWithPayments.add(inv.id);
+        settledRows.push({
+            ...inv,
+            _rowKey: le.id,
+            _effectiveDate: le.createdAt || "",
+            _isPartial: le.type === "partial-payment",
+            _amount: Number(le.amountPaid),
+            _balanceAfter: Math.max(0, Number(le.balance) || 0),
+            _mode: le.paymentMode,
+            _ref: le.paymentReference || "",
+        });
+    }
+    for (const inv of allInvoices) {
+        if (inv.status !== "paid" || invoicesWithPayments.has(inv.id)) continue;
+        settledRows.push({
+            ...inv,
+            _rowKey: inv.id,
+            _effectiveDate: inv.paidAt || lastLedgerAtByInvoice.get(inv.id) || inv.createdAt || "",
+            _isPartial: false,
+            _amount: Number(inv.totalAmount || 0),
+            _balanceAfter: 0,
+        });
+    }
+    const settledInvoices = settledRows.sort((a, b) => b._effectiveDate.localeCompare(a._effectiveDate));
     const [settledLimit, setSettledLimit] = useState(20);
     const [settledFilter, setSettledFilter] = useState("");
     // Name / phone for search and display come from the unit (invoices only carry email).
@@ -190,8 +224,7 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
         if (collectionFilter !== "all" && collectionFilter !== "overdue" && norm(inv.billingPeriod) !== collectionFilter) return false;
         return matchesInvoiceSearch(inv, settledFilter, unitMap, [inv.billingPeriod, inv.transactionId]);
     });
-    // For the header total: full invoice amount for paid rows, only collected-so-far for partials.
-    const totalSettledAmount = filteredSettled.reduce((s, inv) => s + Number(inv._isPartial ? (inv.amountPaid || 0) : (inv.totalAmount || 0)), 0);
+    const totalSettledAmount = filteredSettled.reduce((s, inv) => s + inv._amount, 0);
     // Build month list from pending + settled + current month so picker always shows this month
     const periods = [...new Set([
         currentMonthLabel,
@@ -740,7 +773,8 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                             const dayKeys = Array.from(groups.keys()).sort((a, b) => b.localeCompare(a));
                             return dayKeys.map(day => {
                                 const rows = groups.get(day)!;
-                                const dayTotal = rows.reduce((s, inv) => s + Number(inv._isPartial ? (inv.amountPaid || 0) : (inv.totalAmount || 0)), 0);
+                                const dayTotal = rows.reduce((s, inv) => s + inv._amount, 0);
+                                const dayPartial = rows.filter(r => r._isPartial).reduce((s, r) => s + r._amount, 0);
                                 const dayLabel = day === "unknown"
                                     ? "Unknown date"
                                     : new Date(day + "T00:00:00").toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
@@ -748,24 +782,27 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                                     <div key={day}>
                                         <div className="sticky top-0 z-10 bg-green-100/90 backdrop-blur px-5 py-1.5 flex justify-between items-center border-b border-green-200">
                                             <span className="text-[11px] font-bold text-green-900">📅 {dayLabel}</span>
-                                            <span className="text-[11px] font-bold text-green-900">{rows.length} · {"\u20B9"}{dayTotal.toLocaleString()}</span>
+                                            <span className="text-[11px] font-bold text-green-900">{rows.length} · {"\u20B9"}{dayTotal.toLocaleString()}{dayPartial > 0 && <span className="font-medium text-orange-700"> (full ₹{(dayTotal - dayPartial).toLocaleString()} + partial ₹{dayPartial.toLocaleString()})</span>}</span>
                                         </div>
                                         {rows.map(inv => {
                             const isPartial = inv._isPartial;
                             const total = Number(inv.totalAmount || 0);
-                            const paidSoFar = Number(inv.amountPaid || 0);
-                            const remaining = Math.max(0, total - paidSoFar);
+                            const paidNow = inv._amount;
+                            const remaining = inv._balanceAfter;
+                            const stillOpen = inv.status === "unpaid" || inv.status === "pending";
                             const activityDate = inv._effectiveDate || inv.paidAt || inv.createdAt;
                             const paidStr = activityDate ? new Date(activityDate).toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
                             const txn = inv.transactionId || "";
                             // Decode "MODE:REF" (e.g. "UPI:4XXX8291") produced by Mark-as-Paid
-                            const [mode, ref] = txn === "CASH_COLLECTED"
+                            const [mode, ref] = inv._mode
+                                ? [inv._mode.toUpperCase(), inv._ref || ""]
+                                : txn === "CASH_COLLECTED"
                                 ? ["CASH", ""]
                                 : txn.includes(":")
                                     ? [txn.split(":", 2)[0], txn.split(":", 2)[1]]
                                     : [txn === "DAILY_LEDGER_AUTOSETTLE" ? "LEDGER" : (txn || "—"), ""];
                             return (
-                                <div key={inv.id} className={`px-5 py-3 ${isPartial ? "bg-orange-50 hover:bg-orange-100 border-l-4 border-l-orange-400" : "hover:bg-green-50/40"}`}>
+                                <div key={inv._rowKey} className={`px-5 py-3 ${isPartial ? "bg-orange-50 hover:bg-orange-100 border-l-4 border-l-orange-400" : "hover:bg-green-50/40"}`}>
                                     <div className="flex justify-between items-start gap-3">
                                         <div className="min-w-0">
                                             <div className="flex items-center gap-2 flex-wrap">
@@ -793,15 +830,17 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                                         <div className="text-right shrink-0 flex flex-col items-end gap-1.5">
                                             {isPartial ? (
                                                 <>
-                                                    <p className="font-bold text-orange-700">₹{paidSoFar.toLocaleString()}<span className="text-[10px] font-medium text-gray-500"> / ₹{total.toLocaleString()}</span></p>
+                                                    <p className="font-bold text-orange-700">₹{paidNow.toLocaleString()}<span className="text-[10px] font-medium text-gray-500"> / ₹{total.toLocaleString()}</span></p>
                                                     <p className="text-[10px] text-orange-700 font-bold">₹{remaining.toLocaleString()} still due</p>
-                                                    <button onClick={() => openSettleModal(inv)} disabled={isSettling === inv.id} className="text-[10px] px-2 py-1 bg-orange-600 hover:bg-orange-700 text-white rounded font-bold transition disabled:opacity-60">
-                                                        {isSettling === inv.id ? "..." : "➕ Add Payment"}
-                                                    </button>
+                                                    {stillOpen && (
+                                                        <button onClick={() => openSettleModal(inv)} disabled={isSettling === inv.id} className="text-[10px] px-2 py-1 bg-orange-600 hover:bg-orange-700 text-white rounded font-bold transition disabled:opacity-60">
+                                                            {isSettling === inv.id ? "..." : "➕ Add Payment"}
+                                                        </button>
+                                                    )}
                                                 </>
                                             ) : (
                                                 <>
-                                                    <p className="font-bold text-green-700">₹{total.toLocaleString()}</p>
+                                                    <p className="font-bold text-green-700">₹{paidNow.toLocaleString()}{paidNow !== total && <span className="text-[10px] font-medium text-gray-500"> / ₹{total.toLocaleString()}</span>}</p>
                                                     <p className="text-[10px] text-gray-400">Rent: ₹{inv.baseRent || 0} | Elec: ₹{inv.electricityCharge || 0}</p>
                                                 </>
                                             )}
