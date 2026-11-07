@@ -164,3 +164,23 @@ describe("buildMoveInInvoice", () => {
         });
     });
 });
+
+import { buildCustomInvoice, inclusiveDays, proratedRent } from "@/lib/customInvoice";
+
+describe("custom invoice", () => {
+    it("counts inclusive days and prorates rent per day", () => {
+        expect(inclusiveDays("2026-10-10", "2026-10-14")).toBe(5);
+        expect(inclusiveDays("2026-10-14", "2026-10-10")).toBe(0);
+        expect(proratedRent(3100, "2026-10-10", "2026-10-14")).toBe(500);
+    });
+    it("adds tasks to rent and drops blank ones", () => {
+        const inv = buildCustomInvoice({
+            unit: { id: "u1", unitNumber: "101", baseRent: 3100 },
+            tenantEmail: "t@x.com", from: "2026-10-10", to: "2026-10-14", includeRent: true,
+            tasks: [{ description: "Plumbing", amount: 250 }, { description: "", amount: 0 }],
+        });
+        expect(inv.total).toBe(750);
+        expect(inv.fields.billingPeriod).toBe("October 2026 (Custom)");
+        expect(inv.fields.customItems).toHaveLength(1);
+    });
+});

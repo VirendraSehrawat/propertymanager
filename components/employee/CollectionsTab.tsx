@@ -26,6 +26,7 @@ import { SettlePaymentModal, type SettlePaymentSubmit } from "./modals/SettlePay
 import { SettleMasterInvoiceModal, type SettleMasterSubmit } from "./modals/SettleMasterInvoiceModal";
 import { savedMessage } from "@/lib/offlineQueue";
 import { FirstTimeHint } from "./FirstTimeHint";
+import { CustomInvoiceModal } from "./modals/CustomInvoiceModal";
 
 interface CollectionsTabProps {
     allInvoices: Invoice[];
@@ -61,6 +62,7 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
     // 📝 Log follow-up dialog (§3.5).
     const [followUpFor, setFollowUpFor] = useState<{ unitId: string; remaining: number } | null>(null);
 
+    const [isCustomInvoiceOpen, setIsCustomInvoiceOpen] = useState(false);
     const [isEditInvoiceOpen, setIsEditInvoiceOpen] = useState(false);
     const [editInvoice, setEditInvoice] = useState<Invoice | null>(null);
 
@@ -440,6 +442,7 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
 
     return (
         <>
+            <CustomInvoiceModal isOpen={isCustomInvoiceOpen} onClose={() => setIsCustomInvoiceOpen(false)} units={occupiedUnits} />
             <div className="space-y-4">
                 <FirstTimeHint id="collections" title="Recording a payment" helpHref="/employee/help#collect">
                     <p>Every rupee a tenant hands over is recorded here — it also goes into today&apos;s Daily ledger.</p>
@@ -454,6 +457,10 @@ export function CollectionsTab({ allInvoices, occupiedUnits, electricityRate, op
                         {overdueCount > 0 && <option value="overdue">{"\u26A0\uFE0F"} Overdue ({overdueCount})</option>}
                     </select>
                 </div>
+
+                <button onClick={() => setIsCustomInvoiceOpen(true)} className="w-full text-sm font-bold bg-indigo-600 text-white px-4 py-2.5 rounded-xl hover:bg-indigo-700">
+                    + Custom invoice (days / tasks)
+                </button>
 
                 <div className="grid grid-cols-2 gap-3">
                     <div className="bg-red-50 border border-red-200 rounded-xl p-4">

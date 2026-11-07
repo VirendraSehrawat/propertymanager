@@ -134,6 +134,8 @@ export interface Invoice {
     /** Photo of the meter taken when the reading was recorded. */
     meterPhotoUrl?: string;
     isCustom?: boolean;
+    /** Task / service charges on an employee-made custom invoice. */
+    customItems?: { description: string; amount: number }[];
     transactionId?: string;
     amountPaid?: number;
     paidAt?: string;
