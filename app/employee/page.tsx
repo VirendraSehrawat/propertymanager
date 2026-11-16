@@ -35,6 +35,8 @@ import { CollectionsTab, OccupancyTab, LedgerTab, TicketsTab, MeterTab, Expenses
 import { DialogHost, confirmAction, toast } from "@/components/ui";
 import { EmployeeBottomNav, EmployeeSubTabs } from "@/components/employee/EmployeeNav";
 import { persistTab, readInitialTab, type EmployeeTab } from "@/lib/employeeNav";
+import { buildVacatePlan } from "@/lib/vacateInvoice";
+import { VacateInvoiceModal, type VacatedUnit } from "@/components/employee/modals/VacateInvoiceModal";
 import { ProfileBillingForm } from "@/components/employee/ProfileBillingForm";
 
 export default function EmployeeDashboard() {
@@ -116,6 +118,8 @@ export default function EmployeeDashboard() {
     const [unitDocFile, setUnitDocFile] = useState<File | null>(null);
     const [isUnitDocModalOpen, setIsUnitDocModalOpen] = useState(false);
     const [expandedBuildings, setExpandedBuildings] = useState<string[]>([]);
+
+    const [vacatedUnit, setVacatedUnit] = useState<VacatedUnit | null>(null);
 
     // Transfer Tenant States
     const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
@@ -408,9 +412,7 @@ export default function EmployeeDashboard() {
 
     const handleRemoveTenant = async (unitId: string) => {
         const unit = allUnits.find(u => u.id === unitId);
-        const deposit = unit?.securityDeposit ? Number(unit.securityDeposit) : 0;
-        const deduction = unit?.lastChecklistDeduction ? Number(unit.lastChecklistDeduction) : 0;
-        const refund = Math.max(0, deposit - deduction);
+        const { deposit, deduction, refund, historyEntry, unitUpdate } = buildVacatePlan(unit, new Date().toISOString());
 
         let msg = "Their details move to the unit's tenant history.";
         if (deposit > 0) {
@@ -418,29 +420,13 @@ export default function EmployeeDashboard() {
         }
         if (!(await confirmAction({ title: `Remove tenant from ${unit?.unitNumber || "this unit"}?`, message: msg, confirmLabel: "Remove tenant", destructive: true }))) return;
         try {
-            // Save tenant history before clearing
-            const historyEntry = {
-                tenantName: unit?.tenantName || "",
+            await updateDoc(doc(db, "units", unitId), { tenantHistory: arrayUnion(historyEntry), ...unitUpdate });
+            setVacatedUnit({
+                id: unitId,
+                unitNumber: unit?.unitNumber || "",
                 tenantEmail: unit?.tenantEmail || "",
-                tenantPhone: unit?.tenantPhone || "",
-                moveInDate: unit?.moveInDate || "",
-                moveOutDate: new Date().toISOString(),
-                securityDeposit: deposit,
-                securityRefund: refund,
-                coTenants: unit?.coTenants || []
-            };
-            await updateDoc(doc(db, "units", unitId), {
-                tenantHistory: arrayUnion(historyEntry),
-                status: "vacant",
-                tenantEmail: "",
-                tenantName: "",
-                tenantPhone: "",
-                moveInDate: "",
-                paymentDay: "",
-                securityDeposit: "",
-                securityDepositDate: "",
-                lastChecklistDeduction: "",
-                coTenants: []
+                tenantName: unit?.tenantName || "",
+                baseRent: Number(unit?.baseRent || 0),
             });
             const unpaidForUnit = allInvoices.filter(inv => inv.unitId === unitId && (inv.status === "unpaid" || inv.status === "pending"));
             const unpaidNote = unpaidForUnit.length > 0
@@ -1185,6 +1171,7 @@ export default function EmployeeDashboard() {
             )}
 
             {/* TRANSFER TENANT MODAL */}
+            <VacateInvoiceModal vacated={vacatedUnit} invoices={allInvoices} onClose={() => setVacatedUnit(null)} />
             {isTransferModalOpen && transferSourceUnit && (
                 <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setIsTransferModalOpen(false)}>
                     <div className="bg-white p-6 rounded-xl shadow-xl max-w-md w-full space-y-4 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
