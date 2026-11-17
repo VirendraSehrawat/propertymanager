@@ -362,12 +362,24 @@ export default function EmployeeHelpPage() {
                             <p className="mt-1"><strong>📄 Generate first invoice now</strong> (on by default) bills rent from the move-in date to the first payment day of next month, pro-rated per day. Electricity starts from the opening reading at the next Meter round. Payment day, deposit and electricity rate can be changed later in the tenant profile (<strong>📅 Payment &amp; Security → Save</strong>).</p>
                         </div>
                         <div>
-                            <h3 className="font-bold text-gray-800 mb-1">9b. Removing a tenant</h3>
-                            <p>App warns about the <strong>refund amount</strong>. Move-out checklist deduction is subtracted from the deposit. Tenant record is copied into <code>tenantHistory</code>.</p>
+                            <h3 className="font-bold text-gray-800 mb-1">9b. Removing a tenant (vacating)</h3>
+                            <ol className="list-decimal pl-5 space-y-1">
+                                <li>☰ <strong>Units</strong> → find the occupied unit → tap <strong>Remove</strong>.</li>
+                                <li>Check the <strong>refund amount</strong> (deposit minus any move-out checklist deduction) and confirm.</li>
+                                <li>The tenant is copied into <code>tenantHistory</code> and the unit becomes <code>vacant</code>.</li>
+                                <li>The <strong>Final bill</strong> form opens. Enter <strong>any rent and electricity amount</strong> and either <strong>Update invoice</strong> (an open invoice for the unit) or <strong>Create invoice</strong> (a new unpaid &quot;Final bill (Move-out)&quot;). <strong>Skip</strong> changes nothing. This form only shows right after removal.</li>
+                                <li>Return the refund to the tenant. Unpaid invoices stay open until settled or written off.</li>
+                            </ol>
                         </div>
                         <div>
                             <h3 className="font-bold text-gray-800 mb-1">9c. Transferring a tenant</h3>
-                            <p>Move a tenant A → B, optionally generate a <strong>pro-rated final invoice</strong> for the old room. Old unit&apos;s meter reading at transfer date is respected.</p>
+                            <p>Move a tenant A → B. The <strong>old unit</strong> gets one final unpaid invoice (see Collections), chosen in the Transfer form:</p>
+                            <ul className="list-disc pl-5 mt-1 space-y-1">
+                                <li><strong>Auto pro-rate</strong> – rent for the days stayed in that month plus electricity from the reading you enter.</li>
+                                <li><strong>Custom amount</strong> – one amount and a note.</li>
+                                <li><strong>No invoice</strong> – bill it yourself.</li>
+                            </ul>
+                            <p className="mt-1">Open invoices stay on the old unit; they do not move with the tenant. The new unit gets no invoice at transfer – it is billed from the next Meter round. Old unit&apos;s meter reading at transfer date is respected.</p>
                         </div>
                         <div>
                             <h3 className="font-bold text-gray-800 mb-1">9d. Co-tenants</h3>

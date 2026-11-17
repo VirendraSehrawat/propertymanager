@@ -191,14 +191,38 @@ Two directions:
 - Fields: name, phone, email, **payment day**, **security deposit**.
 - The unit becomes `occupied` and shows in Collections.
 
-### 9b. Removing a tenant
-- App warns you about the security deposit refund amount.
-- Any move-out **checklist deduction** is subtracted from the deposit.
-- The tenant profile is copied into `tenantHistory` for records.
+### 9b. Removing a tenant (vacating a unit)
+1. Open **Units** → find the occupied unit → tap **Remove**.
+2. The app shows the security deposit, any move-out checklist deduction and
+   the **refund due** (deposit − deduction, never below ₹0). Confirm.
+3. The tenant profile (incl. co-tenants, deposit and refund) is copied into
+   `tenantHistory`; the unit becomes `vacant` and tenant fields are cleared.
+4. A **Final bill** form opens. The employee can set **any rent and any
+   electricity amount**:
+   - **Update** one of the unit's open (unpaid/pending) invoices — rent and
+     electricity are overwritten; total = rent + electricity + any
+     carry-forward + custom items already on it.
+   - or **Create new final invoice** — an unpaid "Final bill (Move-out)"
+     invoice (total = rent + electricity); the tenant is notified.
+   - **Skip** leaves invoices untouched.
+5. Return the refund to the tenant. Open invoices stay open until settled
+   or written off. The form only appears right after removal.
 
 ### 9c. Transferring a tenant
-- Move a tenant from unit A → unit B, optionally generate a **pro-rated
-  final invoice** for the old room.
+The tenant moves from unit A → unit B. What happens to the invoices:
+- **Old unit (A)** gets one final invoice, chosen in the Transfer modal:
+  - **Auto pro-rate** – rent × days stayed ÷ days in the transfer month, plus
+    electricity from (current reading − last reading) × rate. Stamped
+    "<Month> (Transfer)".
+  - **Custom amount** – a single amount and note, no meter.
+  - **No invoice** – handle billing separately.
+- The invoice is `unpaid`, id `inv_<unitId>_transfer_<date>`, and appears in
+  Collections under the old unit.
+- **Existing open invoices stay on unit A** – they are not moved to B, and the
+  new unit's rent can be changed in the same modal.
+- **Unit B** is assigned the tenant (same payment day and deposit, move-in =
+  transfer date) and no invoice is created for it; bill it from the next
+  Meter round.
 - Meter reading on the old unit at transfer date is respected.
 
 ### 9d. Co-tenants
